@@ -350,7 +350,7 @@ def test_cloud_happy_paths(cfg, fake_cloud):
 
     r = c.post("/cloud/connect", data={"csrf": token}, follow_redirects=False)
     assert r.status_code == 303 and r.headers["location"].startswith("https://accounts.google.com/")
-    assert fake_cloud[-1] == ("begin", "dana", "https://127.0.0.1:8443/oauth/google/callback")
+    assert fake_cloud[-1] == ("begin", "dana", "https://testserver/oauth/google/callback")
 
     r = c.post("/cloud/import", data={"csrf": token, "folder": "Tax papers"})
     assert "Imported 3 files. Skipped 1." in r.text and fake_cloud[-1] == ("import", "dana", "Tax papers")
@@ -364,11 +364,11 @@ def test_cloud_happy_paths(cfg, fake_cloud):
 
 
 def test_cloud_redirect_env_and_admin_only(cfg, fake_cloud, monkeypatch):
-    monkeypatch.setenv("FAMILYBOX_OAUTH_REDIRECT", "https://box.local:8443/oauth/google/callback")
+    monkeypatch.setenv("FAMILYBOX_OAUTH_REDIRECT", "https://testserver/oauth/google/callback")
     c, token = sign_in(cfg, "maya")
     assert "Back up now" not in c.get("/cloud").text
     c.post("/cloud/connect", data={"csrf": token}, follow_redirects=False)
-    assert fake_cloud[-1] == ("begin", "maya", "https://box.local:8443/oauth/google/callback")
+    assert fake_cloud[-1] == ("begin", "maya", "https://testserver/oauth/google/callback")
     assert c.post("/cloud/backup", data={"csrf": token}).status_code == 403
     assert c.post("/cloud/backup-key", data={"csrf": token}).status_code == 403
     assert ("backup",) not in fake_cloud and ("key",) not in fake_cloud
@@ -386,7 +386,8 @@ def test_oauth_callback_checks_state_through_cloud(cfg, fake_cloud):
 
 
 def test_cloud_bad_auth_url_is_not_followed(cfg, fake_cloud, monkeypatch):
-    import familybox.cloud as fc
+    import sys
+    fc = sys.modules["familybox.cloud"]  # the fake installed by the fixture, as the web page sees it
     monkeypatch.setattr(fc, "begin_connect", lambda *a: "https://evil.example/login")
     c, token = sign_in(cfg, "dana")
     r = c.post("/cloud/connect", data={"csrf": token}, follow_redirects=False)

@@ -493,11 +493,12 @@ def readable_files(cfg: Config, person: Person) -> list[tuple[str, int]]:
 # --- cloud (optional module built elsewhere) ------------------------------------------------------
 
 def _cloud():
+    import importlib
     try:
-        from . import cloud  # noqa: PLC0415
+        # import_module consults sys.modules, so a box without the cloud package (or a test's stand-in) works.
+        return importlib.import_module("familybox.cloud")
     except ImportError:
         return None
-    return cloud
 
 
 CLOUD_MISSING = "Cloud connection isn't set up on this box yet."
@@ -750,8 +751,10 @@ def create_app(cfg: Config, *, port: int = 8443) -> Starlette:
         return approvals_page(sess, extra)
 
     # ---- cloud
-    def redirect_uri() -> str:
-        return os.environ.get("FAMILYBOX_OAUTH_REDIRECT") or f"https://127.0.0.1:{port}/oauth/google/callback"
+    def redirect_uri(request: Request) -> str:
+        # Always the box's own callback, as reached by this browser. The cloud module decides whether
+        # Google gets it directly (127.0.0.1) or the forwarder page (FAMILYBOX_OAUTH_REDIRECT, LAN boxes).
+        return f"https://{request.url.netloc}/oauth/google/callback"
 
     def cloud_page(sess: Sess, cloud, msg: str = "", ok: bool = True, extra: str = "", status: int = 200):
         note = f'<p class="{"ok" if ok else "bad"}">{esc(msg)}</p>' if msg else ""
@@ -805,7 +808,7 @@ def create_app(cfg: Config, *, port: int = 8443) -> Starlette:
         if cloud is None:
             return no_cloud(sess)
         try:
-            url = cloud.begin_connect(cfg, sess.person.id, redirect_uri())
+            url = cloud.begin_connect(cfg, sess.person.id, redirect_uri(request))
         except Exception:  # noqa: BLE001
             return cloud_page(sess, cloud, "The box couldn't start the Google sign-in. Try again later.", False)
         if not isinstance(url, str) or not url.startswith(GOOGLE_AUTH_PREFIX):

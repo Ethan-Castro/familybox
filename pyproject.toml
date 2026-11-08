@@ -7,6 +7,12 @@ license = "Apache-2.0"
 dependencies = [
     "nearai-inference-sdk==0.3.0",
     "mcp==2.3.0",
+    "starlette>=1.10",
+    "uvicorn>=0.54",
+    "python-multipart>=0.0.33",
+    "httpx>=0.28.1,<0.29",
+    "pynacl>=1.6",
+    "cryptography>=44",
 ]
 
 [dependency-groups]
