@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<!--
+  familybox OAuth forwarder. A static page with no server and no storage.
+
+  Google will only redirect to a public HTTPS address (or 127.0.0.1), and a family box lives on a
+  home-network address. So the box sends Google this page as the redirect URI. Google sends the
+  browser here with ?code&state; this page reads the box's home-network address out of `state` and
+  sends the browser straight on to the box, which finishes sign-in.
+
+  Why this page can't use the code itself:
+  - The box made a PKCE verifier and kept it. Google only swaps the code for tokens if the matching
+    verifier is sent with it, and this page never has it.
+  - The token exchange also needs the OAuth client secret, which only the box has.
+  - The code works once and expires in minutes.
+  The page also strips the code from its own address bar and history, sets no-referrer, loads
+  nothing from anywhere else (see the Content-Security-Policy), and only forwards to private
+  addresses (.local, 10.x, 192.168.x, 172.16-31.x, 127.x, fc00::/7), so it can't be used as an
+  open redirect to a public site.
+
+  Host it on any static HTTPS host (GitHub Pages, Vercel, Netlify) and set FAMILYBOX_OAUTH_REDIRECT
+  on the box to its exact URL. See docs/CLOUD.md. Not deployed by this repo.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-j2kyoicH0fOxoAokOWgFsgl+d6jqFYllzcD6D+eoXYM='; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'">
+<meta name="robots" content="noindex">
+<title>Back to your family box</title>
+<style>
+  body { font: 17px/1.5 system-ui, -apple-system, Segoe UI, sans-serif; max-width: 34rem; margin: 15vh auto; padding: 0 1.25rem; color: #1d2433; }
+  a { color: #1f5fd1; }
+  .small { color: #5b6475; font-size: 14px; }
+</style>
+</head>
+<body>
+<h1>Back to your family box</h1>
+<p id="msg">Sending you back to your family box...</p>
+<p><a id="go" hidden href="#">Continue</a></p>
+<p class="small">This page only passes Google's one-time sign-in code to the family box on your home network. It cannot read your files and it keeps nothing.</p>
+<noscript><p>Turn on JavaScript for this page, or use <code>familybox cloud connect</code> on the box and paste the code.</p></noscript>
+<script>
+(function () {
+  "use strict";
+  var msg = document.getElementById("msg");
+  function fail(text) { msg.textContent = text; }
+  var q = new URLSearchParams(window.location.search);
+  // Remove the code from this page's address and history right away.
+  try { history.replaceState(null, "", window.location.pathname); } catch (e) {}
+  var state = q.get("state") || "";
+  var dot = state.indexOf(".");
+  if (dot < 1) { return fail("This link has no family box address. Start again from your box."); }
+  var target;
+  try {
+    var b64 = state.slice(dot + 1).replace(/-/g, "+").replace(/_/g, "/");
+    while (b64.length % 4) { b64 += "="; }
+    target = new URL(atob(b64));
+  } catch (e) { return fail("This link is damaged. Start again from your box."); }
+  function isPrivateHost(h) {
+    h = h.toLowerCase().replace(/^\[|\]$/g, "");
+    if (/\.(local|lan|home\.arpa|internal)$/.test(h) || h === "localhost" || h.indexOf(".") < 0 && h.indexOf(":") < 0) { return true; }
+    var m = h.match(/^(\d+)\.(\d+)\.(\d+)\.(\d+)$/);
+    if (m) {
+      var a = +m[1], b = +m[2];
+      return a === 10 || a === 127 || (a === 192 && b === 168) || (a === 172 && b >= 16 && b <= 31) || (a === 169 && b === 254);
+    }
+    return h === "::1" || /^f[cd][0-9a-f]{2}:/.test(h) || /^fe80:/.test(h);
+  }
+  if ((target.protocol !== "https:" && target.protocol !== "http:") || !isPrivateHost(target.hostname)) {
+    return fail("This page only sends you back to a family box on your home network.");
+  }
+  ["code", "state", "error", "scope"].forEach(function (k) {
+    var v = q.get(k);
+    if (v !== null) { target.searchParams.set(k, v); }
+  });
+  var link = document.getElementById("go");
+  link.href = target.toString();
+  link.textContent = "Continue to your family box (" + target.host + ")";
+  link.hidden = false;
+  msg.textContent = "Sending you back to your family box...";
+  window.location.replace(target.toString());
+})();
+</script>
+</body>
+</html>
