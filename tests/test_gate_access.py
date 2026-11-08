@@ -1,0 +1,139 @@
+"""Access scoping and answer-gate tests on the fictional Okafor household (no network)."""
+
+from pathlib import Path
+
+import pytest
+
+from familybox import access, config, gate
+from familybox.store import Store
+
+DEMO = Path(__file__).resolve().parents[1] / "demo"
+
+
+@pytest.fixture(scope="module")
+def env(tmp_path_factory):
+    import shutil
+    home = tmp_path_factory.mktemp("box")
+    shutil.copytree(DEMO / "files", home / "files")
+    shutil.copy(DEMO / "family.toml", home / "family.toml")
+    cfg = config.load(home)
+    store = Store(cfg)
+    store.reindex()
+    return cfg, store
+
+
+def check(env, person_id, answer, never=()):
+    cfg, store = env
+    p = cfg.person(person_id)
+    return gate.check(answer, sensitive=store.sensitive_values(),
+                      readable_owners=set(access.readable_owners(cfg, p)),
+                      never_share=list(never), display={x.id: x.display for x in cfg.people.values()},
+                      common_words=store.nonhealth_words())
+
+
+# --- access -------------------------------------------------------------------------------------
+
+def test_people_read_their_own_and_shared(env):
+    cfg, _ = env
+    maya = cfg.person("maya")
+    assert access.can_read(maya, "people/maya/health/records_maya_fhir.json")
+    assert access.can_read(maya, "shared/insurance/health_insurance_card.txt")
+    assert not access.can_read(maya, "people/dana/taxes/w2_2025_dana.txt")
+
+
+def test_health_folders_are_owner_only_even_for_parents(env):
+    cfg, _ = env
+    dana = cfg.person("dana")
+    assert access.can_read(dana, "people/maya/ids/passport_maya.txt")      # granted by also_reads
+    assert not access.can_read(dana, "people/maya/health/records_maya_fhir.json")
+    assert not access.can_read(cfg.person("maya"), "people/dana/health/visit_2026_09_14.txt")
+
+
+def test_path_tricks_are_refused(env):
+    cfg, store = env
+    maya = cfg.person("maya")
+    assert not access.can_read(maya, "people/maya/../dana/ids/ssn_card_dana.txt")
+    assert store.read(maya, "/people/dana/ids/ssn_card_dana.txt") is None
+    assert store.read(maya, "../../family.toml") is None
+
+
+def test_search_never_returns_other_peoples_files(env):
+    cfg, store = env
+    hits = store.search(cfg.person("maya"), "SSN passport visit sertraline")
+    assert hits and all(access.can_read(cfg.person("maya"), h["path"]) for h in hits)
+    assert not any(h["path"].startswith("people/dana") for h in hits)
+
+
+# --- gate ---------------------------------------------------------------------------------------
+
+def test_clean_answer_passes(env):
+    r = check(env, "dana", "Combined 2025 W-2 wages were $142,310. Maya's passport expires May 2, 2027.")
+    assert r.outcome == "pass"
+
+
+@pytest.mark.parametrize("written", [
+    "987-65-4322", "987 65 4322", "987654322", "9 8 7 6 5 4 3 2 2",
+    "nine eight seven six five four three two two",
+])
+def test_full_ssn_is_held_however_written(env, written):
+    r = check(env, "dana", f"Maya's SSN is {written}.")
+    assert r.outcome in ("held", "refused")
+    assert "987654322" not in gate.digits(r.text)
+
+
+def test_last_four_is_allowed(env):
+    r = check(env, "dana", "Maya's SSN on file ends in 4322.")
+    assert r.outcome == "pass"
+
+
+def test_ssn_cannot_be_pieced_together(env):
+    r = check(env, "dana", "The first five digits of Maya's number are 98765.")
+    assert r.outcome in ("held", "refused")
+
+
+def test_passport_number_is_held(env):
+    r = check(env, "maya", "Your passport number is X20577143 and it expires 2027-05-02.")
+    assert r.outcome == "held" and "X20577143" not in r.text and "2027-05-02" in r.text
+
+
+def test_own_health_detail_is_held_for_owner(env):
+    r = check(env, "maya", "You use an albuterol inhaler for exercise-induced asthma.")
+    assert r.outcome == "held"
+    assert "albuterol" not in r.text.lower() and "asthma" not in r.text.lower()
+
+
+def test_allergies_and_vaccines_pass(env):
+    r = check(env, "maya", "Allergies: penicillin, peanuts. Tdap given 2021-08-03.")
+    assert r.outcome == "pass"
+
+
+def test_other_persons_health_detail_is_refused(env):
+    r = check(env, "maya", "Your mom has generalized anxiety disorder and takes sertraline 50 mg daily.")
+    assert r.outcome == "refused"
+    assert "sertraline" not in r.text.lower()
+
+
+def test_other_persons_ssn_is_refused(env):
+    r = check(env, "maya", "Dad's SSN is 987-65-4321.")
+    assert r.outcome == "refused"
+
+
+def test_tripwire_blocks_whole_answer(env):
+    r = check(env, "dana", "Summary of the chart FBX-Q7K2: all fine.")
+    assert r.outcome == "refused" and "FBX-Q7K2" not in r.text
+
+
+def test_never_share_term(env):
+    r = check(env, "dana", "You see Lakeside Counseling every two weeks.", never=["Lakeside Counseling"])
+    assert r.outcome in ("held", "refused") and "Lakeside Counseling" not in r.text
+
+
+def test_unknown_ssn_shape_and_card_are_masked(env):
+    r = check(env, "dana", "Try 123-45-6789 or card 4111 1111 1111 1111.")
+    assert r.outcome == "masked"
+    assert "123-45-6789" not in r.text and "4111 1111 1111 1111" not in r.text
+
+
+def test_employer_name_is_not_a_health_detail(env):
+    r = check(env, "dana", "Dana works at Lakeside Regional Hospital and earned $96,410.")
+    assert r.outcome == "pass" and "Lakeside Regional Hospital" in r.text

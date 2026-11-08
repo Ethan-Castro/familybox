@@ -1,0 +1,53 @@
+{
+ "answer": "List both allergies on the form:\n\n- **Penicillin**\n- **Peanuts**\n\nOne extra note: your record also shows exercise-induced asthma (with an albuterol inhaler), which most school sports forms ask about separately from allergies \u2014 worth including so the coach and athletic staff know.",
+ "model": "deepseek-ai/DeepSeek-V4.1-Flash-1017",
+ "turns": [
+  {
+   "seconds": 1.76,
+   "signature_kind": "provider_tee",
+   "signer": "236f5a6b91dd47dc3b7b36e43d4eb531a042ffb8f8fbf3a1555b78cef4fdda4c",
+   "tool_calls": [
+    [
+     "search_files",
+     "{\"query\": \"allergy\"}"
+    ],
+    [
+     "search_files",
+     "{\"query\": \"allergies\"}"
+    ]
+   ],
+   "content": "I'll look through your files for allergy information.\n\n"
+  },
+  {
+   "seconds": 2.09,
+   "signature_kind": "provider_tee",
+   "signer": "236f5a6b91dd47dc3b7b36e43d4eb531a042ffb8f8fbf3a1555b78cef4fdda4c",
+   "tool_calls": [
+    [
+     "read_file",
+     "{\"path\": \"people/maya/health/records_maya_fhir.json\"}"
+    ]
+   ],
+   "content": null
+  },
+  {
+   "seconds": 5.56,
+   "signature_kind": "provider_tee",
+   "signer": "236f5a6b91dd47dc3b7b36e43d4eb531a042ffb8f8fbf3a1555b78cef4fdda4c",
+   "tool_calls": [],
+   "content": "List both allergies on the form:\n\n- **Penicillin**\n- **Peanuts**\n\nOne extra note: your record also shows exercise-induced asthma (with an albuterol inhaler), which most school sports forms ask about separately from allergies \u2014 worth including so the coach and athletic staff know."
+  }
+ ],
+ "attestation": {
+  "model_reports_verified": 1,
+  "verified_at_ms": 1794169577180,
+  "seconds": 2.08,
+  "e2ee": true
+ },
+ "tokens_in": 1973,
+ "tokens_out": 306,
+ "replayed": false,
+ "person": "maya",
+ "question": "Which allergies should I list on my school sports form?",
+ "recorded_at": 1794169586
+}

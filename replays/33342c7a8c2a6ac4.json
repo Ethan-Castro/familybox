@@ -1,0 +1,77 @@
+{
+ "answer": "**Combined 2025 W-2 wages: $142,310.00**\n- Dana (Lakeside Regional Hospital): $96,410.00\n- Sam (Brightline Logistics LLC): $45,900.00\n\n**Still needed for Maya's FAFSA** (checklist is for the 2027\u201328 school year; state aid deadline March 1, 2027):\n- **2025 federal tax return** \u2014 not yet in the file; only the 2024 return summary is there, so that return will need to be prepared (or the W-2s used if the FAFSA data retrieval route is taken).\n- **Records of untaxed income** \u2014 nothing on file.\n- **Bank balances** \u2014 no statements on file.\n- SSNs are covered: Maya's student SSN is on file, and both parents' SSNs appear on the 2025 W-2s (Dana's ending in 4320, Sam's ending in 4321).",
+ "model": "deepseek-ai/DeepSeek-V4.1-Flash-1017",
+ "turns": [
+  {
+   "seconds": 1.68,
+   "signature_kind": "provider_tee",
+   "signer": "236f5a6b91dd47dc3b7b36e43d4eb531a042ffb8f8fbf3a1555b78cef4fdda4c",
+   "tool_calls": [
+    [
+     "search_files",
+     "{\"query\": \"W-2 2025 wages\"}"
+    ],
+    [
+     "search_files",
+     "{\"query\": \"FAFSA Maya\"}"
+    ]
+   ],
+   "content": "I'll look for the tax and FAFSA-related files.\n\n"
+  },
+  {
+   "seconds": 2.17,
+   "signature_kind": "provider_tee",
+   "signer": "236f5a6b91dd47dc3b7b36e43d4eb531a042ffb8f8fbf3a1555b78cef4fdda4c",
+   "tool_calls": [
+    [
+     "read_file",
+     "{\"path\": \"people/dana/taxes/w2_2025_dana.txt\"}"
+    ],
+    [
+     "read_file",
+     "{\"path\": \"people/sam/taxes/w2_2025_sam.txt\"}"
+    ],
+    [
+     "read_file",
+     "{\"path\": \"people/maya/school/fafsa_checklist.txt\"}"
+    ]
+   ],
+   "content": null
+  },
+  {
+   "seconds": 4.56,
+   "signature_kind": "provider_tee",
+   "signer": "236f5a6b91dd47dc3b7b36e43d4eb531a042ffb8f8fbf3a1555b78cef4fdda4c",
+   "tool_calls": [
+    [
+     "search_files",
+     "{\"query\": \"2025 tax return 1040 summary\"}"
+    ],
+    [
+     "search_files",
+     "{\"query\": \"bank statement balance\"}"
+    ]
+   ],
+   "content": null
+  },
+  {
+   "seconds": 8.61,
+   "signature_kind": "provider_tee",
+   "signer": "236f5a6b91dd47dc3b7b36e43d4eb531a042ffb8f8fbf3a1555b78cef4fdda4c",
+   "tool_calls": [],
+   "content": "**Combined 2025 W-2 wages: $142,310.00**\n- Dana (Lakeside Regional Hospital): $96,410.00\n- Sam (Brightline Logistics LLC): $45,900.00\n\n**Still needed for Maya's FAFSA** (checklist is for the 2027\u201328 school year; state aid deadline March 1, 2027):\n- **2025 federal tax return** \u2014 not yet in the file; only the 2024 return summary is there, so that return will need to be prepared (or the W-2s used if the FAFSA data retrieval route is taken).\n- **Records of untaxed income** \u2014 nothing on file.\n- **Bank balances** \u2014 no statements on file.\n- SSNs are covered: Maya's student SSN is on file, and both parents' SSNs appear on the 2025 W-2s (Dana's ending in 4320, Sam's ending in 4321)."
+  }
+ ],
+ "attestation": {
+  "model_reports_verified": 1,
+  "verified_at_ms": 1794169498212,
+  "seconds": 2.22,
+  "e2ee": true
+ },
+ "tokens_in": 5035,
+ "tokens_out": 777,
+ "replayed": false,
+ "person": "dana",
+ "question": "What were our combined 2025 W-2 wages, and what do we still need for Maya's FAFSA?",
+ "recorded_at": 1794169515
+}

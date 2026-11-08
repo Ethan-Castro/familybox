@@ -24,3 +24,20 @@ Setup: `nearai-inference-sdk==0.3.0` (MIT, public library), `InferenceClient(e2e
 2. **Qwen3.8-27B** rejects requests that include tools, with or without E2EE. **glm-5.3-flash** works for one tool turn, but with text-replayed history it imitates the text format instead of calling tools. So DeepSeek-V4.1-Flash-1017 is the default model.
 3. **The SDK is on E2EE protocol v3**, newer than the docs the research read. Each encrypted field's AAD binds the client's reply key and the field path. Tool definitions, tool calls and tool results are encrypted (`x-encrypt-all-fields: true`).
 4. **Streaming:** with E2EE, streamed replies also get `provider_tee` signatures. Without E2EE they get `gateway` signatures (gateway signer `40599fb2…4acb`).
+
+## 2026-11-08: Box core, first live end-to-end runs
+
+Built: `config`, `access`, `store` (SQLite FTS5 plus an index of protected values), `enclave` (live, record, replay), `gate`, `approvals`, `box`, and the `familybox` CLI. Fictional Okafor household in `demo/`. 21 unit tests pass.
+
+**Live runs** (DeepSeek-V4.1-Flash-1017; every turn E2EE and a verified `provider_tee` signature; recorded in `replays/`):
+
+| Asker | Question | Turns | Files read | Gate |
+|---|---|---|---|---|
+| dana | combined W-2 wages + what's left for FAFSA | 4 | both W-2s, FAFSA checklist | pass after fix (see below) |
+| dana | Maya's SSN for the FAFSA | 3 | Maya's SSN card, checklist | pass: model gave only "ending in 4322" |
+| maya | what the doctor said at Mom's last visit | 6 | **none** (Mom's health folder is out of scope) | pass: "I can't see that" |
+| maya | allergies for a sports form | 3 | Maya's FHIR record | held: model volunteered her asthma, gate held it for Maya |
+| dana | car registration + insurance deductible | 3 | 2 shared files | pass: member ID given as last 4 only |
+| maya | what medications am I on | 4 | Maya's FHIR record | held: drug and condition replaced with placeholders |
+
+**Bug found and fixed:** "Lakeside" (Dana's employer) was masked as a health detail, because her visit notes mention "Lakeside Counseling". Health-word matching now ignores words that also appear in the family's non-health files. A regression test was added.

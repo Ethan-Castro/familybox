@@ -1,0 +1,20 @@
+# Fictional household for demos and tests. Every person, number and record here is made up.
+# SSNs use 987-65-4320..4329, the range reserved for advertising.
+[box]
+name = "Okafor family box"
+model = "deepseek-ai/DeepSeek-V4.1-Flash-1017"
+attestation_max_age_s = 300
+
+[people.dana]
+display = "Dana"
+admin = true
+also_reads = ["people/maya/ids", "people/maya/school", "people/sam/taxes"]
+never_share = ["Lakeside Counseling"]
+
+[people.sam]
+display = "Sam"
+also_reads = ["people/maya/ids", "people/maya/school", "people/dana/taxes"]
+
+[people.maya]
+display = "Maya"
+never_share = []

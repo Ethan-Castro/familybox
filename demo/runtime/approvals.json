@@ -1,0 +1,35 @@
+{
+ "e9963e11cd": {
+  "asker": "dana",
+  "question": "What were our combined 2025 W-2 wages, and what do we still need for Maya's FAFSA?",
+  "kind": "health",
+  "label": "Plan",
+  "owner": "dana",
+  "path": "people/dana/health/visit_2026_09_14.txt",
+  "value": "continue counseling with Lakeside Counseling every two weeks",
+  "status": "waiting",
+  "created": 1794169515
+ },
+ "204c70b0b9": {
+  "asker": "maya",
+  "question": "What medications am I on?",
+  "kind": "health",
+  "label": "Condition",
+  "owner": "maya",
+  "path": "people/maya/health/records_maya_fhir.json",
+  "value": "Exercise-induced asthma",
+  "status": "waiting",
+  "created": 1794169614
+ },
+ "640dc25ca1": {
+  "asker": "maya",
+  "question": "What medications am I on?",
+  "kind": "health",
+  "label": "Medication",
+  "owner": "maya",
+  "path": "people/maya/health/records_maya_fhir.json",
+  "value": "Albuterol inhaler",
+  "status": "waiting",
+  "created": 1794169614
+ }
+}

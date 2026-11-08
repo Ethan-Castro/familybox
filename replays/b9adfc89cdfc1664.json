@@ -1,0 +1,57 @@
+{
+ "answer": "- **Car registration:** renews January 15, 2027 (2019 Honda CR-V, plate FBX 4417).\n- **Health insurance deductible:** $3,000 family / $1,500 individual (Bluepoint Family PPO, member ID ending in 2093).",
+ "model": "deepseek-ai/DeepSeek-V4.1-Flash-1017",
+ "turns": [
+  {
+   "seconds": 1.1,
+   "signature_kind": "provider_tee",
+   "signer": "236f5a6b91dd47dc3b7b36e43d4eb531a042ffb8f8fbf3a1555b78cef4fdda4c",
+   "tool_calls": [
+    [
+     "search_files",
+     "{\"query\": \"car registration renewal\"}"
+    ],
+    [
+     "search_files",
+     "{\"query\": \"health insurance deductible\"}"
+    ]
+   ],
+   "content": "I'll search for both of those documents.\n\n"
+  },
+  {
+   "seconds": 4.77,
+   "signature_kind": "provider_tee",
+   "signer": "236f5a6b91dd47dc3b7b36e43d4eb531a042ffb8f8fbf3a1555b78cef4fdda4c",
+   "tool_calls": [
+    [
+     "read_file",
+     "{\"path\": \"shared/home/car_registration.txt\"}"
+    ],
+    [
+     "read_file",
+     "{\"path\": \"shared/insurance/health_insurance_card.txt\"}"
+    ]
+   ],
+   "content": null
+  },
+  {
+   "seconds": 1.75,
+   "signature_kind": "provider_tee",
+   "signer": "236f5a6b91dd47dc3b7b36e43d4eb531a042ffb8f8fbf3a1555b78cef4fdda4c",
+   "tool_calls": [],
+   "content": "- **Car registration:** renews January 15, 2027 (2019 Honda CR-V, plate FBX 4417).\n- **Health insurance deductible:** $3,000 family / $1,500 individual (Bluepoint Family PPO, member ID ending in 2093)."
+  }
+ ],
+ "attestation": {
+  "model_reports_verified": 1,
+  "verified_at_ms": 1794169591177,
+  "seconds": 1.82,
+  "e2ee": true
+ },
+ "tokens_in": 2187,
+ "tokens_out": 222,
+ "replayed": false,
+ "person": "dana",
+ "question": "When does the car registration renew, and what is our health insurance deductible?",
+ "recorded_at": 1794169598
+}

@@ -1,0 +1,107 @@
+{
+ "resourceType": "Bundle",
+ "type": "collection",
+ "entry": [
+  {
+   "resource": {
+    "resourceType": "Patient",
+    "name": [
+     {
+      "given": [
+       "Maya"
+      ],
+      "family": "Okafor"
+     }
+    ],
+    "birthDate": "2010-04-17",
+    "identifier": [
+     {
+      "type": {
+       "text": "MRN"
+      },
+      "value": "MRN-5521907"
+     }
+    ]
+   }
+  },
+  {
+   "resource": {
+    "resourceType": "Immunization",
+    "vaccineCode": {
+     "text": "Tdap"
+    },
+    "occurrenceDateTime": "2021-08-03"
+   }
+  },
+  {
+   "resource": {
+    "resourceType": "Immunization",
+    "vaccineCode": {
+     "text": "MenACWY dose 1"
+    },
+    "occurrenceDateTime": "2021-08-03"
+   }
+  },
+  {
+   "resource": {
+    "resourceType": "Immunization",
+    "vaccineCode": {
+     "text": "HPV dose 2"
+    },
+    "occurrenceDateTime": "2022-02-10"
+   }
+  },
+  {
+   "resource": {
+    "resourceType": "AllergyIntolerance",
+    "code": {
+     "text": "Penicillin"
+    }
+   }
+  },
+  {
+   "resource": {
+    "resourceType": "AllergyIntolerance",
+    "code": {
+     "text": "Peanuts"
+    }
+   }
+  },
+  {
+   "resource": {
+    "resourceType": "Condition",
+    "code": {
+     "text": "Exercise-induced asthma"
+    },
+    "onsetDateTime": "2019-05-01"
+   }
+  },
+  {
+   "resource": {
+    "resourceType": "MedicationStatement",
+    "medicationCodeableConcept": {
+     "text": "Albuterol inhaler"
+    },
+    "authoredOn": "2019-05-01"
+   }
+  },
+  {
+   "resource": {
+    "resourceType": "Encounter",
+    "type": [
+     {
+      "text": "Adolescent wellness visit"
+     }
+    ],
+    "period": {
+     "start": "2026-06-20"
+    },
+    "reasonCode": [
+     {
+      "text": "Confidential counseling referral"
+     }
+    ]
+   }
+  }
+ ]
+}

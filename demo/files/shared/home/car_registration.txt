@@ -1,0 +1,4 @@
+VEHICLE REGISTRATION (FICTIONAL)
+Vehicle: 2019 Honda CR-V
+Plate: FBX 4417
+Registration renews: 2027-01-15

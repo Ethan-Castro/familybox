@@ -1,0 +1,77 @@
+{
+ "answer": "Based on your health record, there's one medication listed:\n\n- **Albuterol inhaler** \u2014 started 2019-05-01, for exercise-induced asthma\n\nThat's the only medication on file for you. If you've been prescribed anything else recently (or by a provider whose records aren't in the box), it wouldn't show up here.",
+ "model": "deepseek-ai/DeepSeek-V4.1-Flash-1017",
+ "turns": [
+  {
+   "seconds": 2.67,
+   "signature_kind": "provider_tee",
+   "signer": "236f5a6b91dd47dc3b7b36e43d4eb531a042ffb8f8fbf3a1555b78cef4fdda4c",
+   "tool_calls": [
+    [
+     "search_files",
+     "{\"query\": \"medications\"}"
+    ],
+    [
+     "search_files",
+     "{\"query\": \"prescription\"}"
+    ]
+   ],
+   "content": null
+  },
+  {
+   "seconds": 2.25,
+   "signature_kind": "provider_tee",
+   "signer": "236f5a6b91dd47dc3b7b36e43d4eb531a042ffb8f8fbf3a1555b78cef4fdda4c",
+   "tool_calls": [
+    [
+     "search_files",
+     "{\"query\": \"medication list\"}"
+    ],
+    [
+     "search_files",
+     "{\"query\": \"pharmacy\"}"
+    ],
+    [
+     "search_files",
+     "{\"query\": \"Rx\"}"
+    ],
+    [
+     "search_files",
+     "{\"query\": \"visit notes\"}"
+    ]
+   ],
+   "content": null
+  },
+  {
+   "seconds": 0.97,
+   "signature_kind": "provider_tee",
+   "signer": "236f5a6b91dd47dc3b7b36e43d4eb531a042ffb8f8fbf3a1555b78cef4fdda4c",
+   "tool_calls": [
+    [
+     "read_file",
+     "{\"path\": \"people/maya/health/records_maya_fhir.json\"}"
+    ]
+   ],
+   "content": null
+  },
+  {
+   "seconds": 5.52,
+   "signature_kind": "provider_tee",
+   "signer": "236f5a6b91dd47dc3b7b36e43d4eb531a042ffb8f8fbf3a1555b78cef4fdda4c",
+   "tool_calls": [],
+   "content": "Based on your health record, there's one medication listed:\n\n- **Albuterol inhaler** \u2014 started 2019-05-01, for exercise-induced asthma\n\nThat's the only medication on file for you. If you've been prescribed anything else recently (or by a provider whose records aren't in the box), it wouldn't show up here."
+  }
+ ],
+ "attestation": {
+  "model_reports_verified": 1,
+  "verified_at_ms": 1794169603274,
+  "seconds": 1.55,
+  "e2ee": true
+ },
+ "tokens_in": 3094,
+ "tokens_out": 450,
+ "replayed": false,
+ "person": "maya",
+ "question": "What medications am I on?",
+ "recorded_at": 1794169614
+}
