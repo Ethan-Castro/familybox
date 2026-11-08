@@ -7,6 +7,8 @@
   familybox deny --as dana <id>
   familybox log --as maya                 what left the box for maya
   familybox verify                        check the NEAR enclave attestation only (no inference)
+  familybox code --as maya                one-time sign-in code for the box's web page (10 minutes)
+  familybox serve [--lan] [--port 8443]   the box's private web page (HTTPS; --lan only on the box itself)
 """
 
 from __future__ import annotations
@@ -42,6 +44,11 @@ def main(argv: list[str] | None = None) -> int:
         p.add_argument("--as", dest="person", required=True)
         p.add_argument("id")
     sub.add_parser("verify")
+    c = sub.add_parser("code")
+    c.add_argument("--as", dest="person", required=True)
+    sv = sub.add_parser("serve")
+    sv.add_argument("--lan", action="store_true", help="listen on the home network (0.0.0.0); use only on the box")
+    sv.add_argument("--port", type=int, default=8443)
     args = ap.parse_args(argv)
     cfg = config.load()
 
@@ -73,6 +80,17 @@ def main(argv: list[str] | None = None) -> int:
     elif args.cmd == "log":
         path = cfg.runtime / "audit" / f"{args.person}.jsonl"
         print(path.read_text() if path.exists() else "(nothing yet)")
+    elif args.cmd == "code":
+        from . import web
+        try:
+            code = web.issue_code(cfg, args.person)
+        except KeyError as e:
+            print(e.args[0]); return 2
+        print(f"sign-in code for {cfg.person(args.person).display}: {code[:4]}-{code[4:]}")
+        print("type it on the box's web page within 10 minutes. It works once.")
+    elif args.cmd == "serve":
+        from . import web
+        web.serve(cfg, lan=args.lan, port=args.port)
     elif args.cmd == "verify":
         key = enclave.api_key()
         if not key:
