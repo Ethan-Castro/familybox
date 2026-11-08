@@ -15,18 +15,22 @@ fi
 export PATH="$HOME/.local/bin:$PATH"
 uv --version
 
+timed() {  # run a command, print its wall time and peak memory when /usr/bin/time exists
+  if [ -x /usr/bin/time ]; then /usr/bin/time -f "  (%e s, peak %M KB)" "$@"; else
+    local t=$SECONDS; "$@"; echo "  ($((SECONDS - t)) s)"; fi
+}
+
 echo "== python + dependencies"
-uv python install 3.12 >/dev/null
-/usr/bin/time -v uv sync --python 3.12 -q 2> /tmp/fb_sync_time.txt || { cat /tmp/fb_sync_time.txt; exit 1; }
-grep -E "Elapsed|Maximum resident" /tmp/fb_sync_time.txt || true
+PY=$(command -v python3.13 || command -v python3.12 || true)
+if [ -z "$PY" ]; then uv python install 3.12 >/dev/null; PY=3.12; fi
+timed uv sync --python "$PY" -q
 
 echo "== tests"
 uv run pytest -q tests 2>&1 | tail -3
 
 echo "== replay demo (no API key needed)"
 export FAMILYBOX_HOME="$PWD/demo"
-/usr/bin/time -v uv run familybox ask --mode replay --as maya "What medications am I on?" 2> /tmp/fb_ask_time.txt
-grep -E "Elapsed|Maximum resident" /tmp/fb_ask_time.txt || true
+timed uv run familybox ask --mode replay --as maya "What medications am I on?"
 
 if [ -n "${NEAR_AI_CLOUD_API_KEY:-}" ]; then
   echo "== live attestation check"
