@@ -16,6 +16,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import shlex
 import os
 import subprocess
 import sys
@@ -27,7 +28,7 @@ ROOT = Path(__file__).resolve().parents[1]
 URL = os.environ.get("JFLEET_URL", "http://decision-tree.local:8080/admin").rstrip("/")
 NODE = os.environ.get("JFLEET_NODE", "decision-tree")
 TARGET_USER = os.environ.get("FAMILYBOX_PI_USER", "offlinebase")
-CHUNK = 24_000  # base64 characters per exec command
+CHUNK = 12_000  # base64 characters per exec command
 
 
 def api(method: str, path: str, body: dict | None = None) -> dict | list:
@@ -51,8 +52,8 @@ def node_id() -> str:
 
 def run(command: str, timeout_s: int = 600, quiet: bool = False) -> tuple[int, str]:
     # Run as the board's normal user, in their home, whatever user the agent runs as.
-    wrapped = (f'if [ "$(id -u)" = 0 ]; then exec runuser -u {TARGET_USER} -- bash -lc {json.dumps(command)}; '
-               f'else bash -lc {json.dumps(command)}; fi')
+    wrapped = (f'C={shlex.quote(command)}; if [ "$(id -u)" = 0 ]; then exec runuser -u {TARGET_USER} -- bash -lc "$C"; '
+               f'else bash -lc "$C"; fi')
     job = api("POST", f"/api/nodes/{node_id()}/actions",
               {"action": "exec", "params": {"command": wrapped}, "timeout_s": timeout_s})
     while True:

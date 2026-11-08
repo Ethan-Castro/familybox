@@ -61,3 +61,16 @@ Built: `config`, `access`, `store` (SQLite FTS5 plus an index of protected value
   - These are single runs and the model is not deterministic: the no-gate setup leaked 6 in run 1 and 5 in run 2.
   - Errors answer nothing. That happened 5 times in run 1 and 2 in run 2, mostly in the baseline setups.
   - The suite is 30 hand-written attacks against fictional data. It is evidence, not a proof.
+
+## 2026-11-08: Running on the Raspberry Pi (decision-tree, Pi 5, 2 GB)
+
+Installed through the fleet control plane's exec jobs, with no SSH (`scripts/fleet_exec.py install`).
+- **Install:** the code was sent as a git archive of tracked files only, in 42 chunks; the sha256 checksum verified on the board.
+- **Setup:** `scripts/pi_install.sh` ran as `offlinebase`. No sudo, no system packages, no services. It installed uv 0.13.7 and used the system Python 3.13.5.
+
+**Results on the Pi**
+- **Tests:** `uv sync` took 4 s; **97 tests passed in 4.35 s**.
+- **Replay demo:** "What medications am I on?" as Maya. The real access checks and gate ran, and the drug and condition were held for Maya.
+- **Attestation:** the Pi verified NEAR AI Cloud attestation itself, with no API key (gateway plus the DeepSeek-V4.1-Flash model report, Intel TDX quote and NVIDIA evidence, through the SDK). **5.04 s the first time, 1.61 s the second; 166 MB peak memory.**
+- **Fleet unaffected:** the board still had about 1.6 GB available, the fleet agent kept running, and the control plane kept answering.
+- **Not yet run on the Pi:** live answers. They need the NEAR key on the board, which is waiting on Ethan's OK.
