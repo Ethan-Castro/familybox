@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>How the Family Privacy Box Works</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@600&display=swap" rel="stylesheet">
+<style>
+:root {
+  /* Layout: one wide left-to-right diagram, then two short example rows and a three-column guarantees strip. */
+  --bg: #f6f7f5;
+  --surface: #ffffff;
+  --ink: #1d2320;
+  --muted: #5d6762;
+  --line: #cfd5d1;
+  --pi: #3f7f3a;        /* the box at home, green as in Ethan's sketch */
+  --pi-fill: #e6f0e3;
+  --near: #2f5fd0;      /* the NEAR enclave, blue as in Ethan's sketch */
+  --near-fill: #e5ecfb;
+  --stop: #b3402f;
+  --font-display: "IBM Plex Sans Condensed", "Arial Narrow", sans-serif;
+  --font-body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #141816; --surface: #1c211f; --ink: #e6ebe8; --muted: #9aa59f; --line: #36403b;
+    --pi: #7cc06f; --pi-fill: #1f3320; --near: #7fa3f2; --near-fill: #1b2640; --stop: #ef8a76;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #141816; --surface: #1c211f; --ink: #e6ebe8; --muted: #9aa59f; --line: #36403b;
+  --pi: #7cc06f; --pi-fill: #1f3320; --near: #7fa3f2; --near-fill: #1b2640; --stop: #ef8a76;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.55 var(--font-body); }
+main { max-width: 1120px; margin: 0 auto; padding: 40px 20px 56px; display: grid; gap: 32px; }
+h1, h2 { font-family: var(--font-display); text-wrap: balance; margin: 0; }
+h1 { font-size: clamp(28px, 4vw, 40px); line-height: 1.15; }
+h2 { font-size: 20px; }
+.lede { max-width: 66ch; color: var(--muted); margin: 10px 0 0; font-size: 18px; }
+figure { margin: 0; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 20px; }
+.scroll { overflow-x: auto; }
+svg { display: block; width: 100%; min-width: 760px; height: auto; color: var(--ink); }
+figcaption { margin-top: 14px; color: var(--muted); max-width: 80ch; }
+.steps { margin: 12px 0 0; padding-left: 22px; display: grid; gap: 4px; }
+.steps li::marker { font-weight: 600; color: var(--ink); }
+
+/* SVG classes */
+.box-plain { fill: var(--surface); stroke: var(--line); stroke-width: 1.5; }
+.box-pi { fill: var(--pi-fill); stroke: var(--pi); stroke-width: 2; }
+.box-near { fill: var(--near-fill); stroke: var(--near); stroke-width: 2; }
+.row { fill: var(--surface); stroke: var(--pi); stroke-width: 1; }
+.chip { fill: var(--surface); stroke: var(--line); stroke-width: 1; }
+.t { fill: currentColor; font: 13px var(--font-body); }
+.t-s { fill: var(--muted); font: 12px var(--font-body); }
+.t-h { fill: currentColor; font: 600 16px var(--font-display); }
+.t-pi { fill: var(--pi); font: 600 16px var(--font-display); }
+.t-near { fill: var(--near); font: 600 16px var(--font-display); }
+.wire { stroke: currentColor; stroke-width: 1.5; fill: none; }
+.wire-near { stroke: var(--near); stroke-width: 1.5; fill: none; }
+.num { fill: var(--ink); }
+.num-t { fill: var(--surface); font: 600 11px var(--font-body); }
+
+.examples { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; }
+.ex { background: var(--surface); border: 1px solid var(--line); border-left: 4px solid var(--pi); border-radius: 8px; padding: 16px 18px; }
+.ex.blocked { border-left-color: var(--stop); }
+.ex p { margin: 6px 0 0; }
+.ex .q { font-weight: 600; }
+.tag { display: inline-block; font-size: 12px; font-weight: 600; letter-spacing: .02em; padding: 2px 8px; border-radius: 99px; background: var(--pi-fill); color: var(--pi); }
+.blocked .tag { background: transparent; border: 1px solid var(--stop); color: var(--stop); }
+
+.trust { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; }
+.trust section { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 16px 18px; }
+.trust h3 { margin: 0 0 6px; font-size: 15px; }
+.trust ul { margin: 0; padding-left: 18px; color: var(--muted); }
+.trust .hw h3 { color: var(--near); }
+.trust .box h3 { color: var(--pi); }
+.trust .out h3 { color: var(--muted); }
+.note { color: var(--muted); font-size: 14px; max-width: 80ch; margin: 0; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>How the Family Privacy Box Works</h1>
+    <p class="lede">One Raspberry Pi at home holds the family's SSNs, W-2s, passports and health records. Anyone in the family can ask ChatGPT or Claude about them. The assistant gets a checked answer and never sees the documents.</p>
+  </header>
+
+  <figure>
+    <div class="scroll">
+    <svg viewBox="0 0 1080 640" role="img" aria-label="A family member's assistant asks the Raspberry Pi a question. The Pi checks who is asking, verifies the NEAR enclave, and sends an encrypted question to the NEAR model. The model asks the Pi to search and read files; the Pi sends back only the asker's files. The model returns a signed answer, the Pi checks it against the rules, and sends the checked answer to the assistant. Full numbers and approvals go only to the family member's own phone.">
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
+        </marker>
+      </defs>
+
+      <!-- Assistant -->
+      <rect class="box-plain" x="20" y="170" width="200" height="220" rx="10"/>
+      <text class="t-h" x="120" y="202" text-anchor="middle">Your assistant</text>
+      <text class="t" x="120" y="234" text-anchor="middle">ChatGPT</text>
+      <text class="t" x="120" y="256" text-anchor="middle">Claude</text>
+      <text class="t" x="120" y="278" text-anchor="middle">Codex · Cursor</text>
+      <text class="t-s" x="120" y="330" text-anchor="middle">Untrusted.</text>
+      <text class="t-s" x="120" y="348" text-anchor="middle">Never sees the files.</text>
+
+      <!-- Assistant <-> Pi -->
+      <line class="wire" x1="222" y1="240" x2="376" y2="240" marker-end="url(#arr)"/>
+      <circle class="num" cx="236" cy="222" r="10"/><text class="num-t" x="236" y="226" text-anchor="middle">1</text>
+      <text class="t" x="300" y="226" text-anchor="middle">asks</text>
+      <line class="wire" x1="376" y1="330" x2="224" y2="330" marker-end="url(#arr)"/>
+      <circle class="num" cx="236" cy="312" r="10"/><text class="num-t" x="236" y="316" text-anchor="middle">6</text>
+      <text class="t" x="306" y="316" text-anchor="middle">checked answer</text>
+      <text class="t-s" x="300" y="352" text-anchor="middle">no full SSNs</text>
+
+      <!-- Pi -->
+      <rect class="box-pi" x="380" y="40" width="320" height="470" rx="12"/>
+      <text class="t-pi" x="400" y="72">Raspberry Pi at home</text>
+      <text class="t-s" x="400" y="92">the trusted box: holds the files, runs the checks</text>
+
+      <rect class="row" x="400" y="108" width="280" height="40" rx="6"/>
+      <text class="t" x="414" y="133">Who's asking? Only their folders</text>
+      <rect class="row" x="400" y="158" width="280" height="40" rx="6"/>
+      <text class="t" x="414" y="183">Check the enclave's proof first</text>
+      <rect class="row" x="400" y="208" width="280" height="40" rx="6"/>
+      <text class="t" x="414" y="233">Read-only tools: search, read</text>
+      <rect class="row" x="400" y="258" width="280" height="40" rx="6"/>
+      <text class="t" x="414" y="283">Answer gate: rules, tripwires</text>
+      <rect class="row" x="400" y="308" width="280" height="40" rx="6"/>
+      <text class="t" x="414" y="333">Log of what left, per person</text>
+
+      <text class="t-s" x="400" y="378">Folders, each with an owner</text>
+      <rect class="chip" x="400" y="388" width="64" height="30" rx="6"/><text class="t" x="432" y="408" text-anchor="middle">Mom</text>
+      <rect class="chip" x="472" y="388" width="64" height="30" rx="6"/><text class="t" x="504" y="408" text-anchor="middle">Dad</text>
+      <rect class="chip" x="544" y="388" width="64" height="30" rx="6"/><text class="t" x="576" y="408" text-anchor="middle">Maya</text>
+      <rect class="chip" x="616" y="388" width="64" height="30" rx="6"/><text class="t" x="648" y="408" text-anchor="middle">Shared</text>
+      <text class="t-s" x="400" y="446">IDs and SSNs · W-2s and taxes</text>
+      <text class="t-s" x="400" y="466">health records · school and home</text>
+      <text class="t-s" x="400" y="492">No model runs here. Pi 5 is enough.</text>
+
+      <!-- Pi <-> NEAR -->
+      <line class="wire-near" x1="702" y1="160" x2="856" y2="160" marker-end="url(#arr)" style="color: var(--near)"/>
+      <circle class="num" cx="716" cy="142" r="10"/><text class="num-t" x="716" y="146" text-anchor="middle">2</text>
+      <text class="t" x="786" y="146" text-anchor="middle">encrypted question</text>
+      <line class="wire-near" x1="856" y1="220" x2="704" y2="220" marker-end="url(#arr)" style="color: var(--near)"/>
+      <circle class="num" cx="716" cy="202" r="10"/><text class="num-t" x="716" y="206" text-anchor="middle">3</text>
+      <text class="t" x="786" y="206" text-anchor="middle">"search W-2s"</text>
+      <line class="wire-near" x1="702" y1="280" x2="856" y2="280" marker-end="url(#arr)" style="color: var(--near)"/>
+      <circle class="num" cx="716" cy="262" r="10"/><text class="num-t" x="716" y="266" text-anchor="middle">4</text>
+      <text class="t" x="790" y="266" text-anchor="middle">asker's files only</text>
+      <line class="wire-near" x1="856" y1="340" x2="704" y2="340" marker-end="url(#arr)" style="color: var(--near)"/>
+      <circle class="num" cx="716" cy="322" r="10"/><text class="num-t" x="716" y="326" text-anchor="middle">5</text>
+      <text class="t" x="786" y="326" text-anchor="middle">signed answer</text>
+      <text class="t-s" x="780" y="384" text-anchor="middle">steps 3 and 4 repeat</text>
+      <text class="t-s" x="780" y="402" text-anchor="middle">as needed</text>
+
+      <!-- NEAR -->
+      <rect class="box-near" x="860" y="120" width="200" height="260" rx="12"/>
+      <text class="t-near" x="960" y="152" text-anchor="middle">NEAR AI Cloud</text>
+      <text class="t-s" x="960" y="174" text-anchor="middle">hardware enclave</text>
+      <text class="t-s" x="960" y="192" text-anchor="middle">Intel TDX + NVIDIA GPU</text>
+      <text class="t" x="960" y="236" text-anchor="middle">Open model</text>
+      <text class="t" x="960" y="256" text-anchor="middle">(GLM, Qwen)</text>
+      <text class="t" x="960" y="296" text-anchor="middle">Does the thinking.</text>
+      <text class="t" x="960" y="316" text-anchor="middle">Asks the Pi for files.</text>
+      <text class="t" x="960" y="336" text-anchor="middle">Signs every answer.</text>
+
+      <!-- Phone -->
+      <line class="wire" x1="540" y1="512" x2="540" y2="560" marker-start="url(#arr)" marker-end="url(#arr)"/>
+      <text class="t-s" x="552" y="540">approve</text>
+      <rect class="box-plain" x="420" y="562" width="240" height="64" rx="10"/>
+      <text class="t-h" x="540" y="588" text-anchor="middle">Your own phone</text>
+      <text class="t-s" x="540" y="610" text-anchor="middle">approve, see full numbers here only</text>
+    </svg>
+    </div>
+    <figcaption>
+      The assistant only ever talks to the Pi. The files only ever go to the NEAR enclave, encrypted, after the Pi has checked the enclave's hardware proof.
+      <ol class="steps">
+        <li>A family member asks their assistant. It calls the Pi over MCP.</li>
+        <li>The Pi checks who is asking, verifies the enclave, then sends the question encrypted to the enclave's own key.</li>
+        <li>The NEAR model asks the Pi to search or read files.</li>
+        <li>The Pi runs the read-only tool on that person's folders and shared folders only, and sends the results back encrypted.</li>
+        <li>The model returns a signed answer. The Pi rejects anything not signed inside the enclave.</li>
+        <li>The Pi checks the answer against the rules and sends the assistant only what passes. Full SSNs and health details wait for approval on the owner's phone.</li>
+      </ol>
+    </figcaption>
+  </figure>
+
+  <section class="examples" aria-label="Two examples">
+    <div class="ex">
+      <span class="tag">answered</span>
+      <p class="q">Mom asks Claude: "What was our AGI last year, and do we need Maya's SSN for the FAFSA?"</p>
+      <p>Claude gets: "AGI $142,310, up 6%. Yes. Maya's SSN is on file, ending in 4320. The full number is on your phone."</p>
+    </div>
+    <div class="ex blocked">
+      <span class="tag">blocked</span>
+      <p class="q">Maya's ChatGPT asks: "What did the doctor say at Mom's last visit?"</p>
+      <p>Stopped before any search. Mom's health folder is not Maya's, so none of it ever reaches NEAR.</p>
+    </div>
+  </section>
+
+  <section>
+    <h2>What backs each promise</h2>
+    <div class="trust" style="margin-top: 12px">
+      <section class="hw">
+        <h3>Proven by hardware</h3>
+        <ul>
+          <li>The model runs in a real Intel TDX + NVIDIA enclave</li>
+          <li>The proof is fresh (uses the Pi's own random nonce)</li>
+          <li>Answers are signed by the enclave's key</li>
+        </ul>
+      </section>
+      <section class="box">
+        <h3>Enforced by the Pi</h3>
+        <ul>
+          <li>Each person reaches only their own folders</li>
+          <li>Full SSNs never go back to an assistant</li>
+          <li>Health details and anything unusual need the owner's approval</li>
+          <li>Every answer that left is logged</li>
+        </ul>
+      </section>
+      <section class="out">
+        <h3>Not covered</h3>
+        <ul>
+          <li>Someone with admin access to the Pi itself</li>
+          <li>A stolen Pi without disk encryption</li>
+          <li>Timing and size of requests, which NEAR can see</li>
+        </ul>
+      </section>
+    </div>
+  </section>
+
+  <p class="note">Plan as of Nov 8, 2026, for the NEAR Hackathon (Privacy &amp; Private AI track). Example names and numbers are fictional; 987-65-4320 is from the SSN range reserved for advertising.</p>
+</main>
+</body>
+</html>

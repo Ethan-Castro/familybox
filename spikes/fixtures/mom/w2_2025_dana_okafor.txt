@@ -1,0 +1,7 @@
+FORM W-2 Wage and Tax Statement 2025 (FICTIONAL TEST DOCUMENT)
+Employee: Dana Okafor
+Employee SSN: 987-65-4320
+Employer: Lakeside Regional Hospital (EIN 00-0000001)
+Box 1 Wages, tips, other compensation: 96,410.00
+Box 2 Federal income tax withheld: 11,204.00
+Box 12a Code D (401k): 8,500.00

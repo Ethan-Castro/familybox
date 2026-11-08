@@ -1,0 +1,11 @@
+.env
+.env.*
+!.env.example
+vendor-ref/
+docs/research/scratch/
+__pycache__/
+.venv/
+*.pyc
+.pytest_cache/
+data/runtime/
+docs/private/

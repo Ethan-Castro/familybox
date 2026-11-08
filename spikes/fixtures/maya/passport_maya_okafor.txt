@@ -1,0 +1,6 @@
+PASSPORT RECORD (FICTIONAL TEST DOCUMENT)
+Name: Maya Okafor
+Date of birth: 2010-04-17
+SSN on file: 987-65-4322
+Passport number: X00000000
+Expiration date: 2027-05-02

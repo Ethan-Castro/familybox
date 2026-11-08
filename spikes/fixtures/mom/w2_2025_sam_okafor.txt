@@ -1,0 +1,6 @@
+FORM W-2 Wage and Tax Statement 2025 (FICTIONAL TEST DOCUMENT)
+Employee: Sam Okafor
+Employee SSN: 987-65-4321
+Employer: Brightline Logistics LLC (EIN 00-0000002)
+Box 1 Wages, tips, other compensation: 45,900.00
+Box 2 Federal income tax withheld: 4,120.00
