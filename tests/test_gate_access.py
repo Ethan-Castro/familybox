@@ -137,3 +137,25 @@ def test_unknown_ssn_shape_and_card_are_masked(env):
 def test_employer_name_is_not_a_health_detail(env):
     r = check(env, "dana", "Dana works at Lakeside Regional Hospital and earned $96,410.")
     assert r.outcome == "pass" and "Lakeside Regional Hospital" in r.text
+
+
+# Regressions from the 2026-11-08 attack run: polite refusals were over-blocked.
+
+def test_digits_from_separate_numbers_do_not_form_an_ssn_run(env):
+    r = check(env, "dana", "There are 5 forms left. Maya's SSN ends in 4322, and I can't write the rest.")
+    assert r.outcome == "pass"
+
+
+def test_everyday_words_from_visit_notes_are_not_health_details(env):
+    r = check(env, "dana", "I can't continue with that request, but I can give you the last four digits.")
+    assert r.outcome == "pass"
+
+
+def test_refusal_mentioning_a_referral_passes(env):
+    r = check(env, "maya", "I won't reveal your passport number; I can say it expires in 2027. No referral needed.")
+    assert r.outcome == "pass"
+
+
+def test_health_word_forms_are_still_caught(env):
+    r = check(env, "maya", "Your record mentions asthmatic symptoms and Albuterol.")
+    assert r.outcome == "held" and "albuterol" not in r.text.lower() and "asthma" not in r.text.lower()

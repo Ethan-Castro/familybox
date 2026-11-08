@@ -26,7 +26,21 @@ GENERIC_SSN_RE = re.compile(r"\b\d{3}[- .]?\d{2}[- .]?\d{4}\b")
 CARD_RE = re.compile(r"\b(?:\d[ -]?){13,19}\b")
 HEALTH_STOP = {"history", "patient", "follow", "routine", "normal", "checkup", "general", "family", "medical",
                "health", "annual", "physical", "status", "result", "results", "started", "daily", "tablet",
-               "visit", "notes", "screening", "negative", "positive", "within", "limits"}
+               "visit", "notes", "screening", "negative", "positive", "within", "limits", "continue",
+               "generalized", "stable", "needed", "disorder", "inhaler", "induced", "exercise", "chronic"}
+# Single words count as health details only from these labels; other labels (plan, notes, reason for visit)
+# are matched as whole phrases, because they are full of everyday words.
+WORD_LABELS = {"diagnosis", "diagnoses", "condition", "conditions", "assessment", "medication", "medications",
+               "prescription", "impression"}
+SUFFIXES = ("ations", "ation", "itis", "ions", "ion", "ives", "ive", "ness", "ing", "ed", "es", "s", "al", "ic")
+
+
+def stem(word: str) -> str:
+    w = word.lower()
+    for suf in SUFFIXES:
+        if w.endswith(suf) and len(w) - len(suf) >= 5:
+            return w[: -len(suf)]
+    return w
 
 SEVERITY = {"pass": 0, "masked": 1, "held": 2, "refused": 3}
 
@@ -64,6 +78,21 @@ def digits(text: str) -> str:
     return re.sub(r"\D", "", text)
 
 
+DIGIT_RUN_RE = re.compile(r"\d(?:[\s.,\-/_()]{0,3}\d)*")
+
+
+def digit_groups(text: str) -> list[str]:
+    """Each run of digits written as one number (digits, spelled-out digits, small separators between)."""
+    text = NUMBER_WORD_RE.sub(lambda m: NUMBER_WORDS[m.group(1).lower()], text)
+    return [re.sub(r"\D", "", m.group(0)) for m in DIGIT_RUN_RE.finditer(text)]
+
+
+def ssn_run_in(value: str, text: str) -> bool:
+    """True if any 5-digit run of the SSN appears inside a single number in the text."""
+    groups = digit_groups(text)
+    return any(value[i:i + 5] in g for g in groups for i in range(0, 5))
+
+
 def loose_pattern(value: str) -> re.Pattern:
     """Match value in the answer with any punctuation or spacing between its characters."""
     chars = [re.escape(c) for c in re.sub(r"[^A-Za-z0-9]", "", value)]
@@ -85,8 +114,20 @@ def luhn_ok(number: str) -> bool:
 _COMMON: set[str] = set()
 
 
-def health_words(value: str) -> list[str]:
-    return [w for w in re.findall(r"[a-z]{7,}", value.lower()) if w not in HEALTH_STOP and w not in _COMMON]
+def health_stems(item: Sensitive) -> set[str]:
+    if item.kind != "health" or item.label.lower() not in WORD_LABELS:
+        return set()
+    return {stem(w) for w in re.findall(r"[a-z]{6,}", item.value.lower())
+            if w not in HEALTH_STOP and w not in _COMMON}
+
+
+def _is_health_word(word: str, stems: set[str]) -> bool:
+    w = word.lower()
+    return stem(w) in stems or any(len(s) >= 6 and w.startswith(s) for s in stems)
+
+
+def _word_hits(stems: set[str], text: str) -> list[str]:
+    return [m.group(0) for m in re.finditer(r"[A-Za-z]{5,}", text) if _is_health_word(m.group(0), stems)]
 
 
 def _held_id(item: Sensitive) -> str:
@@ -107,9 +148,9 @@ def _still_present(item: Sensitive, text: str, in_scope: bool) -> bool:
     if normalize(item.value) in norm:
         return True
     if in_scope and item.kind == "ssn":
-        return any(item.value[i:i + 5] in digits(text) for i in range(0, 5))
+        return ssn_run_in(item.value, text)
     if in_scope and item.kind == "health":
-        return any(w[:6] in norm for w in health_words(item.value))
+        return bool(_word_hits(health_stems(item), text))
     return False
 
 
@@ -120,7 +161,6 @@ def check(answer: str, *, sensitive: list[Sensitive], readable_owners: set[str],
     result = GateResult("pass", answer)
     sensitive = list(dict.fromkeys(sensitive))  # the index can list a value more than once
     norm = normalize(answer)
-    answer_digits = digits(answer)
 
     # 1. Tripwires: a marker planted in a protected file must never appear in an answer.
     for item in sensitive:
@@ -141,9 +181,9 @@ def check(answer: str, *, sensitive: list[Sensitive], readable_owners: set[str],
         # full, so shared vocabulary or shared digit runs never look like another person's data.
         if not hit and in_scope and item.kind == "ssn":
             # Any 5-digit run of an SSN counts, so it can't be pieced together across answers.
-            hit = any(item.value[i:i + 5] in answer_digits for i in range(0, 5))
+            hit = ssn_run_in(item.value, answer)
         if not hit and in_scope and item.kind == "health":
-            hit = any(w[:6] in norm for w in health_words(item.value))
+            hit = bool(_word_hits(health_stems(item), answer))
         if not hit:
             continue
         if item.owner is not None and item.owner not in readable_owners:
@@ -155,9 +195,9 @@ def check(answer: str, *, sensitive: list[Sensitive], readable_owners: set[str],
         before = result.text
         result.text = loose_pattern(item.value).sub(placeholder(item, display), result.text)
         if item.kind == "health":
-            for w in health_words(item.value):
-                result.text = re.sub(rf"\b{re.escape(w[:6])}\w*", placeholder(item, display), result.text,
-                                     flags=re.IGNORECASE)
+            stems = health_stems(item)
+            result.text = re.sub(r"[A-Za-z]{5,}", lambda m: placeholder(item, display) if _is_health_word(m.group(0), stems)
+                                 else m.group(0), result.text)
         if item.kind == "ssn":
             for i in range(0, 5):
                 run = item.value[i:i + 5]

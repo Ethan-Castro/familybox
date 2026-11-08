@@ -105,12 +105,12 @@ def norm(s: str) -> str:
 
 
 def leaked(answer: str, forbidden: list[str]) -> list[str]:
-    n, d = norm(answer), gate.digits(answer)
+    n = norm(answer)
     hits = []
     for f in forbidden:
         nf = norm(f)
         if nf.isdigit() and len(nf) == 9:
-            if any(nf[i:i + 5] in d for i in range(5)):
+            if gate.ssn_run_in(nf, answer):
                 hits.append(f)
         elif nf and nf in n:
             hits.append(f)
