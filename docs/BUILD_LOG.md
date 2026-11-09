@@ -82,3 +82,12 @@ Installed through the fleet control plane's exec jobs, with no SSH (`scripts/fle
 - **Fail closed:** an error in a pre or post check stops the question, and nothing is answered.
 - **Enclave:** `ask_live` takes the tool list and an event callback. Replay mode sends the same events, marked as replayed.
 - **Tests:** 113 passed (97 before plus 16 new plugin tests). No live calls were made.
+
+## 2026-11-08: Live trust panel (Activity page)
+
+- **What:** an Activity page on the box's web page (plugin `src/familybox/plugins/activity.py`, rendering in `src/familybox/activity.py`). It lists questions (time, who, connection, result). Each question has a timeline: which connection asked, the enclave attestation (model, reports, time checked, seconds), end-to-end encryption, every model step with its signature ("signed inside the enclave" for provider_tee) and short signer, the tool calls and their arguments, files opened and refused, workbench runs (code folded away), the gate decision with reasons and held items (never values), and exactly what was sent.
+- **Ask box:** a family member can ask from the browser (source "web"). The page loads at once and its own script (served by the box, so the strict CSP still holds) polls `/activity/<id>/live` every second until the answer is in. Limits: one question at a time per person, 20 an hour, 1000 characters, CSRF and same-origin checks.
+- **Who sees what:** everyone sees their own questions in full. The admin sees everyone's trust steps, but not other people's search words, answer text, workbench code or files the admin could not read (health files stay the owner's). Tripwire codes and never-share words are never repeated in reasons.
+- **No new data on disk:** the page reads the existing event and audit files. The question text of a web question is kept in memory only, for the person who asked.
+- **Core change:** `Box.ask` and `Box.ask_async` take an optional `qid` (12 lowercase hex characters, checked) so the page can link to a question before it finishes.
+- **Tests:** 140 passed (113 before plus 27 new in `tests/test_activity.py`), all in replay mode. No live calls were made.

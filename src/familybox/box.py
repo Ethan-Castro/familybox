@@ -23,6 +23,7 @@ import hashlib
 import inspect
 import json
 import logging
+import re
 import secrets
 import time
 from dataclasses import asdict, dataclass, field
@@ -53,6 +54,9 @@ class Answer:
 
     def to_dict(self) -> dict:
         return asdict(self)
+
+
+QID_RE = re.compile(r"[0-9a-f]{12}")
 
 
 def new_qid() -> str:
@@ -176,12 +180,17 @@ class Box:
 
     # ---- asking
 
-    def ask(self, person_id: str, question: str, *, source: str = "cli") -> Answer:
-        return asyncio.run(self.ask_async(person_id, question, source=source))
+    def ask(self, person_id: str, question: str, *, source: str = "cli", qid: str | None = None) -> Answer:
+        return asyncio.run(self.ask_async(person_id, question, source=source, qid=qid))
 
-    async def ask_async(self, person_id: str, question: str, *, source: str = "cli") -> Answer:
+    async def ask_async(self, person_id: str, question: str, *, source: str = "cli",
+                        qid: str | None = None) -> Answer:
+        """qid: optional id chosen by the caller (12 lowercase hex characters), so a web page can
+        point at the question's events before it finishes."""
+        if qid is not None and not QID_RE.fullmatch(qid):
+            raise ValueError("qid must be 12 lowercase hex characters")
         person = self.cfg.person(person_id)
-        ctx = Question(self, person, question, source)
+        ctx = Question(self, person, question, source, qid)
         key = enclave.api_key()
         mode = self.mode if self.mode != "auto" else ("live" if key else "replay")
         ctx.emit("question", source=source, mode=mode, chars=len(question))

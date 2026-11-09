@@ -40,6 +40,13 @@ the text, the box replaces the text with the standard blocked message.
 and `ctx.emit(step, **data)`, which appends one JSON line to `<runtime>/events/<person>/<qid>.jsonl`.
 Never pass file text or answer text to emit. Known protected values are scrubbed from every event anyway.
 
+`box.ask(person_id, question, *, source="cli", qid=None)` and `await box.ask_async(...)` take an optional
+`qid` (12 lowercase hex characters) when the caller needs the id before the question finishes.
+
+The Activity plugin (`plugins/activity.py`) renders these events as a live timeline on the web page. It
+draws any step whose name starts with `workbench` as a workbench run (fields `code`, `ok`, `exit_code`,
+`seconds`, `output_chars`, `files`).
+
 Steps the core emits: `question`, `attestation`, `turn`, `tool`, `error`, `pre_check_stopped`, `gate`,
 `post_checks`, `post_check_stopped`, `answer`. Attestation and turn events carry `replayed`.
 
