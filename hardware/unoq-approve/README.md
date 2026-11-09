@@ -2,7 +2,9 @@
 
 A button you keep at home. When an assistant's answer included one of your private details, the family box
 holds the detail back. This button scrolls who is asking on the UNO Q's LED matrix, for example
-"Maya's ChatGPT wants Dana's passport number". Press the button to approve. Hold it for 1.5 seconds to deny.
+"Maya's assistant wants Dana's passport number". When the assistant's connection tells the box its name,
+the name is shown instead ("Maya's ChatGPT wants ..."). Press the button to approve. Hold it for 1.5 seconds
+to deny.
 
 > **UNTESTED ON HARDWARE.** Everything here was written from Arduino's documentation and tested only on a
 > laptop: the logic, the box's device API, the HTTPS certificate pin, and the desktop simulator. The sketch
@@ -15,7 +17,9 @@ holds the detail back. This button scrolls who is asking on the UNO Q's LED matr
   Health details are only ever called "health detail", never "diagnosis" or "medication", because anyone
   in the room can read the matrix.
 - It can do: approve or deny one item, for the one person it belongs to.
-- It never receives the held value, the question, or a file name. Approving does not send the value to the
+- It never receives the held value, the question, a file name, or the box's own id for the held detail
+  (that id is built from the value, so it could be worked backward). Each waiting item gets a random label
+  that only the box can match to the item. Approving does not send the value to the
   assistant either. The owner can look at an approved value once, on the box's own page (Devices), signed in.
 - Its token only works on the device API. It cannot ask questions, open the box's web page, or touch
   anyone else's items. Remove it any time with `familybox device remove` or on the Devices page.
@@ -96,7 +100,9 @@ Instead of `data/approver.json` you can set `FAMILYBOX_URL`, `FAMILYBOX_DEVICE_T
 | NOT SENT. TRY AGAIN | The box did not answer. The item is still waiting. |
 | CAN'T REACH THE BOX | Check the box is on and running `familybox serve --lan`. |
 | WRONG BOX CERTIFICATE | The box's certificate changed. Run `familybox device add` again. |
-| THIS BUTTON IS NOT SET UP | The token was removed or is wrong. |
+| THIS BUTTON IS NOT SET UP | The token was removed or is wrong. The button now checks only once a minute. |
+| TOO MANY WRONG TRIES. WAIT 10 MINUTES | Something on your network sent wrong tokens. The button checks once a minute until it clears. |
+| THE BOX HAD A PROBLEM | The box gave an answer the button didn't understand. It keeps trying. |
 
 A press only counts once the request has been on screen for 1.5 seconds, so a new request that appears
 just as you press is never approved by accident. Early presses are ignored.

@@ -6,8 +6,13 @@ A device belongs to one person and has one scope, "approve". With its token it c
 It can never see a held value, the question text or a file path, ask questions, or open the box's web page.
 Approved values are shown later only on the owner's own signed-in screen (the Devices page).
 
+The device never sees the box's own held-item ids either. Those are an unkeyed hash of path, kind and
+value, so an SSN could be brute-forced back out of one. Each waiting item is given a random handle
+instead, and only the handle leaves the box.
+
 What is stored in <runtime>/devices/ (folder 0700, files 0600):
   devices.json     device id -> person, name, scope, SHA-256 of the token, created, last seen
+  handles.json     random handle -> held item id (and when it was held), for items still waiting
   decisions.json   what each device approved or denied, and whether the owner has looked at the value
 
 Tokens look like fbd_<8 hex id>_<43 random characters>. Only their SHA-256 is kept, so a copy of the
@@ -25,9 +30,8 @@ import os
 import re
 import secrets
 import time
-from pathlib import Path
 
-from .approvals import Approvals
+from .approvals import Approvals, write_private as _write_private
 from .config import Config
 
 SCOPE_APPROVE = "approve"
@@ -37,6 +41,7 @@ NAME_MAX = 40
 LAST_SEEN_EVERY_S = 60          # write last_seen at most once a minute, not on every poll
 REVEAL_WINDOW_S = 24 * 60 * 60  # a button-approved value can be shown on the owner's screen for a day
 MAX_ITEMS = 20
+MAX_HANDLES = 500
 
 ASSISTANTS = (("chatgpt", "ChatGPT"), ("openai", "ChatGPT"), ("claude", "Claude"), ("codex", "Codex"),
               ("cursor", "Cursor"), ("gemini", "Gemini"), ("copilot", "Copilot"))
@@ -48,21 +53,6 @@ class DeviceError(ValueError):
 
 def _token_hash(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
-
-
-def _write_private(path: Path, data: bytes) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    tmp = path.with_name(f".{path.name}.{secrets.token_hex(6)}.tmp")
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    try:
-        with os.fdopen(fd, "wb") as f:
-            f.write(data)
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(tmp, path)
-    finally:
-        with contextlib.suppress(FileNotFoundError):
-            tmp.unlink()
 
 
 def clean_name(name: str) -> str:
@@ -193,39 +183,68 @@ class Devices:
 
     # ---- what a device may see and do
 
-    def pending_for(self, device: dict) -> list[dict]:
-        """Waiting items for the device's person, oldest first. No values, questions or paths."""
-        raw = Approvals(self.cfg)._load()
-        out = []
-        for item_id, it in raw.items():
-            if it.get("owner") != device["person"] or it.get("status") != "waiting":
-                continue
-            out.append({"id": item_id, "text": describe(self.cfg, it),
-                        "asker": self.cfg.people[it["asker"]].display if it.get("asker") in self.cfg.people
-                        else str(it.get("asker", "")),
-                        "assistant": assistant_name(it.get("source", "")),
-                        "what": what_label(it.get("kind", ""), it.get("label", "")),
-                        "created": int(it.get("created", 0))})
-        out.sort(key=lambda x: (x["created"], x["id"]))
-        return out[:MAX_ITEMS]
+    def _handles(self, raw: dict) -> tuple[dict, bool]:
+        """handles.json with entries for items that are no longer waiting (or were held again) dropped."""
+        handles = self._load("handles.json", {})
+        keep = {h: e for h, e in handles.items()
+                if isinstance(e, dict) and e.get("item") in raw and raw[e["item"]].get("status") == "waiting"
+                and int(raw[e["item"]].get("created", 0)) == e.get("created")}
+        if len(keep) > MAX_HANDLES:
+            keep = dict(sorted(keep.items(), key=lambda kv: kv[1]["created"])[-MAX_HANDLES:])
+        return keep, keep != handles
 
-    def decide(self, device: dict, item_id: str, approve: bool) -> dict:
-        """Approve or deny one waiting item. Raises KeyError when it is not waiting for this device's person.
-        Returns only the id and new status, never the value."""
-        if not ITEM_ID_RE.match(item_id or ""):
+    def pending_for(self, device: dict) -> list[dict]:
+        """Waiting items for the device's person, oldest first. No values, questions, paths or held ids:
+        each item is named by a random handle that only this box can turn back into the item."""
+        raw = Approvals(self.cfg)._load()
+        waiting = [(item_id, it) for item_id, it in raw.items()
+                   if it.get("owner") == device["person"] and it.get("status") == "waiting"]
+        waiting.sort(key=lambda kv: (int(kv[1].get("created", 0)), kv[0]))
+        waiting = waiting[:MAX_ITEMS]
+        with self._lock():
+            handles, changed = self._handles(raw)
+            by_item = {(e["item"], e["created"]): h for h, e in handles.items()}
+            out = []
+            for item_id, it in waiting:
+                created = int(it.get("created", 0))
+                handle = by_item.get((item_id, created))
+                if handle is None:
+                    handle = secrets.token_urlsafe(12)
+                    handles[handle] = {"item": item_id, "created": created, "person": device["person"]}
+                    changed = True
+                out.append({"id": handle, "text": describe(self.cfg, it),
+                            "asker": self.cfg.people[it["asker"]].display if it.get("asker") in self.cfg.people
+                            else str(it.get("asker", "")),
+                            "assistant": assistant_name(it.get("source", "")),
+                            "what": what_label(it.get("kind", ""), it.get("label", "")),
+                            "created": created})
+            if changed:
+                self._save("handles.json", handles)
+        return out
+
+    def decide(self, device: dict, handle: str, approve: bool) -> dict:
+        """Approve or deny one waiting item by its handle. Raises KeyError when it is not waiting for this
+        device's person. Returns only the handle and new status, never the value."""
+        if not ITEM_ID_RE.match(handle or ""):
             raise KeyError("bad id")
         with self._lock():
-            appr = Approvals(self.cfg)
-            it = appr._load().get(item_id)
-            if not it or it.get("owner") != device["person"] or it.get("status") != "waiting":
+            entry = self._load("handles.json", {}).get(handle)
+            if not isinstance(entry, dict) or entry.get("person") != device["person"]:
                 raise KeyError("not waiting for this person")
-            appr.decide(device["person"], item_id, approve)   # the returned value is dropped here
+            item_id = entry["item"]
+            # One locked step in Approvals: still waiting, same hold, same owner. The value is dropped here.
+            result = Approvals(self.cfg).decide_if_waiting(device["person"], item_id, approve,
+                                                           created=entry["created"])
+            handles = self._load("handles.json", {})
+            handles.pop(handle, None)
+            self._save("handles.json", handles)
             decisions = self._load("decisions.json", [])
-            decisions.append({"item": item_id, "device": device["id"], "person": device["person"],
+            decisions.append({"item": item_id, "handle": handle, "decision": result["decision"],
+                              "device": device["id"], "person": device["person"],
                               "approved": bool(approve), "time": int(time.time()), "revealed": False})
             self._save("decisions.json", decisions[-200:])
         self._audit(device, item_id, approve)
-        return {"id": item_id, "status": "approved" if approve else "denied"}
+        return {"id": handle, "status": "approved" if approve else "denied"}
 
     def _audit(self, device: dict, item_id: str, approve: bool) -> None:
         path = self.cfg.runtime / "audit" / f"{device['person']}.jsonl"
@@ -246,26 +265,35 @@ class Devices:
             if d.get("person") != person_id:
                 continue
             it = raw.get(d["item"]) or {}
-            showable = (d["approved"] and not d.get("revealed") and it.get("status") == "approved"
-                        and it.get("owner") == person_id and now - d["time"] < REVEAL_WINDOW_S)
-            out.append({"item": d["item"], "device": names.get(d["device"], "a removed device"),
-                        "approved": d["approved"], "time": d["time"], "showable": showable,
+            out.append({"item": d.get("handle", ""), "device": names.get(d["device"], "a removed device"),
+                        "approved": d["approved"], "time": d["time"],
+                        "showable": bool(d.get("handle")) and self._showable(d, it, person_id, now),
                         "text": describe(self.cfg, it) if it else "an item that is gone"})
         return out[:20]
 
-    def reveal(self, person_id: str, item_id: str, now: float | None = None) -> dict:
+    @staticmethod
+    def _showable(d: dict, it: dict, person_id: str, now: float) -> bool:
+        """Approved by the button, not looked at yet, within a day, and the item still carries this very
+        decision. If the detail was held again or decided somewhere else since, the stamp differs."""
+        return bool(d.get("approved") and not d.get("revealed") and it
+                    and it.get("owner") == person_id and it.get("status") == "approved"
+                    and d.get("decision") and it.get("decision") == d.get("decision")
+                    and now - d["time"] < REVEAL_WINDOW_S)
+
+    def reveal(self, person_id: str, handle: str, now: float | None = None) -> dict:
         """Show a button-approved value once, on the owner's own signed-in screen. KeyError otherwise."""
         now = time.time() if now is None else now
+        if not ITEM_ID_RE.match(handle or ""):
+            raise KeyError("bad id")
         with self._lock():
             decisions = self._load("decisions.json", [])
-            it = Approvals(self.cfg)._load().get(item_id)
             for d in reversed(decisions):
-                if d.get("item") == item_id and d.get("person") == person_id:
+                if d.get("handle") == handle and d.get("person") == person_id:
                     break
             else:
                 raise KeyError("no button decision for this item")
-            if (not d["approved"] or d.get("revealed") or not it or it.get("owner") != person_id
-                    or it.get("status") != "approved" or now - d["time"] >= REVEAL_WINDOW_S):
+            it = Approvals(self.cfg)._load().get(d["item"])
+            if not self._showable(d, it or {}, person_id, now):
                 raise KeyError("not showable")
             d["revealed"] = True
             self._save("decisions.json", decisions)

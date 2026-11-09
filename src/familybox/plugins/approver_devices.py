@@ -10,7 +10,8 @@ needed (a web page on another site cannot set an Authorization header without a 
 API never gives one). Requests that carry an Origin header are refused: devices never send one.
   GET  /api/device/v1/pending                        items waiting for the device's person, oldest first
   POST /api/device/v1/items/<id>/approve | /deny     decide one item
-Responses never include a held value, the question text or a file path.
+Responses never include a held value, the question text, a file path or the box's own held-item id:
+<id> is a random handle the box made for that waiting item.
 
 Web page for the owner (signed in): /devices lists their devices (remove one) and what the button
 decided, and shows a button-approved value once, here on the owner's own screen.
@@ -30,6 +31,7 @@ from familybox.devices import Devices, ITEM_ID_RE
 API = "/api/device/v1"
 FAIL_MAX = 10              # wrong tokens per address per window before the API stops answering it
 FAIL_WINDOW_S = 10 * 60
+FAIL_ADDRS_MAX = 1000      # addresses remembered at once; the oldest are forgotten first
 
 
 # --- CLI -------------------------------------------------------------------------------------------
@@ -84,6 +86,31 @@ def run_cli(args, cfg) -> int | None:
     return 0
 
 
+class FailureLog:
+    """Wrong-token attempts per address, for the lockout. Bounded: empty entries are dropped and at most
+    FAIL_ADDRS_MAX addresses are remembered, so a stream of addresses can't grow it without limit."""
+
+    def __init__(self, max_addrs: int = FAIL_ADDRS_MAX):
+        self.max_addrs = max_addrs
+        self.times: dict[str, list[float]] = {}
+
+    def locked(self, addr: str, now: float) -> bool:
+        recent = [t for t in self.times.get(addr, []) if now - t < FAIL_WINDOW_S]
+        if recent:
+            self.times[addr] = recent
+        else:
+            self.times.pop(addr, None)
+        return len(recent) >= FAIL_MAX
+
+    def record(self, addr: str, now: float) -> None:
+        self.times.setdefault(addr, []).append(now)
+        if len(self.times) > self.max_addrs:
+            for stale in [a for a, ts in self.times.items() if now - ts[-1] >= FAIL_WINDOW_S]:
+                del self.times[stale]
+            while len(self.times) > self.max_addrs:
+                del self.times[min(self.times, key=lambda a: self.times[a][-1])]
+
+
 # --- web -------------------------------------------------------------------------------------------
 
 def web_nav() -> list[tuple[str, str]]:
@@ -93,15 +120,10 @@ def web_nav() -> list[tuple[str, str]]:
 def web_routes(ctx) -> list:
     cfg = ctx.cfg
     esc = ctx.esc
-    failures: dict[str, list[float]] = {}
+    failures = FailureLog()
 
     def client_addr(request: Request) -> str:
         return request.client.host if request.client else "?"
-
-    def locked(addr: str, now: float) -> bool:
-        recent = [t for t in failures.get(addr, []) if now - t < FAIL_WINDOW_S]
-        failures[addr] = recent
-        return len(recent) >= FAIL_MAX
 
     def device_of(request: Request):
         """(device, None) or (None, error Response)."""
@@ -109,13 +131,13 @@ def web_routes(ctx) -> list:
         addr = client_addr(request)
         if request.headers.get("origin") is not None:
             return None, JSONResponse({"error": "not allowed"}, status_code=403)
-        if locked(addr, now):
+        if failures.locked(addr, now):
             return None, JSONResponse({"error": "too many wrong tokens; wait 10 minutes"}, status_code=429)
         auth = request.headers.get("authorization", "")
         scheme, _, token = auth.partition(" ")
         dev = Devices(cfg).check_token(token.strip(), now) if scheme.lower() == "bearer" else None
         if dev is None:
-            failures.setdefault(addr, []).append(now)
+            failures.record(addr, now)
             return None, JSONResponse({"error": "device not recognized"}, status_code=401,
                                       headers={"www-authenticate": 'Bearer realm="familybox-device"'})
         return dev, None

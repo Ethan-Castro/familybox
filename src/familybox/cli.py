@@ -114,7 +114,9 @@ def main(argv: list[str] | None = None) -> int:
         for item in Approvals(cfg).pending(args.person):
             print(json.dumps(item))
     elif args.cmd in ("approve", "deny"):
-        print(json.dumps(Approvals(cfg).decide(args.person, args.id, args.cmd == "approve")))
+        result = Approvals(cfg).decide(args.person, args.id, args.cmd == "approve")
+        result.pop("decision", None)
+        print(json.dumps(result))
     elif args.cmd == "log":
         path = cfg.runtime / "audit" / f"{args.person}.jsonl"
         print(path.read_text() if path.exists() else "(nothing yet)")

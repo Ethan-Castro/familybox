@@ -24,8 +24,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent / "python"))
 import approver  # noqa: E402
 
 # Fictional household from demo/family.toml. No real person or value appears anywhere here.
+# Assistant names show only when the assistant's MCP connection reports one; otherwise it reads
+# "Maya's assistant wants ...", as in the first line.
 DEMO_REQUESTS = [
-    "Maya's ChatGPT wants Dana's passport number",
+    "Maya's assistant wants Dana's passport number",
     "Sam's Claude wants Dana's Social Security number",
     "Maya's Codex wants Dana's health detail",
 ]

@@ -12,10 +12,11 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import sys
 from typing import Annotated
 
-from mcp.server.mcpserver import MCPServer
+from mcp.server.mcpserver import Context, MCPServer
 from pydantic import Field
 
 from . import config
@@ -27,6 +28,23 @@ plain language with ask_family_box and it answers using only the files this pers
 Answers are checked before you receive them: full Social Security numbers, ID numbers and health
 details are replaced with placeholders, and the full value is shown only on the owner's own device
 after they approve. Do not ask for full identifiers; ask for what you need them for instead."""
+
+
+def client_name(ctx: Context | None) -> str:
+    """The assistant's own name from the MCP handshake (clientInfo.name), cleaned to a short lowercase
+    word like "openai-mcp" or "claude-ai". Empty when the client did not say. Only used for labels such as
+    "Maya's ChatGPT wants ...", never for deciding who may read what (that is FAMILYBOX_PERSON)."""
+    try:
+        params = ctx.session.client_params if ctx is not None else None
+        name = params.client_info.name if params is not None and params.client_info is not None else ""
+    except Exception:   # noqa: BLE001  no session details: just leave the name out
+        return ""
+    return re.sub(r"[^a-z0-9._-]", "", str(name or "").lower())[:40]
+
+
+def source_for(base: str, ctx: Context | None) -> str:
+    name = client_name(ctx)
+    return f"{base}:{name}" if name else base
 
 
 def build_server(person_id: str, mode: str = "auto", source: str = "mcp-stdio") -> MCPServer:
@@ -42,8 +60,9 @@ def build_server(person_id: str, mode: str = "auto", source: str = "mcp-stdio") 
     async def ask_family_box(
         question: Annotated[str, Field(min_length=3, max_length=2000,
                                        description="The question, in plain language.")],
+        ctx: Context,
     ) -> str:
-        ans = await box.ask_async(person.id, question, source=source)
+        ans = await box.ask_async(person.id, question, source=source_for(source, ctx))
         e = ans.enclave or {}
         lines = [ans.text, "", "---"]
         if ans.outcome == "error":

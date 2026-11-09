@@ -7,7 +7,9 @@ in the desktop simulator, and in tests.
   Runner      a background thread for the network, so scrolling never stalls
 
 The device never receives a held value. It only learns who asked, which assistant, and what kind of
-detail ("Maya's ChatGPT wants Dana's passport number"), and sends back approve or deny for one id.
+detail ("Maya's assistant wants Dana's passport number", or "Maya's ChatGPT ..." when the assistant's
+connection reports its name), and sends back approve or deny for one item. Items are named by a random
+handle the box makes, never by the box's own id for the held detail.
 """
 
 from __future__ import annotations
@@ -34,6 +36,7 @@ WIDTH, HEIGHT = 13, 8
 MAX_RESPONSE = 64 * 1024
 
 POLL_S = 3.0          # how often to ask the box what is waiting
+SLOW_POLL_S = 60.0    # after "not set up" or "too many wrong tries": ask much less often
 MIN_SHOWN_S = 1.5     # a press only counts once the item has been on screen this long
 FEEDBACK_S = 2.5      # how long "APPROVED" / "DENIED" stays up
 HINT = "  PRESS = YES, HOLD = NO"
@@ -43,6 +46,7 @@ ERROR_TEXT = {
     "auth": "THIS BUTTON IS NOT SET UP. ADD IT AGAIN ON THE BOX",
     "cert": "WRONG BOX CERTIFICATE. CHECK THE SETUP",
     "server": "THE BOX HAD A PROBLEM",
+    "busy": "TOO MANY WRONG TRIES. WAIT 10 MINUTES",
     "setup": "NOT SET UP YET. SEE THE README",
 }
 
@@ -165,7 +169,11 @@ class BoxClient:
         out = []
         for it in items:
             if isinstance(it, dict) and isinstance(it.get("id"), str) and isinstance(it.get("text"), str):
-                out.append({"id": it["id"], "text": it["text"][:200], "created": int(it.get("created") or 0)})
+                try:
+                    created = int(it.get("created") or 0)
+                except (TypeError, ValueError):
+                    created = 0
+                out.append({"id": it["id"], "text": it["text"][:200], "created": created})
         out.sort(key=lambda x: (x["created"], x["id"]))
         return out
 
@@ -216,8 +224,8 @@ class Approver:
                 if e.kind == "gone":
                     self.items = [i for i in self.items if i["id"] != item_id]
                     self._say("ALREADY DECIDED")
-                elif e.kind == "auth":
-                    self.error = "auth"
+                elif e.kind in ("auth", "busy"):
+                    self.error = e.kind
                 else:
                     self._say("NOT SENT. TRY AGAIN")
             return
@@ -344,16 +352,35 @@ class Runner:
         if action:
             self.decisions.put(action)
 
+    def wait_s(self) -> float:
+        """Poll slowly while the box refuses this button, so a removed button can't lock out its address."""
+        return max(self.poll_s, SLOW_POLL_S) if self.approver.error in ("auth", "busy") else self.poll_s
+
+    def _safely(self, fn: Callable[[], None]) -> None:
+        """Run one poll or send. Anything unexpected shows "THE BOX HAD A PROBLEM" and the loop keeps going,
+        instead of the network thread dying and the screen freezing on SENDING."""
+        try:
+            fn()
+        except Exception as e:   # noqa: BLE001  any bug in a reply must not stop the button
+            print(f"familybox-unoq: unexpected {type(e).__name__} talking to the box", flush=True)
+            with self.approver._lock:
+                self.approver.busy = False
+                self.approver.error = "server"
+
+    def step(self) -> None:
+        """One turn of the network loop: send a pressed decision if there is one, else poll."""
+        try:
+            item_id, approve = self.decisions.get(timeout=self.wait_s())
+        except queue.Empty:
+            self._safely(self.approver.poll)
+            return
+        self._safely(lambda: self.approver.send(item_id, approve))
+        self._safely(self.approver.poll)
+
     def _loop(self) -> None:
-        self.approver.poll()
+        self._safely(self.approver.poll)
         while not self._stop.is_set():
-            try:
-                item_id, approve = self.decisions.get(timeout=self.poll_s)
-            except queue.Empty:
-                self.approver.poll()
-                continue
-            self.approver.send(item_id, approve)
-            self.approver.poll()
+            self.step()
 
     def start(self) -> Runner:
         if self.approver.client is not None:

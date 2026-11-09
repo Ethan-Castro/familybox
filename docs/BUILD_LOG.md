@@ -107,3 +107,28 @@ Installed through the fleet control plane's exec jobs, with no SSH (`scripts/fle
 - **Not run on hardware:** the UNO Q (ArduinoQ-01) is offline and was not contacted. The sketch has not been
   compiled. The README lists what to check on the board.
 - **Tests:** 178 passed (113 before, 27 for the device API and CLI, 38 for the button app). No NEAR calls.
+
+## 2026-11-08: Approve button review fixes (branch feat/unoq)
+
+- **Correction to "never sends values" above:** the first version sent the box's own held-item id to the
+  button. That id is `sha256(path|kind|value)[:10]` with no key, so anyone holding the button's token (or a
+  log of its traffic) could brute-force the value back out (an SSN is about a billion guesses). Now each
+  waiting item gets a random handle (`secrets.token_urlsafe(12)`), kept in `<runtime>/devices/handles.json`
+  (0600). Only the handle leaves the box; the Devices page uses it too. A detail held again gets a new handle.
+- **No lost or cut-off approvals:** `Approvals` now takes one lock (`<runtime>/.approvals.lock`) around every
+  read-modify-write and writes atomically (temp file, fsync, rename), with the file kept 0600. The button
+  decides through one locked step (`decide_if_waiting`). Tested with a hold and a button press running at
+  the same time, and a reader polling while 60 holds are written.
+- **Shown once means once:** every decision gets a random stamp. The Devices page shows a button-approved
+  value only while the item still carries that stamp, so a detail held again, or approved on /approvals,
+  can't be shown a second time there.
+- **Assistant names:** the MCP server now records the client's own name from the MCP handshake
+  (`clientInfo.name`) as `mcp-remote:<name>` or `mcp-stdio:<name>`. Tested in-process with a client that calls
+  itself "OpenAI-MCP": the button text reads "Maya's ChatGPT wants Dana's passport number". Not yet checked
+  against the real ChatGPT, Claude, Codex or Cursor clients, so which names they send is unverified; with no
+  name it still reads "Maya's assistant wants ...".
+- **Button keeps going:** an unexpected error in a poll or send now shows THE BOX HAD A PROBLEM and the
+  loop keeps running (before, the network thread could die and leave SENDING on screen). A lockout has its
+  own message (TOO MANY WRONG TRIES. WAIT 10 MINUTES), and after "not set up" or a lockout the button checks
+  once a minute instead of every 3 seconds, so a removed button can't lock out its own address.
+- **Lockout memory is bounded:** empty entries are dropped and at most 1000 addresses are remembered.

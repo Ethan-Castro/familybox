@@ -347,7 +347,7 @@ def test_app_against_the_box_api(cfg):
     assert a.screen()[0].startswith("Maya's ChatGPT wants Dana's passport number?")
     clock.t += approver.MIN_SHOWN_S
     action = a.press("short")
-    assert action == ("p1", True)
+    assert action[1] is True and action[0] != "p1"      # a random handle, never the box's held id
     a.send(*action)
     assert a.screen()[0] == "APPROVED"
     assert Approvals(cfg)._load()["p1"]["status"] == "approved"
@@ -414,7 +414,7 @@ def test_simulator_script_runs_end_to_end(capsys):
                         "--every", "0.5"])
     out = capsys.readouterr().out
     assert rc == 0
-    assert "Maya's ChatGPT wants Dana's passport number" in out
+    assert "Maya's assistant wants Dana's passport number" in out
     assert "APPROVED" in out and "DENIED" in out
     assert "decisions sent to the box: [('demo0001', 'approved'), ('demo0002', 'denied')]" in out
 
@@ -432,3 +432,46 @@ def test_no_em_dashes_in_the_app():
     for p in APP.rglob("*"):
         if p.is_file() and p.suffix in (".py", ".ino", ".md", ".yaml", ".json"):
             assert "—" not in p.read_text(), p
+
+
+# --- review fixes: the network loop survives surprises, clear lockout text, slow polling when refused ---
+
+def test_odd_created_values_do_not_break_the_list():
+    http = FakeHTTP([item("a", created="soon"), item("b", created={"x": 1}), item("c", created=3)])
+    items = approver.BoxClient(TOKEN, http).pending()
+    assert {i["id"] for i in items} == {"a", "b", "c"}
+    assert [i["created"] for i in items if i["id"] != "c"] == [0, 0]
+
+
+def test_runner_recovers_from_unexpected_errors_in_send_and_poll():
+    a, http, clock = setup([item("p1")])
+    r = approver.Runner(a, poll_s=0.01)
+    a.poll()
+    a.screen()
+    clock.t += approver.MIN_SHOWN_S
+    r.press("short")
+    assert a.screen()[0] == "SENDING"
+    http.fail_next = RuntimeError("surprise")
+    r.step()                                   # send blows up, then the poll right after works
+    assert a.busy is False
+    assert a.screen()[0] != "SENDING"
+    http.fail_next = RuntimeError("surprise again")
+    r.step()                                   # a poll that blows up: shown as a plain problem, not a crash
+    assert a.screen()[0] == approver.ERROR_TEXT["server"]
+    r.step()                                   # and the next poll clears it
+    assert a.screen()[0].startswith("Maya's ChatGPT")
+
+
+def test_lockout_has_its_own_message_and_refusals_slow_the_polling():
+    a, http, clock = setup([item("p1")])
+    r = approver.Runner(a, poll_s=3.0)
+    http.fail_next = (429, b"{}")
+    a.poll()
+    assert a.screen()[0] == "TOO MANY WRONG TRIES. WAIT 10 MINUTES"
+    assert r.wait_s() == approver.SLOW_POLL_S
+    a.client.token = "fbd_0a1b2c3d_" + "B" * 43   # removed on the box: 401 every time
+    a.poll()
+    assert a.screen()[0] == approver.ERROR_TEXT["auth"] and r.wait_s() == approver.SLOW_POLL_S
+    a.client.token = TOKEN
+    a.poll()
+    assert a.error is None and r.wait_s() == 3.0

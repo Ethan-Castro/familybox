@@ -48,6 +48,13 @@ def hold(cfg, *, asker="maya", owner="dana", kind="id", label="Passport Number",
     return Approvals(cfg).add(asker, question, [Held(item_id, kind, label, value, owner, path)], source=source)[0]
 
 
+def handles(cfg, token) -> dict:
+    """Held item id -> the handle the device sees for it (read from the box's own handles file)."""
+    client(cfg).get(f"{API}/pending", headers=bearer(token))
+    data = json.loads((cfg.runtime / "devices" / "handles.json").read_text())
+    return {e["item"]: h for h, e in data.items()}
+
+
 def csrf(resp) -> str:
     m = re.search(r'name="csrf" value="([^"]+)"', resp.text)
     assert m, resp.text
@@ -132,7 +139,8 @@ def test_pending_lists_only_this_persons_items_without_values(cfg):
     assert r.headers["cache-control"] == "no-store"
     body = r.json()
     assert body["device"]["person"] == "Dana" and body["device"]["scope"] == "approve"
-    assert [i["id"] for i in body["items"]] == ["p1", "s1"]
+    h = handles(cfg, token)
+    assert [i["id"] for i in body["items"]] == [h["p1"], h["s1"]] and "m1" not in h
     assert body["items"][0]["text"] == "Maya's ChatGPT wants Dana's passport number"
     assert body["items"][0]["assistant"] == "ChatGPT"
     for leak in (PASSPORT, SSN, "987654320", "P55501234", "passport_dana.txt", "people/", "mom's passport"):
@@ -148,7 +156,8 @@ def test_pending_is_oldest_first(cfg):
     Approvals(cfg)._save(data)
     _, token = Devices(cfg).add("dana")
     items = client(cfg).get(f"{API}/pending", headers=bearer(token)).json()["items"]
-    assert [i["id"] for i in items] == ["old1", "new1"]
+    h = handles(cfg, token)
+    assert [i["id"] for i in items] == [h["old1"], h["new1"]]
 
 
 @pytest.mark.parametrize("headers", [{}, {"Authorization": "Bearer nope"}, {"Authorization": "Basic Zm9vOmJhcg=="},
@@ -177,9 +186,11 @@ def test_web_session_cookie_is_not_a_device_token(cfg):
 def test_approve_by_bearer_needs_no_csrf_and_returns_no_value(cfg):
     hold(cfg)
     _, token = Devices(cfg).add("dana")
-    r = client(cfg).post(f"{API}/items/p1/approve", headers=bearer(token))
+    h = handles(cfg, token)["p1"]
+    assert client(cfg).post(f"{API}/items/p1/approve", headers=bearer(token)).status_code == 404  # held id: no
+    r = client(cfg).post(f"{API}/items/{h}/approve", headers=bearer(token))
     assert r.status_code == 200, r.text
-    assert r.json() == {"id": "p1", "status": "approved"}
+    assert r.json() == {"id": h, "status": "approved"}
     assert PASSPORT not in r.text
     assert Approvals(cfg)._load()["p1"]["status"] == "approved"
     assert not Approvals(cfg).pending("dana")
@@ -190,8 +201,9 @@ def test_approve_by_bearer_needs_no_csrf_and_returns_no_value(cfg):
 def test_deny_by_bearer(cfg):
     hold(cfg)
     _, token = Devices(cfg).add("dana")
-    r = client(cfg).post(f"{API}/items/p1/deny", headers=bearer(token))
-    assert r.json() == {"id": "p1", "status": "denied"}
+    h = handles(cfg, token)["p1"]
+    r = client(cfg).post(f"{API}/items/{h}/deny", headers=bearer(token))
+    assert r.json() == {"id": h, "status": "denied"}
     assert Approvals(cfg)._load()["p1"]["status"] == "denied"
 
 
@@ -207,13 +219,15 @@ def test_decide_twice_or_unknown_or_bad_action(cfg):
     hold(cfg)
     _, token = Devices(cfg).add("dana")
     c = client(cfg)
-    assert c.post(f"{API}/items/p1/approve", headers=bearer(token)).status_code == 200
-    assert c.post(f"{API}/items/p1/deny", headers=bearer(token)).status_code == 404
+    h = handles(cfg, token)["p1"]
+    assert c.post(f"{API}/items/{h}/approve", headers=bearer(token)).status_code == 200
+    assert c.post(f"{API}/items/{h}/deny", headers=bearer(token)).status_code == 404
     assert Approvals(cfg)._load()["p1"]["status"] == "approved"
     assert c.post(f"{API}/items/zzz/approve", headers=bearer(token)).status_code == 404
     hold(cfg, item_id="p2")
-    assert c.post(f"{API}/items/p2/reveal", headers=bearer(token)).status_code == 404
-    assert c.get(f"{API}/items/p2/approve", headers=bearer(token)).status_code == 405
+    h2 = handles(cfg, token)["p2"]
+    assert c.post(f"{API}/items/{h2}/reveal", headers=bearer(token)).status_code == 404
+    assert c.get(f"{API}/items/{h2}/approve", headers=bearer(token)).status_code == 405
     assert Approvals(cfg).pending("dana")
 
 
@@ -247,28 +261,32 @@ def test_device_token_does_not_open_web_pages(cfg):
 def test_devices_page_reveals_a_button_approved_value_once(cfg):
     hold(cfg)
     dev_id, token = Devices(cfg).add("dana", "Kitchen button")
-    client(cfg).post(f"{API}/items/p1/approve", headers=bearer(token))
+    h = handles(cfg, token)["p1"]
+    client(cfg).post(f"{API}/items/{h}/approve", headers=bearer(token))
 
     maya, maya_csrf = sign_in(cfg, "maya")
-    assert maya.post("/devices/show/p1", data={"csrf": maya_csrf}).status_code == 404
+    assert maya.post(f"/devices/show/{h}", data={"csrf": maya_csrf}).status_code == 404
 
     dana, page_csrf = sign_in(cfg, "dana")
     page = dana.get("/devices").text
     assert "Kitchen button" in page and "Approved on Kitchen button" in page and PASSPORT not in page
     assert "Maya&#x27;s ChatGPT wants Dana&#x27;s passport number" in page
-    assert dana.post("/devices/show/p1").status_code == 403                  # CSRF still needed on the web
-    r = dana.post("/devices/show/p1", data={"csrf": page_csrf})
+    assert f"/devices/show/{h}" in page and "/devices/show/p1" not in page
+    assert dana.post(f"/devices/show/{h}").status_code == 403                # CSRF still needed on the web
+    assert dana.post("/devices/show/p1", data={"csrf": page_csrf}).status_code == 404
+    r = dana.post(f"/devices/show/{h}", data={"csrf": page_csrf})
     assert r.status_code == 200 and PASSPORT in r.text
-    r2 = dana.post("/devices/show/p1", data={"csrf": page_csrf})
+    r2 = dana.post(f"/devices/show/{h}", data={"csrf": page_csrf})
     assert r2.status_code == 404 and PASSPORT not in r2.text
 
 
 def test_denied_items_are_never_revealed(cfg):
     hold(cfg)
     _, token = Devices(cfg).add("dana")
-    client(cfg).post(f"{API}/items/p1/deny", headers=bearer(token))
+    h = handles(cfg, token)["p1"]
+    client(cfg).post(f"{API}/items/{h}/deny", headers=bearer(token))
     dana, page_csrf = sign_in(cfg, "dana")
-    r = dana.post("/devices/show/p1", data={"csrf": page_csrf})
+    r = dana.post(f"/devices/show/{h}", data={"csrf": page_csrf})
     assert r.status_code == 404 and PASSPORT not in r.text
 
 
@@ -276,11 +294,13 @@ def test_reveal_window_expires(cfg):
     hold(cfg)
     devs = Devices(cfg)
     _, token = devs.add("dana")
-    devs.decide(devs.check_token(token), "p1", True)
+    dev = devs.check_token(token)
+    h = devs.pending_for(dev)[0]["id"]
+    devs.decide(dev, h, True)
     import time
     with pytest.raises(KeyError):
-        devs.reveal("dana", "p1", now=time.time() + devices.REVEAL_WINDOW_S + 1)
-    assert devs.reveal("dana", "p1")["value"] == PASSPORT
+        devs.reveal("dana", h, now=time.time() + devices.REVEAL_WINDOW_S + 1)
+    assert devs.reveal("dana", h)["value"] == PASSPORT
 
 
 def test_remove_device_from_web(cfg):
@@ -347,3 +367,158 @@ def test_cli_add_list_remove(cfg, monkeypatch, capsys):
     assert cli.main(["device", "remove", "--as", "dana", dev_id]) == 0
     assert Devices(cfg).check_token(blob["token"]) is None
     assert cli.main(["device", "add", "--as", "nobody"]) == 2
+
+
+# --- review fixes: no held ids off the box, locking, one-time view, lockout bounds, MCP client name ---
+
+def test_device_never_sees_the_core_held_id(cfg):
+    """Core held ids are an unkeyed hash of path|kind|value, so an SSN could be brute-forced out of one.
+    The device gets a random handle instead, which has nothing to do with the value."""
+    import hashlib
+    path = "people/dana/ids/ssn_card_dana.txt"
+    core = hashlib.sha256(f"{path}|ssn|{SSN}".encode()).hexdigest()[:10]
+    Approvals(cfg).add("maya", "q", [Held(core, "ssn", "SSN", SSN, "dana", path)], source="mcp-stdio")
+    _, token = Devices(cfg).add("dana")
+    r = client(cfg).get(f"{API}/pending", headers=bearer(token))
+    handle = r.json()["items"][0]["id"]
+    assert core not in r.text and handle != core
+    assert devices.ITEM_ID_RE.match(handle) and len(handle) == 16
+    # Nothing built from the path, kind and value (hash, any prefix) gives the handle.
+    for v in (SSN, SSN.replace("-", "")):
+        digest = hashlib.sha256(f"{path}|ssn|{v}".encode()).hexdigest()
+        assert handle not in digest and handle[:10] != digest[:10]
+    # Stable across polls, so the screen does not jump.
+    assert client(cfg).get(f"{API}/pending", headers=bearer(token)).json()["items"][0]["id"] == handle
+    # The handles file is private.
+    hp = cfg.runtime / "devices" / "handles.json"
+    assert stat.S_IMODE(hp.stat().st_mode) == 0o600
+
+
+def test_a_new_hold_of_the_same_detail_gets_a_new_handle(cfg):
+    hold(cfg)
+    _, token = Devices(cfg).add("dana")
+    h1 = handles(cfg, token)["p1"]
+    data = Approvals(cfg)._load()
+    data["p1"]["created"] -= 50          # pretend the first hold was earlier
+    Approvals(cfg)._save(data)
+    h2 = handles(cfg, token)["p1"]
+    assert h2 != h1
+    # The old handle no longer decides anything.
+    assert client(cfg).post(f"{API}/items/{h1}/approve", headers=bearer(token)).status_code == 404
+    assert client(cfg).post(f"{API}/items/{h2}/approve", headers=bearer(token)).status_code == 200
+
+
+def test_approvals_file_is_private_and_written_atomically(cfg):
+    hold(cfg)
+    p = cfg.runtime / "approvals.json"
+    assert stat.S_IMODE(p.stat().st_mode) == 0o600
+    assert not [f for f in cfg.runtime.iterdir() if f.name.endswith(".tmp")]
+
+
+def test_add_and_device_decide_at_the_same_time_lose_nothing(cfg):
+    import threading
+    devs = Devices(cfg)
+    _, token = devs.add("dana")
+    dev = devs.check_token(token)
+    for i in range(30):
+        hold(cfg, item_id=f"w{i}")
+    pending = {json.loads((devs.dir / "handles.json").read_text())[it["id"]]["item"]: it["id"]
+               for it in devs.pending_for(dev)}
+    errors = []
+
+    def adder():
+        try:
+            for i in range(40):
+                hold(cfg, item_id=f"n{i}", value=f"X{i:08d}")
+        except Exception as e:  # noqa: BLE001
+            errors.append(e)
+
+    def decider():
+        try:
+            for h in pending.values():
+                devs.decide(dev, h, True)
+        except Exception as e:  # noqa: BLE001
+            errors.append(e)
+
+    ts = [threading.Thread(target=adder), threading.Thread(target=decider)]
+    for t in ts:
+        t.start()
+    for t in ts:
+        t.join()
+    assert not errors
+    data = Approvals(cfg)._load()
+    assert all(f"n{i}" in data and data[f"n{i}"]["status"] == "waiting" for i in range(40))
+    assert all(data[k]["status"] == "approved" for k in pending)
+
+
+def test_concurrent_writes_never_leave_a_cut_off_file(cfg):
+    import threading
+    stop = threading.Event()
+    bad = []
+
+    def reader():
+        while not stop.is_set():
+            try:
+                Approvals(cfg)._load()
+            except ValueError as e:
+                bad.append(e)
+
+    t = threading.Thread(target=reader)
+    t.start()
+    for i in range(60):
+        hold(cfg, item_id=f"r{i}", question="x" * 2000)
+    stop.set()
+    t.join()
+    assert not bad
+
+
+def test_value_is_not_shown_twice_after_a_new_hold_and_a_web_approval(cfg):
+    hold(cfg)
+    devs = Devices(cfg)
+    _, token = devs.add("dana")
+    dev = devs.check_token(token)
+    h = devs.pending_for(dev)[0]["id"]
+    devs.decide(dev, h, True)
+    hold(cfg)                                     # Maya asks again: back to waiting
+    Approvals(cfg).decide("dana", "p1", True)     # Dana approves it on /approvals and sees it there
+    assert not devs.recent_decisions("dana")[0]["showable"]
+    with pytest.raises(KeyError):
+        devs.reveal("dana", h)
+
+
+def test_failure_log_is_bounded_and_forgets_empty_entries():
+    from familybox.plugins.approver_devices import FAIL_MAX, FAIL_WINDOW_S, FailureLog
+    log = FailureLog(max_addrs=5)
+    for i in range(50):
+        log.record(f"10.0.0.{i}", 1000.0 + i)
+    assert len(log.times) <= 5 and "10.0.0.49" in log.times
+    assert not log.locked("10.0.0.49", 1000.0 + 49 + FAIL_WINDOW_S + 1)
+    assert "10.0.0.49" not in log.times
+    for _ in range(FAIL_MAX):
+        log.record("a", 5000.0)
+    assert log.locked("a", 5001.0)
+
+
+def test_mcp_records_the_assistants_name(cfg, monkeypatch):
+    import asyncio
+    from mcp import Client
+    from mcp.types import Implementation
+    from familybox import mcp_server
+    monkeypatch.setenv("FAMILYBOX_HOME", str(cfg.home))
+    seen = []
+
+    async def fake_ask(self, person_id, question, *, source="cli"):
+        seen.append(source)
+        from familybox.box import Answer
+        return Answer(person=person_id, question=question, text="ok", outcome="pass")
+    monkeypatch.setattr(Box, "ask_async", fake_ask)
+    server = mcp_server.build_server("maya", "replay", source="mcp-remote")
+
+    async def go():
+        async with Client(server, client_info=Implementation(name="OpenAI-MCP", version="1")) as c:
+            await c.call_tool("ask_family_box", {"question": "What is my mom's passport number?"})
+    asyncio.run(go())
+    assert seen == ["mcp-remote:openai-mcp"]
+    item = {"asker": "maya", "owner": "dana", "kind": "id", "label": "Passport Number", "source": seen[0]}
+    assert devices.describe(cfg, item) == "Maya's ChatGPT wants Dana's passport number"
+    assert mcp_server.source_for("mcp-stdio", None) == "mcp-stdio"
