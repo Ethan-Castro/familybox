@@ -34,6 +34,8 @@ from .store import Store
 OUTCOME_LABEL = {"pass": "answered", "masked": "answered (numbers removed)", "held": "answered (some details held)",
                  "refused": "blocked", "error": "stopped (verification failed)"}
 
+CORE_COMMANDS = {"index", "ask", "pending", "log", "approve", "deny", "verify", "code", "serve", "cloud"}
+
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="familybox")
@@ -72,13 +74,26 @@ def main(argv: list[str] | None = None) -> int:
             cp.add_argument("--force", action="store_true", help="replace an existing key")
         elif name == "restore":
             cp.add_argument("source", help="Drive file id or path to a .fbx file")
+    from . import plugins
+    plugins.call_each("cli", sub)
     args = ap.parse_args(argv)
     cfg = config.load()
+
+    if args.cmd not in CORE_COMMANDS:
+        for m in plugins.load_plugins():
+            run = getattr(m, "run_cli", None)
+            if run is None:
+                continue
+            rc = run(args, cfg)
+            if rc is not None:
+                return int(rc)
+        print(f"no handler for {args.cmd!r}", file=sys.stderr)
+        return 2
 
     if args.cmd == "index":
         print(f"indexed {Store(cfg).reindex()} files")
     elif args.cmd == "ask":
-        ans = Box(cfg, mode=args.mode).ask(args.person, args.question)
+        ans = Box(cfg, mode=args.mode).ask(args.person, args.question, source="cli")
         if args.json:
             print(json.dumps(ans.to_dict(), indent=1))
         else:

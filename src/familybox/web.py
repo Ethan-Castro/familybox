@@ -28,6 +28,7 @@ import secrets
 import socket
 import time
 from dataclasses import dataclass
+from typing import Any
 from pathlib import Path, PurePosixPath
 
 from starlette.applications import Starlette
@@ -348,11 +349,11 @@ def _csrf_field(token: str) -> str:
 
 
 def _page(cfg: Config, title: str, body: str, sess: Sess | None = None, here: str = "", status: int = 200,
-          pending: int | None = None) -> HTMLResponse:
+          pending: int | None = None, nav: list[tuple[str, str]] | None = None) -> HTMLResponse:
     head = f'<div class="box">{esc(cfg.name)}</div>'
     if sess:
         links = []
-        for href, label in NAV:
+        for href, label in (nav or NAV):
             text = label
             if href == "/approvals" and pending:
                 text = f"{label} ({pending})"
@@ -506,8 +507,38 @@ CLOUD_MISSING = "Cloud connection isn't set up on this box yet."
 
 # --- the app -------------------------------------------------------------------------------------
 
+@dataclass
+class WebContext:
+    """What a plugin's web_routes(ctx) gets.
+
+    cfg                      the box Config
+    session_of(request)      -> Sess | None (Sess has sid, person, csrf)
+    page(sess, title, body, here="", status=200) -> HTMLResponse in the box's look, with the nav bar
+    need_signin(handler)     decorator: async handler(request, sess); redirects to /signin when signed out
+    guarded_form(request, **form_kw) -> (sess, form) or a 403 Response: signed in + same origin + CSRF ok
+    csrf_field(token)        hidden <input> for a form; use sess.csrf as the token
+    forbidden(msg=...)       403 page
+    esc(text)                HTML escape
+    box()                    a shared familybox.box.Box (made on first use)
+    """
+    cfg: Config
+    session_of: Any
+    page: Any
+    need_signin: Any
+    guarded_form: Any
+    csrf_field: Any
+    forbidden: Any
+    esc: Any
+    box: Any
+
+
 def create_app(cfg: Config, *, port: int = 8443) -> Starlette:
     state = WebState(cfg)
+    from . import plugins
+    nav = list(NAV)
+    for extra in plugins.call_each("web_nav"):
+        for label, path in extra or []:
+            nav.append((path, label))
 
     def session_of(request: Request) -> Sess | None:
         sid = request.cookies.get(COOKIE, "")
@@ -520,7 +551,7 @@ def create_app(cfg: Config, *, port: int = 8443) -> Starlette:
         return len(Approvals(cfg).pending(person.id))
 
     def page(sess: Sess, title: str, body: str, here: str = "", status: int = 200) -> HTMLResponse:
-        return _page(cfg, title, body, sess, here, status, pending_count(sess.person))
+        return _page(cfg, title, body, sess, here, status, pending_count(sess.person), nav)
 
     def forbidden(msg: str = "That request wasn't allowed. Go back, reload the page and try again.") -> HTMLResponse:
         return _page(cfg, "Not allowed", f'<h1>Not allowed</h1><p>{esc(msg)}</p><p><a href="/">Go home</a></p>',
@@ -898,6 +929,18 @@ def create_app(cfg: Config, *, port: int = 8443) -> Starlette:
         Route("/cloud/backup-key", cloud_admin, methods=["POST"]),
         Route("/oauth/google/callback", oauth_callback),
     ]
+    _box: list = []
+
+    def get_box():
+        if not _box:
+            from .box import Box
+            _box.append(Box(cfg))
+        return _box[0]
+
+    ctx = WebContext(cfg=cfg, session_of=session_of, page=page, need_signin=need_signin, guarded_form=guarded_form,
+                     csrf_field=_csrf_field, forbidden=forbidden, esc=esc, box=get_box)
+    for extra in plugins.call_each("web_routes", ctx):
+        routes.extend(extra or [])   # after the core routes, so a plugin can never shadow them
     app = Starlette(routes=routes, max_body_size=FORM_SLACK)
     return SecurityHeaders(app)
 

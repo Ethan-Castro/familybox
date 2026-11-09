@@ -74,3 +74,11 @@ Installed through the fleet control plane's exec jobs, with no SSH (`scripts/fle
 - **Attestation:** the Pi verified NEAR AI Cloud attestation itself, with no API key (gateway plus the DeepSeek-V4.1-Flash model report, Intel TDX quote and NVIDIA evidence, through the SDK). **5.04 s the first time, 1.61 s the second; 166 MB peak memory.**
 - **Fleet unaffected:** the board still had about 1.6 GB available, the fleet agent kept running, and the control plane kept answering.
 - **Not yet run on the Pi:** live answers. They need the NEAR key on the board, which is waiting on Ethan's OK.
+
+## 2026-11-08: Plugin hooks for parallel feature work
+
+- **What:** a plugin package (`src/familybox/plugins/`) so each new feature is one module. Hooks: box registration (tool providers, pre checks, post checks), CLI subcommands, web routes and nav links, MCP tools. Details in `docs/PLUGINS.md`.
+- **Every question** now has a 12-character id. Each step is written to `runtime/events/<person>/<id>.jsonl` with protected values scrubbed. The audit log entry now records the id and where the question came from (cli, mcp-stdio, mcp-remote, web).
+- **Fail closed:** an error in a pre or post check stops the question, and nothing is answered.
+- **Enclave:** `ask_live` takes the tool list and an event callback. Replay mode sends the same events, marked as replayed.
+- **Tests:** 113 passed (97 before plus 16 new plugin tests). No live calls were made.

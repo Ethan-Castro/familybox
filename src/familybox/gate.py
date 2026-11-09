@@ -43,6 +43,8 @@ def stem(word: str) -> str:
     return w
 
 SEVERITY = {"pass": 0, "masked": 1, "held": 2, "refused": 3}
+REFUSED_TEXT = ("This answer was blocked by the family box: it contained protected information "
+                "it is not allowed to share. Nothing was sent.")
 
 
 @dataclass
@@ -227,6 +229,5 @@ def check(answer: str, *, sensitive: list[Sensitive], readable_owners: set[str],
             result.bump("masked", "card number")
 
     if result.outcome == "refused":
-        result.text = ("This answer was blocked by the family box: it contained protected information "
-                       "it is not allowed to share. Nothing was sent.")
+        result.text = REFUSED_TEXT
     return result

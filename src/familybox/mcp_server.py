@@ -29,7 +29,7 @@ details are replaced with placeholders, and the full value is shown only on the 
 after they approve. Do not ask for full identifiers; ask for what you need them for instead."""
 
 
-def build_server(person_id: str, mode: str = "auto") -> MCPServer:
+def build_server(person_id: str, mode: str = "auto", source: str = "mcp-stdio") -> MCPServer:
     cfg = config.load()
     person = cfg.person(person_id)
     box = Box(cfg, mode=mode)
@@ -43,7 +43,7 @@ def build_server(person_id: str, mode: str = "auto") -> MCPServer:
         question: Annotated[str, Field(min_length=3, max_length=2000,
                                        description="The question, in plain language.")],
     ) -> str:
-        ans = await box.ask_async(person.id, question)
+        ans = await box.ask_async(person.id, question, source=source)
         e = ans.enclave or {}
         lines = [ans.text, "", "---"]
         if ans.outcome == "error":
@@ -65,6 +65,8 @@ def build_server(person_id: str, mode: str = "auto") -> MCPServer:
         return (f"Connected to {cfg.name} as {person.display}. Model: {cfg.model}. "
                 f"Mode: {'live NEAR AI enclave' if live else 'replay (recorded demo answers)'}.")
 
+    from . import plugins
+    plugins.call_each("mcp_tools", server, person, box)
     return server
 
 
@@ -78,7 +80,7 @@ def main(argv: list[str] | None = None) -> int:
     if not args.person:
         print("Set FAMILYBOX_PERSON or --person (who this assistant asks as).", file=sys.stderr)
         return 2
-    server = build_server(args.person, args.mode)
+    server = build_server(args.person, args.mode, source="mcp-remote" if args.http else "mcp-stdio")
     if args.http:
         server.run("streamable-http", host="127.0.0.1", port=args.port)
     else:
