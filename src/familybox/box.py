@@ -41,7 +41,7 @@ from typing import Any
 
 from . import access, enclave, gate, ledger
 from .config import Config, Person
-from .store import Sensitive, Store
+from .store import IMAGE_SUFFIXES, TRANSCRIPT_SUFFIX, Sensitive, Store
 
 REPO_REPLAYS = Path(__file__).resolve().parents[2] / "replays"
 REPO_PINS = Path(__file__).resolve().parents[2] / "pins" / "near-ai-cloud.json"
@@ -165,7 +165,11 @@ class FileTools:
             if text is None:
                 ctx.files_denied.append(path)
                 return json.dumps({"error": "not found or not yours to read"})
-            ctx.files_read.append(access.canonical(path))   # one spelling, so post checks find its facts
+            rel = access.canonical(path)
+            ctx.files_read.append(rel)   # one spelling, so post checks find its facts
+            if Path(rel).suffix.lower() in IMAGE_SUFFIXES:
+                # The model got the photo's transcript, and the index keeps the photo's facts under that name.
+                ctx.data.setdefault("touched_paths", []).append(rel + TRANSCRIPT_SUFFIX)
             return text
         return None
 
@@ -271,6 +275,7 @@ class Box:
                     ctx.emit("error", message="NEAR_AI_CLOUD_API_KEY is not set")
                     raise enclave.EnclaveError("NEAR_AI_CLOUD_API_KEY is not set")
                 self._require_pinning(ctx)
+                self._require_reword_check(ctx)
                 extra = {"client_options": opts} if (opts := self._client_options(person, ctx)) else {}
                 draft = await enclave.ask_live(api_key=key, model=self.cfg.model, person_display=person.display,
                                                question=question, run_tool=run_tool, tools=tools, emit=ctx.emit,
@@ -330,6 +335,29 @@ class Box:
         if (rt / "pins.json").exists() or (rt / "pins_history.jsonl").exists() or REPO_PINS.exists():
             ctx.emit("pinning", status="not_loaded")
             raise enclave.EnclaveError("the NEAR code check did not load; the owner must check the box")
+
+    def _require_reword_check(self, ctx: Question) -> None:
+        """Fail closed if the second privacy check (plugins/paraphrase.py) should run but did not load.
+
+        It is required unless [paraphrase_check] enabled = "off" (or FAMILYBOX_PARAPHRASE_CHECK=off), or this
+        is a red-team demo home, where it is off by design. Read here, not in the plugin, so a plugin that
+        fails to import cannot switch itself off."""
+        if any(getattr(c, "guards_rewording", False) for c in self.post_checks):
+            return
+        if (self.cfg.home / "REDTEAM_DEMO_HOME").exists():
+            return
+        import tomllib
+        enabled = os.environ.get("FAMILYBOX_PARAPHRASE_CHECK")
+        if not enabled:
+            try:
+                data = tomllib.loads((self.cfg.home / "family.toml").read_text())
+                enabled = str((data.get("paraphrase_check") or {}).get("enabled", "auto"))
+            except (OSError, ValueError, AttributeError):
+                enabled = "auto"
+        if enabled.lower() == "off":
+            return
+        ctx.emit("paraphrase_check", action="not_loaded")
+        raise enclave.EnclaveError("the second privacy check did not load; the owner must check the box")
 
     def enclave_options(self, person: Person, ctx: Question) -> dict:
         """For plugins that make their own live NEAR call during a question (for example a second

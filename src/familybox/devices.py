@@ -79,6 +79,8 @@ def what_label(kind: str, label: str) -> str:
         return label.lower()
     if kind == "health":
         return "health detail"
+    if kind == "form":
+        return "filled form"
     return "private detail"
 
 

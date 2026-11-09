@@ -58,6 +58,7 @@ EVENT_CHARS = 4000            # code and output kept in events and the audit ent
 LOG_CHARS = sandbox.Limits().output_bytes + sandbox.MAX_CODE_CHARS
 
 LIMITS = sandbox.Limits()
+RAW_COPY_SUFFIXES = {".txt", ".md", ".csv"}   # plain text: the original is exactly what the index saw
 LEFTOVER_AGE_S = 15 * 60      # staging folders older than this are from a crash (a run takes under 1 min)
 
 TOOL = {"type": "function", "function": {
@@ -67,7 +68,8 @@ TOOL = {"type": "function", "function": {
         "or summarize this person's files. Use it for math over several files (totals, dates, differences). "
         "The script runs in a locked sandbox with no internet. Files are read-only copies: /data/index.json "
         "lists them (path, bytes, text), /data/text/<path>.txt holds the plain text of each file and "
-        "/data/files/<path> the original, where <path> is the same path search_files returns. Print only the "
+        "/data/files/<path> the original for plain-text files (.txt, .md, .csv), where <path> is the same path "
+        "search_files returns. PDFs, JSON health records and photos come as text only. Print only the "
         "result you need; output over 16 KB is cut. Limits: 512 MB memory, 20 s CPU, 30 s in total. Files you "
         "write in /work or /tmp are thrown away and cannot be run. It cannot start additional processes. "
         "If another script is running the result says busy; try again once. Never print full ID or "
@@ -77,9 +79,9 @@ TOOL = {"type": "function", "function": {
         "required": ["code"]}}}
 
 README = """Family box analysis workspace (read-only).
-index.json       list of files: path, bytes, text
+index.json       list of files: path, bytes, text (and file, when there is an original)
 text/<path>.txt  plain text of each file
-files/<path>     the original file
+files/<path>     the original, for .txt, .md and .csv files only
 Write scratch files in /work or /tmp. Nothing is kept after the script ends. There is no network.
 """
 
@@ -175,14 +177,22 @@ def stage_workspace(cfg: Config, store: Store, person: Person, dest: Path,
             skipped.append({"path": rel, "why": "too big"})
             continue
         total += size
-        out = dest / "files" / rel
-        out.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(real, out)
+        # Originals only where the bytes are the same text the gate indexed. A PDF's form fields, a FHIR
+        # record's extra identifiers or a photo would hold values the gate never saw, so those come as
+        # extracted text only.
+        raw = real.suffix.lower() in RAW_COPY_SUFFIXES
+        if raw:
+            out = dest / "files" / rel
+            out.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(real, out)
         text = extract_text(real)[:MAX_TEXT_CHARS]
         tout = dest / "text" / (rel + ".txt")
         tout.parent.mkdir(parents=True, exist_ok=True)
         tout.write_text(text)
-        index.append({"path": rel, "bytes": size, "text": f"/data/text/{rel}.txt", "file": f"/data/files/{rel}"})
+        entry = {"path": rel, "bytes": size, "text": f"/data/text/{rel}.txt"}
+        if raw:
+            entry["file"] = f"/data/files/{rel}"
+        index.append(entry)
     (dest / "index.json").write_text(json.dumps({"person": person.display, "files": index,
                                                  "skipped": skipped}, indent=1))
     (dest / "README.txt").write_text(README)

@@ -53,7 +53,7 @@ same tools a stock Raspberry Pi OS has. Code: `src/familybox/sandbox.py` (host s
 `src/familybox/sandbox_launcher.py` (runs inside the namespaces).
 
 1. **Staging.** The box copies the person's files into a private temporary folder (mode 0700):
-   `files/<path>` (the original), `text/<path>.txt` (plain text, FHIR flattened, PDFs through pdftotext),
+   `files/<path>` (the original, for .txt, .md and .csv only, so the script never sees bytes the answer gate did not index), `text/<path>.txt` (plain text, FHIR flattened, PDFs through pdftotext),
    and `index.json`. Links are skipped, so a link in someone's folder can never pull in another person's file.
    The folder is in RAM (`$XDG_RUNTIME_DIR`) when the box has one, otherwise under the box's runtime folder,
    and it is deleted after every run. If the box crashes mid-run, the leftover is deleted the next time the

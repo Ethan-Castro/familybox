@@ -16,6 +16,10 @@ import sys
 from .. import enclave
 from ..pinning import Checker, PinError, PinStore, nice_date
 
+import logging
+
+log = logging.getLogger("familybox.plugins.pinning")
+
 NAV_LABEL = "NEAR code"
 
 
@@ -24,7 +28,18 @@ def _mode(box) -> str:
 
 
 def _components(box) -> list[str]:
-    return ["gateway", f"model/{box.cfg.model}"]
+    out = ["gateway", f"model/{box.cfg.model}"]
+    # The second privacy check calls its own model. A waiting review there should stop the question with
+    # the same plain "NEAR changed its code" message, not turn every answer into a held one.
+    if any(getattr(c, "guards_rewording", False) for c in box.post_checks):
+        try:
+            from . import paraphrase
+            s = paraphrase.settings(box.cfg)
+            if s.enabled != "off" and s.model != box.cfg.model:
+                out.append(f"model/{s.model}")
+        except Exception:  # noqa: BLE001 - the classifier call still runs its own pin check and fails closed
+            log.exception("could not read the second privacy check's model")
+    return out
 
 
 async def pre_check(box, person, question, ctx) -> None:

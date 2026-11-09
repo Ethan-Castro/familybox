@@ -435,6 +435,19 @@ def _sole_owner(facts: list[Sensitive], asker: str) -> str:
     return owners.pop() if len(owners) == 1 else asker
 
 
+def _hold_owner(box, facts: list[Sensitive], person, paths: list[str]) -> str | None:
+    """Who may approve a whole held answer. The held value is the full answer, which can quote any file the
+    question touched, so it goes to the facts' owner only if that owner may read every one of those files.
+    Otherwise it is held for the asker, who could read them all; None means refuse (no single safe owner)."""
+    owner = _sole_owner(facts, person.id)
+    if owner == person.id:
+        return owner
+    other = box.cfg.people.get(owner)
+    if other is not None and all(access.can_read(other, p) for p in paths):
+        return owner
+    return person.id
+
+
 async def check(box, person, question, draft, result: gate.GateResult, ctx) -> None:
     s = settings(box.cfg)
     info: dict = {"model": s.model}
@@ -503,7 +516,7 @@ async def check(box, person, question, draft, result: gate.GateResult, ctx) -> N
         if others_only:
             _refuse(result, f"second privacy check failed ({e}) on an answer about another family member")
             return done("refused", why=str(e))
-        _whole_hold(result, _sole_owner(facts, person.id), ctx, display, HELD_FAILED_TEXT,
+        _whole_hold(result, _hold_owner(box, facts, person, paths), ctx, display, HELD_FAILED_TEXT,
                     f"second privacy check failed ({e}); answer held", first_path)
         return done("held_check_failed", why=str(e))
 
@@ -555,13 +568,21 @@ async def check(box, person, question, draft, result: gate.GateResult, ctx) -> N
     if len(flagged_owners) > 1:
         _refuse(result, reason + " (several owners)")
         return done("refused")
-    _whole_hold(result, _sole_owner(flagged, person.id), ctx, display, HELD_WHOLE_TEXT, reason,
+    _whole_hold(result, _hold_owner(box, flagged, person, paths), ctx, display, HELD_WHOLE_TEXT, reason,
                 flagged[0].path if flagged else first_path)
     return done("held_whole")
 
 
+check.guards_rewording = True   # box._require_reword_check looks for this marker
+
+
 def register(box) -> None:
-    from familybox.redteam import home as rt_home
-    if rt_home.settings_for(box.cfg) is not None:
+    try:
+        from familybox.redteam import home as rt_home
+        red_team = rt_home.settings_for(box.cfg) is not None
+    except Exception:  # noqa: BLE001 - a broken red-team module must not switch this check off
+        log.exception("red-team module failed to load; keeping the second privacy check on")
+        red_team = False
+    if red_team:
         return   # a red-team demo home: its spending bound covers one model call per try, not a second
     box.post_checks.append(check)

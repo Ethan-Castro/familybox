@@ -539,7 +539,7 @@ def fill(cfg: Config, asker_id: str, form: str, for_person: str, fields: dict, *
                 uses += f" It also uses the family's {', '.join(shared)}."
             question = (f"{display[asker.id]}'s assistant filled \"{tpl.title}\" for {display[target]}. {uses} "
                         f"After everyone approves, {_names(recipients, display)} can download it.")
-            Approvals(cfg).add(asker.id, question, [held])
+            Approvals(cfg).add(asker.id, question, [held], source=source)
         data[form_id] = {
             "form": tpl.slug, "title": tpl.title, "asker": asker.id, "for": target, "source": source,
             "created": int(time.time()), "status": "waiting",

@@ -738,6 +738,7 @@ def test_the_box_needs_pinning_even_with_no_pins_yet(cfg, fake_sdk, monkeypatch,
     from familybox import box as box_mod
     from familybox import plugins
     monkeypatch.setattr(plugins, "load_plugins", lambda: [])
+    monkeypatch.setenv("FAMILYBOX_PARAPHRASE_CHECK", "off")          # this test is about the pinning guard only
     assert not (cfg.runtime / "pins.json").exists()
     assert Box(cfg, mode="live").ask("maya", "What is my blood type?").outcome == "error"   # repo ships pins
     monkeypatch.setattr(box_mod, "REPO_PINS", tmp_path / "none.json")
@@ -754,3 +755,15 @@ def test_pins_check_reports_network_trouble_plainly(cfg, monkeypatch, capsys):
     assert cli.main(["pins", "check"]) == 1
     err = capsys.readouterr().err
     assert "could not check NEAR right now" in err and "Traceback" not in err
+
+
+def test_a_second_privacy_check_that_did_not_load_stops_live_questions(cfg, fake_sdk, monkeypatch):
+    from familybox import plugins
+    real = plugins.load_plugins
+    monkeypatch.setattr(plugins, "load_plugins",
+                        lambda: [m for m in real() if not m.__name__.endswith(".paraphrase")])
+    ans = Box(cfg, mode="live").ask("maya", "What is my blood type?")
+    assert ans.outcome == "error" and "second privacy check did not load" in ans.text
+    assert fake_sdk.prompts == 0
+    monkeypatch.setenv("FAMILYBOX_PARAPHRASE_CHECK", "off")          # the owner turned it off on purpose
+    assert Box(cfg, mode="live").ask("maya", "What is my blood type?").outcome != "error"

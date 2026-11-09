@@ -124,7 +124,11 @@ def main(argv: list[str] | None = None) -> int:
         for item in Approvals(cfg).pending(args.person):
             print(json.dumps(item))
     elif args.cmd in ("approve", "deny"):
-        result = Approvals(cfg).decide(args.person, args.id, args.cmd == "approve")
+        try:   # only items still waiting: never re-open one denied on the button or closed by forms
+            result = Approvals(cfg).decide_if_waiting(args.person, args.id, args.cmd == "approve", via="cli")
+        except KeyError:
+            print(f"{args.id} is not waiting for {args.person} (already decided, or not theirs)", file=sys.stderr)
+            return 1
         result.pop("decision", None)
         print(json.dumps(result))
     elif args.cmd == "log" and args.action == "verify":

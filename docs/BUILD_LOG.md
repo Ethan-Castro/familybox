@@ -386,3 +386,36 @@ What stayed the same and what changed:
   photo test that needs the NEAR key.
 - Pi and Jetsons: not reachable this morning. decision-tree answers neither mDNS nor 192.168.1.78, and jetson-05's
   console redirects to decision-tree, so fleet exec is down with it. On-device checks wait for the Pi.
+
+## 2026-11-09: Whole-system review and fixes
+
+An independent review of everything merged together found 9 cross-feature problems. Fixed:
+
+1. **High: a whole held answer could go to someone who can't read it.** When the second privacy check held the
+   full answer, the hold went to the owner of the flagged fact. The held value is the whole answer, which can
+   quote the asker's other files (Dana's W-2 next to Maya's passport, so Maya would see Dana's wages). Now it
+   goes to that owner only if they may read every file the question touched; otherwise the asker holds it.
+2. **Photo facts were missed by the second check.** Reading a photo returns its transcript, but only the photo
+   path was recorded, and the index keeps the facts under the transcript's name. The transcript path is now
+   recorded too.
+3. **The second check could switch off silently** if its plugin failed to load (or the red-team module it
+   imports broke). Live questions now stop unless the check is loaded or turned off on purpose, like pinning.
+4. **The workbench showed raw bytes the gate never indexed** (PDF form fields, extra FHIR identifiers, photo
+   bytes). Originals are now copied only for .txt, .md and .csv; everything else is extracted text only.
+5. A waiting NEAR code review on the second check's own model now stops questions with the plain "NEAR changed
+   its code" message instead of holding every answer.
+6. Form approvals now record which assistant asked, and the UNO Q names them "filled form".
+8. Photo reads no longer show on the Activity page as questions that never finished.
+9. `familybox approve/deny` only decides items still waiting, like the web page and the button already did.
+
+Left for later (low): form fills hard-code `source="mcp"` and run PDF work on the event loop (7).
+
+Regression tests: `tests/test_integration_fixes.py` plus one in `tests/test_pinning.py`. Laptop: 675 passed,
+17 skipped.
+
+**Attack runs restarted.** The first live run this morning stopped itself on nearly every box question: "NEAR
+changed its serving code". A strict pin level opens a review the first time a question lands on a NEAR model
+instance with a different set of deployed compose files, and with four questions in parallel that happened at
+once. That is the pinning check working, but it measures nothing, so the results were discarded. The eval
+home now uses `[pins] level = "platform"`, which still stops for changes to NEAR's gateway, the model's enclave
+and OS, and the compose manager. The demo family stays on strict.

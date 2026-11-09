@@ -157,7 +157,9 @@ def _summary(person_id: str, path: Path, now: float) -> Summary | None:
         mtime = path.stat().st_mtime
     except OSError:
         return None
-    first = events[0] if events[0].get("step") == "question" else {}
+    if events[0].get("step") != "question":
+        return None   # not a question (a photo read writes its own events); it has no answer to wait for
+    first = events[0]
     last = events[-1]
     started = mtime - float(last.get("t") or 0)
     answer = next((e for e in reversed(events) if e.get("step") == "answer"), None)
