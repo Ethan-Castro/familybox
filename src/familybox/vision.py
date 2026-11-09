@@ -190,15 +190,51 @@ def _messages(prep: Prepared) -> list[dict]:
                                          {"type": "image_url", "image_url": {"url": url}}]}]
 
 
+def pin_options(cfg: Config, model: str, qid: str, emit: Emit) -> dict:
+    """The NEAR code check (familybox.pinning) for a photo read, same rules as a question.
+
+    Returns InferenceClient options that check every gateway and model report against the pins, or {}
+    when the owner set the pin level to "off". Raises EnclaveError while a change waits for review, or
+    when pins exist but the pinning module cannot load (fail closed, like Box._require_pinning).
+    """
+    from .box import REPO_PINS, _pin_level
+    if _pin_level(cfg) == "off":
+        emit("pinning", status="off")
+        return {}
+    try:
+        from .pinning import Checker, PinStore
+    except Exception as e:  # noqa: BLE001 - a broken check must not turn into no check
+        rt = cfg.runtime
+        if (rt / "pins.json").exists() or (rt / "pins_history.jsonl").exists() or REPO_PINS.exists():
+            emit("pinning", status="not_loaded")
+            raise EnclaveError("the NEAR code check did not load; the owner must check the box") from e
+        return {}
+    store = PinStore(cfg)
+    review = store.blocking_review(["gateway", f"model/{model}"])
+    if review is not None:
+        emit("pinning", status="waiting_review", component=review["component"], review=review["id"])
+        raise EnclaveError(store.blocked_message(review))
+    return Checker(store, qid, emit).client_options()
+
+
 async def transcribe_live(prep: Prepared, *, api_key: str, model: str, emit: Emit | None = None,
-                          attestation_max_age_s: int = 300) -> Transcription:
-    """Send the prepared photo once to the enclave model. Raises EnclaveError on any failure."""
+                          attestation_max_age_s: int = 300, client_options: dict | None = None) -> Transcription:
+    """Send the prepared photo once to the enclave model. Raises EnclaveError on any failure.
+    client_options: NEAR code check options from pin_options (verifiers, deployment_policy)."""
     from nearai_inference_sdk import InferenceClient, get_sdk_error
 
+    from .enclave import _LOCKED_CLIENT_OPTIONS, _enclave_cause
+
     emit = emit or _no_emit
+    client_options = dict(client_options or {})
+    if locked := sorted(_LOCKED_CLIENT_OPTIONS & set(client_options)):
+        err = EnclaveError(f"a plugin tried to change locked enclave settings: {', '.join(locked)}")
+        emit("error", message=str(err), replayed=False)
+        raise err
     try:
         async with InferenceClient(api_key, e2ee=True,
-                                   attestation_cache_time_to_live_ms=attestation_max_age_s * 1000) as client:
+                                   attestation_cache_time_to_live_ms=attestation_max_age_s * 1000,
+                                   **client_options) as client:
             t = time.monotonic()
             att = await client.verify(model)
             if not att.models:
@@ -226,6 +262,9 @@ async def transcribe_live(prep: Prepared, *, api_key: str, model: str, emit: Emi
         emit("error", message=str(e), replayed=False)
         raise
     except Exception as e:  # noqa: BLE001 - any SDK or transport failure fails closed
+        if (inner := _enclave_cause(e)) is not None:   # a pin check stopped the read
+            emit("error", message=str(inner), replayed=False)
+            raise EnclaveError(str(inner)) from e
         sdk = get_sdk_error(e)
         # Only the SDK's failure code or the exception's type: an error message could echo request or reply text.
         err = EnclaveError(sdk.failure.code if sdk else type(e).__name__)
@@ -233,7 +272,8 @@ async def transcribe_live(prep: Prepared, *, api_key: str, model: str, emit: Emi
         raise err from e
 
 
-# Replaced in tests. Must have transcribe_live's signature and guarantees.
+# Replaced in tests. Must have transcribe_live's signature and guarantees (client_options is passed
+# only when the NEAR code check is on).
 Transcriber = Callable[..., Awaitable[Transcription]]
 TRANSCRIBER: list[Transcriber] = []
 
@@ -624,8 +664,10 @@ async def transcribe_photo(cfg: Config, person: Person, rel_photo: str, *, sourc
         prep = prepare(data)
         if not key:
             raise EnclaveError("NEAR_AI_CLOUD_API_KEY is not set")
+        pins = pin_options(cfg, model, ev.qid, ev.emit)
         t = await _transcriber()(prep, api_key=key, model=model, emit=ev.emit,
-                                 attestation_max_age_s=cfg.attestation_max_age_s)
+                                 attestation_max_age_s=cfg.attestation_max_age_s,
+                                 **({"client_options": pins} if pins else {}))
         if t.signature_kind != "provider_tee":   # transcribe_live already checks; a stand-in must too
             raise EnclaveError(f"signature kind {t.signature_kind!r} is not provider_tee")
         body = canonical(t.text)

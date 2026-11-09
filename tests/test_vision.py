@@ -70,8 +70,8 @@ class FakeEnclave:
         self.text, self.signature_kind, self.error = text, signature_kind, error
         self.calls = []
 
-    async def __call__(self, prep, *, api_key, model, emit=None, attestation_max_age_s=300):
-        self.calls.append({"prep": prep, "model": model, "api_key": api_key})
+    async def __call__(self, prep, *, api_key, model, emit=None, attestation_max_age_s=300, client_options=None):
+        self.calls.append({"prep": prep, "model": model, "api_key": api_key, "client_options": client_options})
         if emit:
             emit("attestation", model=model, reports_verified=1, verified_at=1, seconds=0.1, e2ee=True,
                  replayed=False)
@@ -795,3 +795,38 @@ def test_photo_hash_is_cached_until_the_file_changes(cfg, fake, pics, monkeypatc
     assert size not in calls             # the photo was not hashed again
     (cfg.files / res.photo).write_bytes(pics["insurance_card_maya.png"])
     assert not vision.info(cfg, res.photo).matches
+
+
+# ---- the NEAR code check (feat/pinning) also covers photo reads
+
+def test_photo_read_gets_the_near_code_check(cfg, pics, fake, monkeypatch):
+    monkeypatch.delenv("FAMILYBOX_PIN_LEVEL", raising=False)
+    f = fake()
+    res = add(cfg, "maya", "ids", "ssn.png", pics["ssn_card_jordan.png"])
+    assert res.ok
+    opts = f.calls[0]["client_options"]
+    assert opts and {"gateway_verification", "model_verification", "deployment_policy"} <= set(opts)
+
+
+def test_photo_read_skips_the_check_only_when_the_owner_turned_it_off(cfg, pics, fake, monkeypatch):
+    monkeypatch.setenv("FAMILYBOX_PIN_LEVEL", "off")
+    f = fake()
+    assert add(cfg, "maya", "ids", "ssn.png", pics["ssn_card_jordan.png"]).ok
+    assert f.calls[0]["client_options"] is None
+
+
+def test_photo_read_stops_while_a_near_code_change_waits_for_review(cfg, pics, fake, monkeypatch):
+    from familybox import pinning
+    monkeypatch.delenv("FAMILYBOX_PIN_LEVEL", raising=False)
+    monkeypatch.setattr(pinning.PinStore, "blocking_review",
+                        lambda self, comps=None: {"id": "r1", "component": "gateway", "status": "waiting",
+                                                  "detected_at": 1, "deployed_at": None})
+    f = fake()
+    res = add(cfg, "maya", "ids", "ssn.png", pics["ssn_card_jordan.png"])
+    assert not res.ok and "review" in res.error and f.calls == []
+
+
+def test_photo_read_refuses_locked_enclave_settings():
+    import asyncio as aio
+    with pytest.raises(enclave.EnclaveError, match="locked"):
+        aio.run(vision.transcribe_live(None, api_key="x", model="m", client_options={"e2ee": False}))
