@@ -82,10 +82,8 @@ def _write_private(path: Path, data: bytes) -> None:
 
 
 def _audit(cfg: Config, person_id: str, entry: dict) -> None:
-    log = cfg.runtime / "audit" / f"{person_id}.jsonl"
-    log.parent.mkdir(parents=True, exist_ok=True)
-    with log.open("a") as f:
-        f.write(json.dumps({"time": int(time.time())} | entry) + "\n")
+    from . import ledger
+    ledger.append(cfg.runtime, person_id, {"time": int(time.time())} | entry)
 
 
 # --- sign-in codes and sessions ---------------------------------------------------------------

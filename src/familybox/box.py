@@ -29,7 +29,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
-from . import access, enclave, gate
+from . import access, enclave, gate, ledger
 from .config import Config, Person
 from .store import Sensitive, Store
 
@@ -266,8 +266,6 @@ class Box:
         return ans
 
     def _audit(self, ans: Answer) -> None:
-        log_path = self.cfg.runtime / "audit" / f"{ans.person}.jsonl"
-        log_path.parent.mkdir(parents=True, exist_ok=True)
         entry = {
             "time": int(time.time()),
             "qid": ans.qid,
@@ -281,8 +279,7 @@ class Box:
             "held_ids": ans.held_ids,
             "enclave": ans.enclave,
         }
-        with log_path.open("a") as f:
-            f.write(json.dumps(entry) + "\n")
+        ledger.append(self.cfg.runtime, ans.person, entry)   # chained: seq, prev_hash, entry_hash
 
 
 def _held_summary(held: list[gate.Held]) -> list[dict]:

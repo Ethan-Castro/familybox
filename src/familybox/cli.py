@@ -6,6 +6,8 @@
   familybox approve --as dana <id>        approve and show the full value here (owner's screen)
   familybox deny --as dana <id>
   familybox log --as maya                 what left the box for maya
+  familybox log verify --as maya          check nothing in maya's log was changed, removed or reordered
+  familybox anchor --as maya              dry run: the NEAR call that would anchor maya's log (plugin)
   familybox verify                        check the NEAR enclave attestation only (no inference)
   familybox code --as maya                one-time sign-in code for the box's web page (10 minutes)
   familybox serve [--lan] [--port 8443]   the box's private web page (HTTPS; --lan only on the box itself)
@@ -49,6 +51,10 @@ def main(argv: list[str] | None = None) -> int:
     for name in ("pending", "log"):
         p = sub.add_parser(name)
         p.add_argument("--as", dest="person", required=True)
+        if name == "log":
+            p.add_argument("action", nargs="?", choices=["show", "verify"], default="show",
+                           help="verify: check that nothing in the log was changed, removed or reordered")
+            p.add_argument("--json", action="store_true")
     for name in ("approve", "deny"):
         p = sub.add_parser(name)
         p.add_argument("--as", dest="person", required=True)
@@ -115,6 +121,8 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps(item))
     elif args.cmd in ("approve", "deny"):
         print(json.dumps(Approvals(cfg).decide(args.person, args.id, args.cmd == "approve")))
+    elif args.cmd == "log" and args.action == "verify":
+        return _log_verify(cfg, args)
     elif args.cmd == "log":
         path = cfg.runtime / "audit" / f"{args.person}.jsonl"
         print(path.read_text() if path.exists() else "(nothing yet)")
@@ -137,6 +145,39 @@ def main(argv: list[str] | None = None) -> int:
             print("NEAR_AI_CLOUD_API_KEY is not set"); return 2
         return asyncio.run(_verify(key, cfg.model))
     return 0
+
+
+def _log_verify(cfg, args) -> int:
+    from . import ledger
+    try:
+        person = cfg.person(args.person)
+    except KeyError as e:
+        print(e.args[0]); return 2
+    rep = ledger.verify_all(cfg.runtime, person.id)
+    if args.json:
+        print(json.dumps(rep.to_dict(), indent=1))
+        return 0 if rep.ok else 1
+    name = person.display
+    if rep.count == 0 and rep.ok:
+        print(f"{name}'s log has no linked entries yet"
+              f"{f' ({rep.unchained_lines} older entries from before linking)' if rep.unchained_lines else ''}.")
+        return 0
+    if rep.ok:
+        print(f"{name}'s log checks out: {rep.count} {'entry' if rep.count == 1 else 'entries'}, "
+              f"each linked to the one before.")
+    else:
+        print(f"{name}'s log does NOT check out. Something was changed, removed or reordered:")
+        for p in rep.problems:
+            print(f"  - {p}")
+    print(f"chain head: {rep.head or '(none)'}")
+    if rep.unchained_lines:
+        print(f"older entries from before linking: {rep.unchained_lines} (sealed, so they cannot change either)")
+    if rep.checkpoints_checked:
+        print(f"saved anchors checked: {rep.checkpoints_checked}")
+    else:
+        print("no anchors saved yet. Until a head is anchored, someone who can edit the box's files could cut "
+              "the newest entries off the end without it showing (familybox anchor --as " + person.id + ").")
+    return 0 if rep.ok else 1
 
 
 CLI_REDIRECT_DEFAULT = "http://127.0.0.1:8765/cloud/callback"
