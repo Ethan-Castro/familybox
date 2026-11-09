@@ -30,6 +30,7 @@ Without a key, `ask` replays recorded enclave conversations (`replays/`) for the
 ```bash
 cp .env.example .env                      # add NEAR_AI_CLOUD_API_KEY
 uv run --env-file .env familybox verify   # attestation only, no inference
+uv run familybox pins check                # pin and compare NEAR's serving code (attestation only, no key)
 uv run --env-file .env familybox ask --as dana "When does Maya's passport expire?"
 ```
 
@@ -96,6 +97,18 @@ These are single runs of a non-deterministic model on a hand-written suite with 
 ## What we found about NEAR AI Cloud
 
 With E2EE on, a request whose history contains `assistant.tool_calls` plus `tool` messages returns 400 "Upstream request failed". This happens on glm-5.3-flash and DeepSeek-V4.1-Flash, and the same request without E2EE succeeds. familybox works around it by sending earlier tool calls and results as encrypted message text. Repro: `spikes/probe_turn2.py`. Details and model compatibility: [docs/BUILD_LOG.md](docs/BUILD_LOG.md).
+
+### NEAR changes its serving code often, so the box pins it
+
+Attestation says the model ran in an enclave, not which code ran there. The box keeps a fingerprint of
+NEAR's gateway, the model's enclave (firmware, kernel, OS, container images) and the model's deployed
+compose file. The first verified use is pinned unless `pins/near-ai-cloud.json` already names the
+expected values. If anything changes, questions stop before any prompt is sent, and the owner reviews
+the difference with `familybox pins show`, `familybox pins diff <id>` and
+`familybox pins accept --as <admin> <id>`, or on the box page under "NEAR code". Every fingerprint and
+decision goes into a hash-chained history (`familybox pins history`). In live checks on 2026-11-08 the
+model's deployed compose file changed twice in one day, so expect reviews. Set `[pins] level = "platform"`
+in family.toml to stop only for enclave and image changes. Details: [docs/BUILD_LOG.md](docs/BUILD_LOG.md).
 
 ## Layout
 

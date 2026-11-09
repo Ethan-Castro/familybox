@@ -26,7 +26,15 @@ box.pre_checks.append(fn)             # async fn(box, person, question, ctx) -> 
 box.post_checks.append(fn)            # async fn(box, person, question, draft, result, ctx) -> None
                                       #   result is gate.GateResult: result.bump("held"|"refused", reason),
                                       #   result.held.append(gate.Held(...)), result.text = ...
+box.client_options.append(fn)         # fn(box, person, ctx) -> dict | None, live questions only
+                                      #   extra nearai_inference_sdk.InferenceClient kwargs (verifiers,
+                                      #   deployment_policy). Raise enclave.EnclaveError inside a verifier
+                                      #   to stop the question with that message.
 ```
+
+`client_options` can never change `e2ee`, `ohttp`, `api_key`, `base_url`, `headers`, `signing_algo` or the
+cache lifetimes (the question stops if a plugin tries). Two hooks that set the same key also stop the
+question. The pinning plugin (`plugins/pinning.py`) is the example.
 
 The model is offered the union of every provider's tools (the built-in `search_files` and `read_file`
 come first; the first provider to offer a name wins). A tool the model was not offered is refused. A

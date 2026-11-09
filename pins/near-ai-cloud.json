@@ -1,0 +1,92 @@
+{
+ "version": 1,
+ "about": "Expected NEAR AI Cloud measurement fingerprints. A box with no pins of its own trusts these instead of trusting first use.",
+ "components": {
+  "gateway": [
+   {
+    "fp": "ed978f0bc71df5ed76abbc176f713aa2a113fd76244289c0559b033be8eec191",
+    "fields": {
+     "compose_sha256_masked": "3251e4940e35ba68059c750b8e98b7c2fb64d331b654375b6456b6a619278f04",
+     "images": [
+      "alpine@sha256:4b7ce07002c69e8f3d704a9c5d6fd3053be500b7f1c69fc0d80990c2ad8dd412",
+      "nearaidev/cloud-api@sha256:d74c3c3eb67c18db5483f2e152741ffc57dbbc3ca52c10cdeb8138054fd213dd",
+      "nearaidev/cvm-ingress@sha256:1653c23200298a823c08c66d829c633fc36919bca1e09cf577b83b01353e0891",
+      "otel/opentelemetry-collector-contrib@sha256:85ac41c2db88d0df9bd6145e608a3cb023f5d8443868adbfbbf66efb51087917"
+     ],
+     "os_image_hash": "8db40cb23008d6213668b5816702d100b37b859a8a5bfd18d938ae3a1b3715bd",
+     "pre_launch_script_sha256": null,
+     "settings": {
+      "gateway_enabled": true,
+      "key_provider_id": "",
+      "kms_enabled": true,
+      "local_key_provider_enabled": false,
+      "manifest_version": 2,
+      "name": "dstack-0.5.12",
+      "no_instance_id": false,
+      "port_policy": {
+       "ports": [
+        {
+         "port": 443,
+         "pp": false
+        }
+       ],
+       "restrict_mode": true
+      },
+      "public_logs": false,
+      "public_sysinfo": true,
+      "runner": "docker-compose",
+      "secure_time": false
+     },
+     "td": [
+      {
+       "mrtd": "7fe60787222bd394cb516abca2435f22f035ab2cc9c0a4b4b3b148e46297f3d931a237b72f359052c6e657d8c1409173",
+       "rtmr0": "d090162bff4b1d1dc74dc59dc548838efc4b811b173da8536efa8e2a9c045da70ee092301293ad90afebee448bcd0211",
+       "rtmr1": "4ae609807c765916a31d724786ed74bcb97e168a9d937b04936aeef2015c907eba5ac352c6bcd749c246fd62ffb659ec",
+       "rtmr2": "764489f277a8540189761e72b4238ba36d4d647e11bd958d8ab5522af2a4867b0ff63e06b0c4967f1857236244040a5d"
+      }
+     ]
+    },
+    "seen": "November 9, 2026"
+   }
+  ],
+  "model/deepseek-ai/DeepSeek-V4.1-Flash-1017": [
+   {
+    "fp": "81efa87d2c4630ba09a5b4decc9864a69881b80f1131dd031661d9f2451b0da3",
+    "fields": {
+     "compose_sha256_masked": "501ddfc08a129f1d707913c03b664332a21d9c2eb501c348fd0bbb186393e249",
+     "images": [
+      "${COMPOSE_MANAGER_IMAGE:-nearaidev/compose-manager@sha256:a0c073085684e12e19f31bb279fc8da663a374199bfecc47b04167ae79eaa766}",
+      "certbot/dns-cloudflare@sha256:742dbd2e61c8709b930712c38958386c3cb3928e09eeb1f1e490600c127e2edb",
+      "nearaidev/compose-manager-launcher@sha256:079a14b41deb11e0e27f9b69648e8b3d89bd6fb9ccf6071643b8f447fa415085",
+      "otel/opentelemetry-collector-contrib@sha256:85ac41c2db88d0df9bd6145e608a3cb023f5d8443868adbfbbf66efb51087917"
+     ],
+     "os_image_hash": "91fd5d69ccee3e5ea4f2aeb8c9b632c4358c4ecfc29ba1aa6fb1e402af209829",
+     "pre_launch_script_sha256": "9a6a0b0393412e365b5165f1960a311cc0f1ea58e6c3a840f00236832d8d00b9",
+     "settings": {
+      "gateway_enabled": false,
+      "key_provider_id": "",
+      "kms_enabled": true,
+      "local_key_provider_enabled": false,
+      "manifest_version": 2,
+      "name": "dstack-nvidia-0.5.11",
+      "no_instance_id": false,
+      "port_policy": null,
+      "public_logs": false,
+      "public_sysinfo": true,
+      "runner": "docker-compose",
+      "secure_time": false
+     },
+     "td": [
+      {
+       "mrtd": "df4d77c857de652bd0fafa343a2026b51071ee03773d076d283abf1a7d36ff91ffa279ee4a617ac664f7e2a2c8d5891b",
+       "rtmr0": "bc122d143ab768565ba5c3774ff5f03a63c89a4df7c1f5ea38d3bd173409d14f8cbdcc36d40e703cccb996a9d9687590",
+       "rtmr1": "4ae609807c765916a31d724786ed74bcb97e168a9d937b04936aeef2015c907eba5ac352c6bcd749c246fd62ffb659ec",
+       "rtmr2": "bd67ab7554dc27ab03a077bc1447a1a67d0624ff547c4c809a8626f12d6a89712f8ec60e781e99b98208574065d21a71"
+      }
+     ]
+    },
+    "seen": "November 9, 2026"
+   }
+  ]
+ }
+}

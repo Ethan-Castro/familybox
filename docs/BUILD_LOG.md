@@ -82,3 +82,47 @@ Installed through the fleet control plane's exec jobs, with no SSH (`scripts/fle
 - **Fail closed:** an error in a pre or post check stops the question, and nothing is answered.
 - **Enclave:** `ask_live` takes the tool list and an event callback. Replay mode sends the same events, marked as replayed.
 - **Tests:** 113 passed (97 before plus 16 new plugin tests). No live calls were made.
+
+## 2026-11-08: Pinning NEAR's serving code (alert when it changes)
+
+- **What:** `src/familybox/pinning.py` and the plugin `src/familybox/plugins/pinning.py`. The box fingerprints three things: NEAR's gateway, the model's enclave, and the model's deployed workload. It trusts the first verified use, unless `pins/near-ai-cloud.json` already names the expected values. A change stops the question before any prompt is sent and opens an owner review. Owners use `familybox pins show|check|diff|accept|reject|history|export` or the box page `/pins`.
+- **Where the check runs:** inside the SDK's own verification. The plugin passes a gateway deployment verifier, the model `deployment_policy` callback and a TDX quote wrapper through a new `box.client_options` hook. So the reports it checks are the ones the question is encrypted to. While a review waits, a pre-check stops every live question without contacting NEAR. Replay mode skips pinning.
+- **Core edits:**
+  - `enclave.ask_live(client_options=...)`. Encryption, the endpoint, the key and cache lifetimes stay locked.
+  - An `EnclaveError` raised inside an SDK callback now keeps its message.
+  - `box.client_options` is a list of hooks.
+- **History:** `runtime/pins_history.jsonl` is append-only and hash chained. A deleted `pins.json` with a history still present, or a damaged pin file, fails closed. It never quietly goes back to trusting first use.
+
+**Live attestation runs (no API key, no inference, free):** 14 keyless `verify()` calls against DeepSeek-V4.1-Flash-1017, 01:49 to 01:59 UTC on 2026-11-09. These were probes, `familybox pins check` twice on a fresh box, 6 back-to-back samples, a live change, accept and recheck flow, and a fresh box against the shipped pins (gateway and model matched the shipped pins; the workload was pinned on first use).
+
+What stayed the same and what changed:
+
+| Field | Gateway | Model |
+|---|---|---|
+| Signing address | same every time (one gateway instance seen) | **the same on two different instances** (gpu02, gpu04): the key is shared |
+| TLS SPKI | same every time | n/a |
+| MRTD, RTMR0-2 (from the verified quote) | same in all samples | same in all 6 gpu04 samples; not captured for gpu02 (the first probes did not record quotes) |
+| dstack OS image hash | same | same on both instances |
+| compose hash = MRCONFIGID[1:33] = sha256(app-compose) | same | **differs per instance**: `INSTANCE_LABEL=gpu02` vs `gpu04`, and gpu02 allows 4 extra `AWS_*` env vars |
+| app-compose with instance labels masked, images, settings | same | same on both instances |
+| compose-manager action log | none | per instance (gpu02 had 207 entries, then 208 two minutes later after a new `compose_down`; gpu04 had 209) |
+| latest deployed compose file (workload) | n/a | same on both: `prod/DeepSeek-V4.1-Flash-1017-vLLM-DEP8-Abliterated.yaml` v0.0.553, sha256 `fe8407db...` |
+
+- **So the fingerprint uses:**
+  - MRTD and RTMR0-2;
+  - the OS image hash;
+  - the app-compose settings and container image digests;
+  - the compose text, hashed with per-instance lines masked;
+  - for the workload, the latest deployed compose file and its sha256, plus the compose-manager image.
+- **Kept for information only:** the raw compose hash, MRCONFIGID, allowed env vars, tags, commits and per-service updates.
+- **How often NEAR changes code:** on gpu02, the deployed workload file changed twice on 2026-11-08, about 15 hours apart: v0.0.546 (`80ab61ce`) to v0.0.551 (`44e8d39e`) at 06:15 UTC, then to v0.0.553 (`fe8407db`) at 20:55 UTC. gpu04 redeployed v0.0.553 at 01:08 UTC on 2026-11-09. The vLLM engine containers there were last deployed from v0.0.546, while the proxies run v0.0.553. Under the strict level that is two owner reviews in one day. `level = "platform"` keeps blocking enclave and image changes but only logs workload changes.
+- **Real fingerprints:**
+  - Gateway `ed978f0bc71df5ed...`: MRTD `7fe60787...`, OS `8db40cb2...`, dstack-0.5.12.
+  - Model `81efa87d2c4630ba...`: MRTD `df4d77c8...`, OS `91fd5d69...`, dstack-nvidia-0.5.11.
+  - Workload `70a718d4a6d30baa...`.
+  - The first two are shipped in `pins/near-ai-cloud.json`.
+- **Limits:**
+  - Model instances share one signing key, and `verify()` returned one model report per call. So the box checks the instance that answered the attestation, not necessarily the one that serves the prompt.
+  - The workload comes from the compose manager's signed log. The SDK calls that deployment intent, not proof of what is running.
+  - Image build provenance (sigstore against `nearai/cvm-compose-files`) is not checked yet.
+- **Tests:** 147 passed (113 before plus 34 in `tests/test_pinning.py`, all with fake verification results). No live inference was run.
