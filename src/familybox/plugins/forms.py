@@ -13,6 +13,7 @@ The logic lives in familybox.formfill; this module only wires it into the box.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -21,6 +22,7 @@ import threading
 import time
 from typing import Annotated
 
+from mcp.server.mcpserver import Context
 from pydantic import Field
 
 from .. import formfill
@@ -93,10 +95,15 @@ def mcp_tools(server, person, box) -> None:
         for_person: Annotated[str, Field(min_length=1, max_length=60,
                                          description="Who the form is about, for example maya.")],
         fields: Annotated[dict[str, str], Field(description="Field name -> text or {{person.detail}} reference.")],
+        ctx: Context,
     ) -> str:
+        from familybox.mcp_server import source_for
         _sweep(cfg)
         try:
-            return formfill.fill(cfg, person.id, form, for_person, fields, source="mcp", store=box.store).text
+            # Off the event loop: PDF filling and the gate are synchronous and would stall other sessions.
+            res = await asyncio.to_thread(formfill.fill, cfg, person.id, form, for_person, fields,
+                                          source=source_for("mcp", ctx), store=box.store)
+            return res.text
         except formfill.FormError as e:
             return str(e)
         except Exception:  # noqa: BLE001 - logged on the box; the assistant gets plain words only

@@ -22,7 +22,7 @@ uv run familybox ask --as maya "What medications am I on?"
 uv run familybox ask --as maya "What did the doctor say at Mom's last visit?"
 uv run familybox ask --as dana "What were our combined 2025 W-2 wages, and what do we still need for Maya's FAFSA?"
 uv run familybox pending --as maya        # values held for Maya's approval
-uv run pytest -q tests                    # 97 tests
+uv run pytest -q tests                    # 692 tests; 16 sandbox tests run only on Linux (the Pi)
 ```
 
 Without a key, `ask` replays recorded enclave conversations (`replays/`) for the six demo questions. The box's real tools, access checks and answer gate still run, and the output says "(replayed recording)". With a key, every question goes to NEAR AI Cloud live:
@@ -63,6 +63,19 @@ uv run familybox photos --as maya                                      # which p
 ```
 
 The box sends the photo once to a NEAR enclave vision model (`Qwen/Qwen3-VL-30B-A3B-Instruct`; attestation checked, E2EE on, `provider_tee` signature required). Location and camera data are removed first. It keeps both copies: the original photo (on the box page, only its owner can look at it; a photo in the shared folder can be seen by everyone in the family) and `card.jpg.transcript.txt`, which starts with the model, signer, signature kind, time, the photo's SHA-256 and a seal made with a key only the box holds. The box page says "checked" only when that seal and the photo both match, and uploads can't use the `.transcript.txt` name. The transcript is indexed like any file, so search and the gate cover the numbers printed on the card. Assistants never get the photo. JPG, PNG and WEBP; iPhone HEIC is not supported yet.
+
+### More the box can do
+
+| Feature | What it does | Docs |
+|---|---|---|
+| Live trust panel | The Activity page shows each question as a timeline: attestation, encryption, each signed turn, files opened or refused, what the gate held. Admins never see other people's answers or file names. | `familybox serve`, then Activity |
+| Fill forms on the box | The assistant says which detail goes in which field (`{{maya.ssn}}`); the box fills the real values, every owner approves, and the PDF is downloaded from the box page only. | [docs/FORMS.md](docs/FORMS.md) |
+| Confidential analysis workbench | Off by default. The enclave model can run a short Python script over the asker's files in a sandbox with no network and no new processes; output goes back to the model, never straight to the assistant. | [docs/WORKBENCH.md](docs/WORKBENCH.md) |
+| Second check for reworded leaks | One more verified enclave call judges whether an answer gives away a protected fact in other words. | `src/familybox/plugins/paraphrase.py` |
+| Approve button (Arduino UNO Q) | Approve-only device tokens and a device API that never sees values. Simulator included; not yet run on the board. | [hardware/unoq-approve/README.md](hardware/unoq-approve/README.md) |
+| Red-team page | Judges try to get a fictional family's data out, live, scored by the attack suite's checker, with a hard daily spending cap. Local only. | [docs/REDTEAM.md](docs/REDTEAM.md) |
+
+What each part defends against, and what it doesn't: [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md). Animated walk-through of every part: [docs/how-each-part-works.html](docs/how-each-part-works.html).
 
 ## How a question flows
 
