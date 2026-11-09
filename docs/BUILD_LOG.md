@@ -82,3 +82,14 @@ Installed through the fleet control plane's exec jobs, with no SSH (`scripts/fle
 - **Fail closed:** an error in a pre or post check stops the question, and nothing is answered.
 - **Enclave:** `ask_live` takes the tool list and an event callback. Replay mode sends the same events, marked as replayed.
 - **Tests:** 113 passed (97 before plus 16 new plugin tests). No live calls were made.
+
+## 2026-11-08: Remote MCP for ChatGPT and Claude web (branch feat/remote)
+
+- **What:** the box's web page now serves MCP at `/mcp` and is its own OAuth 2.1 sign-in server (RFC 8414 and 9728 metadata, RFC 7591 registration, code with PKCE S256 only, refresh rotation, RFC 7009 revoke). A family member links an assistant by typing a one-time code from `familybox code` and tapping "Yes, link it". Details and the tunnel steps are in `docs/REMOTE.md`.
+- **Built as a plugin:** `src/familybox/plugins/remote.py` (routes, consent page, Assistants page, CLI) and `src/familybox/remote.py` (storage, provider, `/mcp` gateway). It uses the MCP SDK's own auth handlers (`mcp.server.auth`). One core edit: `mcp_server.build_server` takes an optional `cfg` and `box`.
+- **The person always comes from the token.** Each person gets their own MCP server inside the box. Questions are logged with source `mcp-remote`.
+- **New CLI:** `familybox token --as X` (bearer token, shown once), `familybox connections --as X`, `familybox revoke --as X <id>` or `--all`. The web page has an Assistants page with Revoke and "Make a token".
+- **Stored only as hashes:** client secrets, codes, access, refresh and API tokens.
+- **Finding:** the SDK's revoke handler requires a `client_secret` field even from public clients, so the box has its own `/revoke`. The SDK's client authenticator compares plain secrets, so the box subclasses it to compare hashes.
+- **Tests:** 30 new in `tests/test_remote.py`, all in-process. One drives the MCP SDK's own OAuth client through the full sign-in. Not exposed to the internet and not tried with the real ChatGPT or Claude apps yet. No live NEAR calls.
+

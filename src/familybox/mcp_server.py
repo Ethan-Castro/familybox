@@ -29,10 +29,12 @@ details are replaced with placeholders, and the full value is shown only on the 
 after they approve. Do not ask for full identifiers; ask for what you need them for instead."""
 
 
-def build_server(person_id: str, mode: str = "auto", source: str = "mcp-stdio") -> MCPServer:
-    cfg = config.load()
+def build_server(person_id: str, mode: str = "auto", source: str = "mcp-stdio", *,
+                 cfg: config.Config | None = None, box: Box | None = None) -> MCPServer:
+    """cfg and box default to FAMILYBOX_HOME and a new Box; the remote /mcp route passes the web app's own."""
+    cfg = cfg or config.load()
     person = cfg.person(person_id)
-    box = Box(cfg, mode=mode)
+    box = box or Box(cfg, mode=mode)
     server = MCPServer(name="family-box", title=f"{cfg.name} ({person.display})",
                        instructions=INSTRUCTIONS, version="0.1.0", log_level="WARNING")
 
