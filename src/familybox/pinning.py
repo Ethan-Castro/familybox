@@ -4,23 +4,33 @@ TEE attestation proves the model ran in an enclave. It does not say *which* code
 redeploys. So the box keeps a "measurement fingerprint" for each part of the path a question takes:
 
   gateway                 NEAR's API gateway CVM (TLS, routing, E2EE pass-through)
-  model/<id>              the model CVM: firmware, kernel, OS, its compose file and container images
-  model/<id>/workload     what that CVM's compose manager is running: compose files, by sha256
+  model/<id>              the model CVM: firmware, kernel, OS, its compose file, container images and
+                          the env var names the operator may set at runtime
+  model/<id>/manager      the compose manager image: the program inside the model CVM that installs
+                          and runs the model containers
+  model/<id>/workload     the compose files that manager says are still deployed, by sha256
 
 The first verified use is pinned (trust on first use), unless a shipped pins file in the repo already
 names the expected values. Every later live question is checked inside the SDK's own verification
-(the gateway deployment verifier and the model deployment_policy), against the same reports the
-question is sent to, so there is no gap between "checked" and "used". If a fingerprint is new, the
-question stops before any prompt is sent, an owner review item is created, and every question stops
-until the owner accepts or rejects it (`familybox pins`, or the box page /pins).
+(the gateway deployment verifier and the model deployment_policy) before any prompt is sent. The check
+covers the reports the box verified for this question. NEAR's model instances share one signing key,
+so another instance running different code could still receive the prompt (see "Limits" in
+docs/BUILD_LOG.md). If a fingerprint is new, the question stops before any prompt is sent, an owner
+review item is created, and every question stops until the owner accepts or rejects it
+(`familybox pins`, or the box page /pins).
+
+Levels: "strict" stops for any change. "platform" still stops for the gateway, the model enclave and
+the compose manager, and only logs which model compose files were deployed. "off" checks nothing.
 
 What goes into a fingerprint is what was the same across instances in live runs (docs/BUILD_LOG.md):
-MRTD and RTMR0-2 from the verified TDX quote, the dstack OS image hash, the app-compose settings and
-container images, and the compose text with per-instance labels masked. The raw compose hash and
-MRCONFIGID are kept as information only: they differ per model instance (INSTANCE_LABEL=gpu02 vs gpu04).
+MRTD and RTMR0-2 from the verified TDX quote, the dstack OS image hash, the app-compose settings,
+container images and allowed env names (minus a short list seen to differ per instance), and the
+compose text with the INSTANCE_LABEL line masked. The raw compose hash and MRCONFIGID are kept as
+information only: they differ per model instance (INSTANCE_LABEL=gpu02 vs gpu04).
 
-pins.json holds accepted fingerprints and review items. pins_history.jsonl is append-only and hash
-chained, so the audit can show every fingerprint the box ever saw and every owner decision.
+pins.json holds accepted fingerprints, review items and the head of the history. pins_history.jsonl
+is append-only and hash chained, and pins.json records its newest hash and length, so removing or
+editing any entry shows, unless someone rewrites both files together.
 """
 
 from __future__ import annotations
@@ -44,16 +54,21 @@ from .config import Config
 from .enclave import EnclaveError
 
 REPO_PINS = Path(__file__).resolve().parents[2] / "pins" / "near-ai-cloud.json"
-LEVELS = ("strict", "platform", "off")
+LEVELS = ("strict", "platform", "off")   # same as box.PIN_LEVELS
 GENESIS = "0" * 64
 
-# Lines in a compose file that name the instance, not the code. Masked before hashing.
-PER_INSTANCE_KEYS = ("INSTANCE_LABEL", "INSTANCE_ID", "INSTANCE_NAME", "NODE_NAME", "CVM_NAME", "CVM_HOST",
-                     "HOSTNAME", "HOST_IP", "DD_HOSTNAME")
+# Lines in a compose file that name the instance, not the code. Masked before hashing. Only keys seen
+# to differ between instances in live data go here (docs/BUILD_LOG.md); add others only with evidence.
+PER_INSTANCE_KEYS = ("INSTANCE_LABEL",)
 _MASK = re.compile(r"(?m)^(\s*-?\s*[\"']?(?:" + "|".join(PER_INSTANCE_KEYS) + r")\s*[=:]).*$")
 _IMAGE = re.compile(r"(?m)^\s*image:\s*[\"']?([^\s\"'#]+)")
-# app-compose settings that change what runs or who can reach it. allowed_envs differs per instance
-# in live data, so it is shown in diffs but not fingerprinted.
+# Env var names the operator may set on one model instance but not another, matched exactly. Seen in
+# live data: model instance gpu02 allowed these 4 and gpu04 did not. Every other allowed env name is fingerprinted, because
+# an allowed env is a value NEAR can inject at runtime without changing any measurement.
+PER_INSTANCE_ENVS = frozenset({"AWS_REGION", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_S3_BUCKET"})
+# How often a matching check refreshes last_ok in pins.json (fewer SD card writes on the Pi).
+SAVE_EVERY_S = 300
+# app-compose settings that change what runs or who can reach it.
 FLAG_KEYS = ("manifest_version", "name", "runner", "kms_enabled", "gateway_enabled", "local_key_provider_enabled",
              "key_provider_id", "public_logs", "public_sysinfo", "no_instance_id", "secure_time", "port_policy")
 _HEX_ID = re.compile(r"^[0-9a-f]{12}$")
@@ -118,7 +133,9 @@ class QuoteLog:
     """Wraps the SDK's TDX quote verifier and remembers each verified quote's measurements.
 
     Keyed by sha256(app_compose): the SDK checks that MRCONFIGID is 0x01 || sha256(app_compose)
-    after the quote verifies, so a deployment callback can find its own quote's measurements.
+    after the quote verifies, so a deployment callback can find its own quote's measurements. If
+    several quotes share one app-compose, measure() fingerprints each quote on its own, so the result
+    never depends on how many instances answered or in what order.
     """
 
     def __init__(self, inner: Callable | None = None):
@@ -156,55 +173,57 @@ class QuoteLog:
 # ---------------------------------------------------------------- fingerprints
 
 def running_workload(actions) -> dict:
-    """What the compose manager's signed action log says it deployed last, read the way the SDK reads it
-    (verify_compose_manager_deployment_image_provenance): the latest compose_up, and the latest
-    compose_manager_started image.
+    """What the compose manager's signed action log says is still deployed.
 
-    Two refinements from live logs: a compose file that was fully taken down again afterwards (for
-    example a one-off token-rotation job) does not count, and a "dry" run is not a deployment.
-    Per-service updates are listed as information. This is recorded deployment intent, not proof that
-    a container is healthy (the SDK says the same).
+    Every compose file brought up and not fully taken down again counts, with the sha256 of its latest
+    compose_up. A file whose only deployed services were all taken down again (for example a one-off
+    token-rotation job) does not count, and a "dry" run is not a deployment. The latest
+    compose_manager_started image is the manager. Tags, commits and per-service updates are
+    information. This is recorded deployment intent, not proof that a container is healthy (the SDK
+    says the same).
     """
     manager_image = None
-    current = None                       # the latest compose_up still standing
-    ups: dict[str, dict] = {}            # file -> its latest compose_up
-    downed: set[str] = set()
-    services: dict[str, dict[str, str]] = {}   # file -> service -> file_sha256 (or "down")
+    files: dict[str, dict] = {}   # file -> {"sha", "full", "services": {svc: sha | "down"}, "up"}
     for a in actions or ():
         kind, f = a.get("action"), a.get("file")
         svcs = [s for s in (a.get("services") or []) if isinstance(s, str)]
         if kind == "compose_manager_started":
             manager_image = a.get("image")
         elif kind == "compose_up" and f and svcs != ["dry"]:
-            ups[f] = a
-            downed.discard(f)
+            st = files.get(f)
+            if st is None or st["gone"]:
+                st = files[f] = {"full": False, "services": {}, "gone": False}
+            st.update(sha=a.get("file_sha256") or "", up=a)
             if svcs:
                 for s in svcs:
-                    services.setdefault(f, {})[s] = a.get("file_sha256") or ""
+                    st["services"][s] = a.get("file_sha256") or ""
             else:
-                services[f] = {}
-            current = f
-        elif kind == "compose_down" and f:
+                st["full"] = True
+        elif kind == "compose_down" and f and f in files:
+            st = files[f]
             if svcs:
                 for s in svcs:
-                    services.setdefault(f, {})[s] = "down"
+                    st["services"][s] = "down"
             else:
-                downed.add(f)
-                services.pop(f, None)
-    if current in downed:
-        standing = [a for f, a in ups.items() if f not in downed]
-        current = max(standing, key=lambda a: a.get("timestamp") or "")["file"] if standing else None
-    up = ups.get(current) if current else None
+                st["gone"] = True
+
+    def standing(st) -> bool:
+        return not st["gone"] and (st["full"] or any(v != "down" for v in st["services"].values()))
+
+    live = {f: st for f, st in files.items() if standing(st)}
+    latest = max(live.values(), key=lambda st: st["up"].get("timestamp") or "")["up"] if live else None
+    current = latest.get("file") if latest else None
     return {"compose_manager_image": manager_image,
-            "file": up.get("file") if up else None,
-            "file_sha256": up.get("file_sha256") if up else None,
-            "tag": up.get("tag") if up else None,
-            "commit": up.get("commit") if up else None,
-            "deployed_at": up.get("timestamp") if up else None,
-            "service_updates": dict(sorted(services.get(current, {}).items())) if current else {}}
+            "standing": sorted(f"{f} {st['sha']}" for f, st in live.items()),   # "file sha256"
+            "file": current,
+            "file_sha256": latest.get("file_sha256") if latest else None,
+            "tag": latest.get("tag") if latest else None,
+            "commit": latest.get("commit") if latest else None,
+            "deployed_at": latest.get("timestamp") if latest else None,
+            "service_updates": dict(sorted(live[current]["services"].items())) if current else {}}
 
 
-def _app_compose(app_compose: str) -> tuple[dict, dict]:
+def _app_compose(app_compose: str, per_instance_envs: frozenset = frozenset()) -> tuple[dict, dict]:
     """(fingerprinted fields, information) from the measured app-compose JSON."""
     try:
         ac = json.loads(app_compose)
@@ -213,13 +232,15 @@ def _app_compose(app_compose: str) -> tuple[dict, dict]:
     if not isinstance(ac, dict):
         raise PinError("NEAR's deployment description could not be read")
     compose = str(ac.get("docker_compose_file") or "")
+    envs = sorted({str(e) for e in (ac.get("allowed_envs") or [])})
     fields = {
         "settings": {k: ac.get(k) for k in FLAG_KEYS},
         "images": sorted(set(_IMAGE.findall(compose))),
         "compose_sha256_masked": _sha(_MASK.sub(r"\1<instance>", compose)),
         "pre_launch_script_sha256": _sha(ac["pre_launch_script"]) if ac.get("pre_launch_script") else None,
+        "allowed_envs": [e for e in envs if e not in per_instance_envs],
     }
-    info = {"allowed_envs": sorted(ac.get("allowed_envs") or [])}
+    info = {"allowed_envs_per_instance": [e for e in envs if e in per_instance_envs]}
     return fields, info
 
 
@@ -237,38 +258,37 @@ class Measured:
 
 
 def measure(kind: str, model: str | None, deployment, td: list[dict]) -> list[Measured]:
-    """Fingerprints for one verified gateway or model report (an SDK MeasuredDeployment)."""
-    fields, info = _app_compose(deployment.app_compose)
+    """Fingerprints for one verified gateway or model report (an SDK MeasuredDeployment).
+
+    td is every verified quote seen for this app-compose. Each one is fingerprinted on its own, so
+    one report's fingerprint never mixes in another instance's quote.
+    """
+    # The per-instance env names were seen differing between model instances only; the gateway keeps all.
+    fields, info = _app_compose(deployment.app_compose, PER_INSTANCE_ENVS if kind == "model" else frozenset())
     rm = deployment.runtime_measurements
     fields["os_image_hash"] = getattr(rm, "os_image_hash", None)
-    fields["td"] = sorted(td, key=_canon)
     info["compose_hash"] = getattr(rm, "compose_hash", None)
     if not td:
         raise PinError("the box could not read the enclave measurements")
     base = "gateway" if kind == "gateway" else f"model/{model}"
-    out = [Measured(base, fields, info)]
+    unique = sorted({_canon(t): t for t in td}.values(), key=_canon)
+    out = [Measured(base, fields | {"td": [t]}, dict(info)) for t in unique]
     if kind == "model":
         cm = deployment.compose_manager
         wl = running_workload(cm.actions) if cm is not None else running_workload(())
-        wfields = {k: wl[k] for k in ("compose_manager_image", "file", "file_sha256")}
-        winfo = {k: wl[k] for k in ("tag", "commit", "service_updates")} | {"compose_manager": cm is not None}
-        out.append(Measured(f"{base}/workload", wfields, winfo, deployed_at=wl["deployed_at"]))
+        out.append(Measured(f"{base}/manager", {"compose_manager_image": wl["compose_manager_image"]},
+                            {"compose_manager": cm is not None}))
+        winfo = {k: wl[k] for k in ("file", "file_sha256", "tag", "commit", "service_updates")}
+        out.append(Measured(f"{base}/workload", {"standing": wl["standing"]},
+                            winfo | {"compose_manager": cm is not None}, deployed_at=wl["deployed_at"]))
     return out
 
 
 # ---------------------------------------------------------------- the pin store
 
 def _level(cfg: Config) -> str:
-    env = os.environ.get("FAMILYBOX_PIN_LEVEL")
-    if env:
-        level = env
-    else:
-        import tomllib
-        try:
-            level = tomllib.loads((cfg.home / "family.toml").read_text()).get("pins", {}).get("level", "strict")
-        except (OSError, ValueError):
-            level = "strict"
-    return level if level in LEVELS else "strict"
+    from .box import _pin_level
+    return _pin_level(cfg)
 
 
 class PinStore:
@@ -308,6 +328,10 @@ class PinStore:
             for k in ("components", "fingerprints", "reviews"):
                 if not isinstance(data.setdefault(k, {}), dict):
                     raise ValueError("bad pin file")
+            head = data.get("history")
+            if head is not None and not (isinstance(head, dict) and isinstance(head.get("head"), str)
+                                         and isinstance(head.get("count"), int)):
+                raise ValueError("bad pin file")
             return data
         except (OSError, ValueError) as e:
             raise PinError("the box's NEAR pin file is damaged; the owner must check it") from e
@@ -332,49 +356,74 @@ class PinStore:
         except (OSError, ValueError, KeyError, TypeError) as e:
             raise PinError("the shipped NEAR pin file is damaged; the owner must check it") from e
 
-    def history(self) -> list[dict]:
+    def _lines(self) -> list[str]:
         if not self.history_path.exists():
             return []
-        return [json.loads(line) for line in self.history_path.read_text().splitlines() if line.strip()]
+        return [ln for ln in self.history_path.read_text().splitlines() if ln.strip()]
 
-    def _append(self, event: str, **data) -> dict:
-        """Append one hash-chained entry. Callers hold the lock."""
-        prev = GENESIS
-        if self.history_path.exists():
-            lines = [ln for ln in self.history_path.read_text().splitlines() if ln.strip()]
-            if lines:
-                prev = _sha(lines[-1])
-        entry = {"time": int(time.time()), "event": event, **data, "prev": prev}
+    def history(self) -> list[dict]:
+        """Every readable history entry. A damaged line is skipped here; verify_history() reports it."""
+        out = []
+        for line in self._lines():
+            try:
+                entry = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(entry, dict):
+                out.append(entry)
+        return out
+
+    def _append(self, data: dict, event: str, **fields) -> dict:
+        """Append one hash-chained entry and record the new head in data. Callers hold the lock and
+        save data right after, so pins.json always names the newest entry and the count."""
+        head = data.get("history")
+        if head is None:
+            lines = self._lines()                     # a box from before heads were recorded
+            head = {"head": _sha(lines[-1]) if lines else GENESIS, "count": len(lines)}
+        entry = {"time": int(time.time()), "event": event, **fields, "prev": head["head"]}
+        line = _canon(entry)
         fd = os.open(self.history_path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
         with os.fdopen(fd, "a") as f:
-            f.write(_canon(entry) + "\n")
+            f.write(line + "\n")
+            f.flush()
+            os.fsync(f.fileno())
+        data["history"] = {"head": _sha(line), "count": head["count"] + 1}
         return entry
 
     def verify_history(self) -> bool:
-        """True if every history line points at the one before it (nothing removed or edited)."""
-        prev = GENESIS
-        if not self.history_path.exists():
-            return True
-        for line in self.history_path.read_text().splitlines():
-            if not line.strip():
-                continue
-            try:
-                if json.loads(line).get("prev") != prev:
+        """True if every line points at the one before it and the newest one is the head pins.json
+        names, with the same count. So removing or editing any entry, the newest included, shows."""
+        with self.locked():
+            lines = self._lines()
+            prev = GENESIS
+            for line in lines:
+                try:
+                    if json.loads(line).get("prev") != prev:
+                        return False
+                except (ValueError, AttributeError):
                     return False
-            except ValueError:
+                prev = _sha(line)
+            try:
+                head = self.load().get("history")
+            except PinError:
                 return False
-            prev = _sha(line)
-        return True
+        if not lines:
+            return head is None or head["count"] == 0
+        return head is not None and head["head"] == prev and head["count"] == len(lines)
 
     # ---- checking
 
-    def _remember(self, data: dict, m: Measured, now: int) -> None:
+    def _remember(self, data: dict, m: Measured, now: int) -> bool:
+        """Record what was seen. True if anything worth saving changed (not just the time)."""
+        new = m.fp not in data["fingerprints"]
         rec = data["fingerprints"].setdefault(m.fp, {"component": m.component, "fields": m.fields,
                                                       "first_seen": now})
+        changed = new or rec.get("info") != m.info or bool(m.deployed_at and rec.get("deployed_at") != m.deployed_at)
         rec["last_seen"] = now
         rec["info"] = m.info
         if m.deployed_at:
             rec["deployed_at"] = m.deployed_at
+        return changed
 
     def check(self, m: Measured, run_id: str) -> dict:
         """Compare one measurement with the pins. Returns {"status": ...}; raises PinError to stop.
@@ -388,21 +437,23 @@ class PinStore:
             now = int(time.time())
             comp = data["components"].get(m.component)
             known = m.fp in data["fingerprints"]
-            self._remember(data, m, now)
+            changed = self._remember(data, m, now)
             blocking = not (self.level == "off" or (self.level == "platform" and m.component.endswith("/workload")))
 
             if comp and m.fp in comp["accepted"]:
-                comp["last_ok"] = now
-                self.save(data)
+                # A match only rewrites pins.json when something new was seen or last_ok is stale.
+                if changed or now - int(comp.get("last_ok") or 0) >= SAVE_EVERY_S:
+                    comp["last_ok"] = now
+                    self.save(data)
                 return {"status": "match", "fp": m.fp}
             if comp is None:
                 shipped = self.shipped().get(m.component)
                 if shipped is None:
                     data["components"][m.component] = {"accepted": [m.fp], "pinned_at": now, "source": "first use",
                                                        "first_run": run_id, "last_ok": now}
+                    self._append(data, "pinned", component=m.component, fp=m.fp, source="first use",
+                                 fields=m.fields, info=m.info)
                     self.save(data)
-                    self._append("pinned", component=m.component, fp=m.fp, source="first use", fields=m.fields,
-                                 info=m.info)
                     return {"status": "first_use", "fp": m.fp}
                 shipped_fps = [fingerprint_of(f) for f in shipped]
                 if m.fp in shipped_fps:
@@ -411,9 +462,9 @@ class PinStore:
                     for f in shipped:
                         data["fingerprints"].setdefault(fingerprint_of(f), {"component": m.component, "fields": f,
                                                                             "first_seen": now})
+                    self._append(data, "pinned", component=m.component, fp=m.fp, source="shipped",
+                                 fields=m.fields, info=m.info)
                     self.save(data)
-                    self._append("pinned", component=m.component, fp=m.fp, source="shipped", fields=m.fields,
-                                 info=m.info)
                     return {"status": "shipped", "fp": m.fp}
                 # A shipped pin exists and NEAR serves something else: that is a change, not a first use.
                 data["components"][m.component] = {"accepted": shipped_fps, "pinned_at": now, "source": "shipped"}
@@ -424,16 +475,16 @@ class PinStore:
             elif comp.get("first_run") == run_id and comp.get("source") == "first use":
                 # Same verification as the first use: another instance seen alongside it.
                 comp["accepted"].append(m.fp)
+                self._append(data, "pinned", component=m.component, fp=m.fp, source="first use",
+                             fields=m.fields, info=m.info)
                 self.save(data)
-                self._append("pinned", component=m.component, fp=m.fp, source="first use", fields=m.fields,
-                             info=m.info)
                 return {"status": "same_run", "fp": m.fp}
 
             if not blocking:
-                self.save(data)
                 if not known:
-                    self._append("changed", component=m.component, fp=m.fp, blocking=False, level=self.level,
-                                 fields=m.fields, info=m.info, deployed_at=m.deployed_at)
+                    self._append(data, "changed", component=m.component, fp=m.fp, blocking=False,
+                                 level=self.level, fields=m.fields, info=m.info, deployed_at=m.deployed_at)
+                self.save(data)
                 return {"status": "changed_allowed", "fp": m.fp}
 
             rid = _sha(f"{m.component}\n{m.fp}")[:12]
@@ -444,9 +495,10 @@ class PinStore:
                 review = {"id": rid, "component": m.component, "fp": m.fp, "previous": list(comp["accepted"]),
                           "status": "waiting", "detected_at": now, "deployed_at": m.deployed_at}
                 data["reviews"][rid] = review
+                self._append(data, "changed", component=m.component, fp=m.fp, blocking=True, review=rid,
+                             previous=list(comp["accepted"]), fields=m.fields, info=m.info,
+                             deployed_at=m.deployed_at)
                 self.save(data)
-                self._append("changed", component=m.component, fp=m.fp, blocking=True, review=rid,
-                             previous=list(comp["accepted"]), fields=m.fields, info=m.info, deployed_at=m.deployed_at)
             else:
                 self.save(data)
             raise PinError(self.blocked_message(review))
@@ -505,9 +557,9 @@ class PinStore:
                 comp["accepted"] = [r["fp"]] if only else [*[f for f in comp["accepted"] if f != r["fp"]], r["fp"]]
                 comp.update(source="owner", pinned_at=now)
                 comp.pop("first_run", None)
+            self._append(data, "accepted" if accept else "rejected", component=r["component"], fp=r["fp"],
+                         review=review_id, by=by, only=only)
             self.save(data)
-            self._append("accepted" if accept else "rejected", component=r["component"], fp=r["fp"], review=review_id,
-                         by=by, only=only)
             return r
 
 
@@ -532,8 +584,10 @@ def diff_fields(old: Any, new: Any, path: str = "") -> list[dict]:
 class Checker:
     """InferenceClient options that check every gateway and model report against the pins.
 
-    The SDK calls these inside its own verification, so the check covers exactly the reports the
-    question's prompts are encrypted to. A PinError raised here stops the question with its message.
+    The SDK calls these inside its own verification, before any prompt is sent, so the check covers
+    the reports the box verified for this question. NEAR's model instances share a signing key, so an
+    instance the box never saw could still receive the prompt (docs/BUILD_LOG.md, Limits). A PinError
+    raised here stops the question with its message.
     """
 
     def __init__(self, store: PinStore, run_id: str, emit: Callable[..., Any] | None = None):

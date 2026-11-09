@@ -1,0 +1,2201 @@
+{
+ "gateway": {
+  "signer": {
+   "signing_algo": "ed25519",
+   "signing_address": "40599fb284f43953bb356b09080fd803c960fc10285ad90eca462ca711ad4acb"
+  },
+  "tcb_status": "UpToDate",
+  "advisory_ids": [],
+  "deployment": {
+   "app_compose": "{\"manifest_version\":2,\"name\":\"dstack-0.5.12\",\"runner\":\"docker-compose\",\"docker_compose_file\":\"# Docker Compose configuration for Cloud API in a VPC environment\\n# This setup includes the dstack-service for VPC management and an init container\\n# to prepare necessary configuration files before starting the Cloud API service.\\n\\nservices:\\n  \\n  # OpenTelemetry collector sidecar for in-CVM logs/metrics/traces.\\n  otelcol-contrib:\\n    image: otel/opentelemetry-collector-contrib@sha256:85ac41c2db88d0df9bd6145e608a3cb023f5d8443868adbfbbf66efb51087917\\n    container_name: otelcol-contrib\\n    command: [\\\"--config=/etc/otelcol-contrib/config.yaml\\\"]\\n    user: \\\"0:0\\\"\\n    mem_limit: \\\"512m\\\"\\n    environment:\\n      - MONITORING_INGEST_TOKEN=${MONITORING_INGEST_TOKEN}\\n      - CVM_NAME=${CVM_NAME}\\n      - CVM_HOST=${CVM_HOST}\\n      - DD_HOSTNAME=${DD_HOSTNAME}\\n      - ENV=${ENV}\\n      - CVM_HOSTMETRICS_ROOT_PATH=/hostfs\\n      \\n    expose:\\n      - \\\"4317\\\"\\n      - \\\"4318\\\"\\n    volumes:\\n      # Required for Prometheus docker_sd_configs. The scrape rules below only\\n      # keep containers explicitly labeled nearai.otel.scrape=true.\\n      - /var/run/docker.sock:/var/run/docker.sock:ro\\n      # Required for CVM guest hostmetrics parity. OTel prefixes host mount\\n      # points with root_path=/hostfs so the collector reports the guest host,\\n      # not the collector container filesystem.\\n      - /:/hostfs:ro\\n      - /var/lib/docker/containers:/var/lib/docker/containers:ro\\n      \\n      - otelcol-identity:/telemetry:ro\\n      \\n      - otelcol-storage:/var/lib/otelcol-contrib\\n    configs:\\n      - source: otelcol_cvm_config\\n        target: /etc/otelcol-contrib/config.yaml\\n        mode: 0444\\n    \\n    # Identity-enabled CVMs declare their startup prerequisites through\\n    # cvm_telemetry_depends_on_config.\\n    depends_on:\\n        api-init:\\n          condition: service_completed_successfully\\n\\n    \\n    restart: unless-stopped\\n    # Avoid the collector tailing its own Docker JSON log and creating a\\n    # feedback loop. The host-side Phase 1 collector still captures VM\\n    # serial/stderr if this sidecar itself needs debugging.\\n    logging:\\n      driver: \\\"local\\\"\\n      options:\\n        max-size: \\\"20m\\\"\\n        max-file: \\\"3\\\"\\n\\n\\n  # Init container to prepare configuration\\n  api-init:\\n    image: alpine@sha256:4b7ce07002c69e8f3d704a9c5d6fd3053be500b7f1c69fc0d80990c2ad8dd412\\n    container_name: api-init\\n    restart: \\\"no\\\"\\n    volumes:\\n      - api_config:/config\\n      - otelcol-identity:/telemetry\\n    environment:\\n      # Base64 survives the host .env / encrypted dstack env / Compose pipeline.\\n      - CLOUD_API_RDS_PASSWORD_B64=${CLOUD_API_RDS_PASSWORD_B64:?RDS password required}\\n      - CLOUD_API_RDS_CA_BUNDLE_B64=${CLOUD_API_RDS_CA_BUNDLE_B64:?RDS CA bundle required}\\n    dns:\\n      - 1.1.1.1\\n    configs:\\n      - source: api_init_script\\n        target: /init.sh\\n        mode: 0755\\n    command: [\\\"/init.sh\\\"]\\n\\n  # Cloud API service\\n  cloud-api:\\n    container_name: cloud-api\\n    image: nearaidev/cloud-api@sha256:d74c3c3eb67c18db5483f2e152741ffc57dbbc3ca52c10cdeb8138054fd213dd\\n    restart: unless-stopped\\n    volumes:\\n      - /var/run/dstack.sock:/var/run/dstack.sock\\n      - api_config:/config:ro\\n      - ingress_certs:/ingress-certs:ro\\n    environment:\\n      - DATABASE_CONNECTION_MODE=direct\\n      - DATABASE_HOST=cloudapi-postgres-prod.cx0gm2caeqha.us-east-1.rds.amazonaws.com\\n      - DATABASE_PORT=5432\\n      - DATABASE_TLS_CA_CERT_PATH=/config/rds-ca-bundle.pem\\n      - SERVER_HOST=0.0.0.0\\n      - SERVER_PORT=3000\\n      - DATABASE_MAX_CONNECTIONS=32\\n      - DATABASE_REFRESH_INTERVAL=300\\n      - MODEL_DISCOVERY_SERVER_URL=${MODEL_DISCOVERY_SERVER_URL}\\n      - MODEL_DISCOVERY_API_KEY=${MODEL_DISCOVERY_API_KEY}\\n      # Per-model GPU allocation and burn metrics for the admin dashboard.\\n      # Values are written to the CVM .env file from the environment-specific\\n      # vars file and must also be forwarded into the cloud-api container.\\n      - INFRA_PROMETHEUS_URL=${INFRA_PROMETHEUS_URL}\\n      - INFRA_PROMETHEUS_BEARER_TOKEN=${INFRA_PROMETHEUS_BEARER_TOKEN}\\n      - INFRA_PROMETHEUS_ENV=${INFRA_PROMETHEUS_ENV}\\n      - INFRA_COST_PER_GPU_HOUR_USD=${INFRA_COST_PER_GPU_HOUR_USD}\\n      - ENABLE_ITA_ATTESTATION=true\\n      - ITA_API_KEY=${ITA_API_KEY}\\n      # Shared service-token for POST /v1/internal/usage. Forwarded\\n      # from the CVM .env file (written by Ansible from the host's\\n      # CLOUD_API_USAGE_TOKEN env var, in turn from the GH Actions\\n      # secret of the same name). When the .env doesn't define the\\n      # var, Docker Compose substitutes \\\"\\\" and cloud-api's config\\n      # layer coerces empty to None \u2192 endpoint stays disabled (503).\\n      - CLOUD_API_USAGE_TOKEN=${CLOUD_API_USAGE_TOKEN}\\n      - MODEL_DISCOVERY_REFRESH_INTERVAL=60\\n      - MODEL_DISCOVERY_TIMEOUT=5\\n      - LOG_LEVEL=info\\n      - LOG_FORMAT=json\\n      - RUST_LOG=info\\n      - RUST_BACKTRACE=1\\n      - LOG_MODULE_API=info\\n      - LOG_MODULE_SERVICES=info\\n      - DSTACK_CLIENT_URL=http://localhost:8000\\n      - AUTH_MOCK=false\\n      - GITHUB_CLIENT_ID=${GITHUB_CLIENT_ID}\\n      - GITHUB_CLIENT_SECRET=${GITHUB_CLIENT_SECRET}\\n      - GITHUB_REDIRECT_URL=https://cloud-api.near.ai/v1/auth/callback\\n      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}\\n      - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}\\n      - GOOGLE_REDIRECT_URL=https://cloud-api.near.ai/v1/auth/callback\\n      - NEAR_EXPECTED_RECIPIENT=${NEAR_EXPECTED_RECIPIENT}\\n      - AUTH_ADMIN_EMAILS=${AUTH_ADMIN_EMAILS}\\n      - AUTH_ADMIN_READ_ONLY_TOKENS_ENABLED=${AUTH_ADMIN_READ_ONLY_TOKENS_ENABLED:-false}\\n      - DATABASE_NAME=${DATABASE_NAME}\\n      - DATABASE_USERNAME=${DATABASE_USERNAME}\\n      - DATABASE_TLS_ENABLED=true\\n      - DATABASE_PASSWORD_FILE=/config/postgres-password\\n      - AUTH_ENCODING_KEY=${AUTH_ENCODING_KEY}\\n      - S3_ENCRYPTION_KEYS=${S3_ENCRYPTION_KEYS:?}\\n      - OBJECT_ENCRYPTION_WRITE_ENABLED=${OBJECT_ENCRYPTION_WRITE_ENABLED:-true}\\n      - OBJECT_REWRAP_MAX_BYTES=${OBJECT_REWRAP_MAX_BYTES:-268435456}\\n      - DB_ENCRYPTION_KEYS=${DB_ENCRYPTION_KEYS:?}\\n      - DB_ENCRYPTION_WRITE_ENABLED=${DB_ENCRYPTION_WRITE_ENABLED:-false}\\n      - AWS_S3_BUCKET=${AWS_S3_BUCKET}\\n      - AWS_S3_REGION=${AWS_S3_REGION}\\n      - AWS_REGION=${AWS_S3_REGION}\\n      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}\\n      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}\\n      - BRAVE_SEARCH_PRO_API_KEY=${BRAVE_SEARCH_PRO_API_KEY}\\n      - BRAVE_LLM_CONTEXT_API_KEY=${BRAVE_LLM_CONTEXT_API_KEY}\\n      - GATEWAY_SUBDOMAIN=cvm3.near.ai\\n      - CORS_ALLOWED_ORIGINS=${CORS_ALLOWED_ORIGINS}\\n      - ENVIRONMENT=prod\\n      # Allocation order and version are persisted with each usage funding\\n      # split. Bump the version whenever the policy meaning changes.\\n      - CREDIT_USAGE_ORDER=${CREDIT_USAGE_ORDER:-grant,staking_farm,payment,postpay}\\n      - CREDIT_ALLOCATION_POLICY_VERSION=${CREDIT_ALLOCATION_POLICY_VERSION:-v1}\\n      # House of Stake farm credits (nearai/cloud-api#856). Shared template\\n      # passthroughs default hard-off so production remains disabled unless its\\n      # vars file explicitly opts in. Staging sets the contract/product IDs in\\n      # vars/cloud_api_stg.yaml.\\n      - STAKING_FARM_ENABLED=${STAKING_FARM_ENABLED:-false}\\n      - STAKING_FARM_SELECTED_ORG_BINDING_ENABLED=${STAKING_FARM_SELECTED_ORG_BINDING_ENABLED:-false}\\n      - NEAR_RPC_URL=${NEAR_RPC_URL:-https://free.rpc.fastnear.com}\\n      - NEAR_NETWORK_ID=${NEAR_NETWORK_ID:-mainnet}\\n      - NEAR_STAKING_CONTRACT_ID=${NEAR_STAKING_CONTRACT_ID:-}\\n      - STAKING_FARM_PRODUCT_ID=${STAKING_FARM_PRODUCT_ID:-}\\n      - STAKING_FARM_PRICE_ID=${STAKING_FARM_PRICE_ID:-}\\n      - STAKING_FARM_CREDIT_NANO_USD_PER_REWARD_UNIT=${STAKING_FARM_CREDIT_NANO_USD_PER_REWARD_UNIT:-1000000000}\\n      - STAKING_FARM_SYNC_STALENESS_SECONDS=${STAKING_FARM_SYNC_STALENESS_SECONDS:-300}\\n      # Lukka AML checks for NEAR wallet-gated House of Stake flows\\n      # (nearai/cloud-api#909). This template forwards cloud-api's AML-scoped\\n      # env names; the vars files reuse the same per-environment Lukka secrets\\n      # already used by chat-api.\\n      - LUKKA_AML_ENABLED=${LUKKA_AML_ENABLED:-false}\\n      - LUKKA_AML_BEARER_TOKEN=${LUKKA_AML_BEARER_TOKEN:-}\\n      - LUKKA_AML_BASE_URL=${LUKKA_AML_BASE_URL:-https://api.blockchain-analytics.lukka.tech}\\n      - LUKKA_AML_REPORT_REFRESH_DAYS=${LUKKA_AML_REPORT_REFRESH_DAYS:-30}\\n      - LUKKA_AML_MEMORY_CACHE_TTL_SECONDS=${LUKKA_AML_MEMORY_CACHE_TTL_SECONDS:-300}\\n      - LUKKA_AML_REQUEST_TIMEOUT_SECONDS=${LUKKA_AML_REQUEST_TIMEOUT_SECONDS:-10}\\n      - LUKKA_AML_BLOCKED_RISK_LEVELS=${LUKKA_AML_BLOCKED_RISK_LEVELS:-}\\n      - LUKKA_AML_SCORE_BLOCK_THRESHOLD=${LUKKA_AML_SCORE_BLOCK_THRESHOLD:-46}\\n      - LUKKA_AML_HIGH_RISK_SLACK_WEBHOOK_URL=${LUKKA_AML_HIGH_RISK_SLACK_WEBHOOK_URL:-}\\n      - LUKKA_AML_HIGH_RISK_SLACK_TIMEOUT_MS=${LUKKA_AML_HIGH_RISK_SLACK_TIMEOUT_MS:-3000}\\n      - TELEMETRY_SERVICE_NAME=cloud-api\\n      - TELEMETRY_OTLP_ENDPOINT=http://otelcol-contrib:4317\\n      - GEMINI_API_KEY=${GEMINI_API_KEY}\\n      - OPENAI_API_KEY=${OPENAI_API_KEY}\\n      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}\\n      - TYPESAFE_API_KEY=${TYPESAFE_API_KEY:-}\\n      # Canonical model IDs eligible for native stateless Responses. Empty disables routing.\\n      - NATIVE_RESPONSES_MODELS=${NATIVE_RESPONSES_MODELS:-}\\n      # Native Anthropic Messages endpoints. Included only when an environment\\n      # explicitly opts in; production renders no setting and remains hard-off.\\n      - ENABLE_ANTHROPIC_MESSAGES=${ENABLE_ANTHROPIC_MESSAGES:-false}\\n      # Extra anthropic-beta tokens admitted by the native Messages routes on\\n      # top of the image's built-in allowlist. Rendered only when set.\\n      - ANTHROPIC_ALLOWED_BETAS=${ANTHROPIC_ALLOWED_BETAS:-}\\n      - EXTERNAL_PROVIDER_TIMEOUT=${EXTERNAL_PROVIDER_TIMEOUT}\\n      - INVITATION_EMAIL_ENABLED=${INVITATION_EMAIL_ENABLED}\\n      - CONTACT_EMAIL_VERIFICATION_ENABLED=${CONTACT_EMAIL_VERIFICATION_ENABLED:-false}\\n      - INVITATION_EMAIL_FROM=${INVITATION_EMAIL_FROM}\\n      - RESEND_API_KEY=${RESEND_API_KEY}\\n      - CLOUD_UI_BASE_URL=${CLOUD_UI_BASE_URL}\\n      # Chutes attested third-party provider (nearai/cloud-api#758). Forwarded\\n      # from the CVM .env (set only where the vars file defines them \u2014 staging\\n      # for now). Missing \u2192 Compose substitutes the defaults below \u2192 cloud-api\\n      # keeps Chutes hard-off (ENABLE_CHUTES != \\\"true\\\"/\\\"1\\\"; empty key \u2192 None \u2014\\n      # cloud-api config filters `CHUTES_API_KEY=\\\"\\\"` to absent via\\n      # `.filter(|s| !s.is_empty())`, so it fails closed (provider not registered);\\n      # empty CHUTES_MODELS \u2192 no models). So this passthrough is a no-op for\\n      # prod until its vars file opts in. CHUTES_ENABLE_STREAMING defaults off;\\n      # opt in per-environment via the vars file (see vars/cloud_api_stg.yaml for\\n      # the streaming-safety analysis). PCCS is intentionally omitted (unset \u2192\\n      # dcap-qvl default collateral).\\n      # AUDIT NOTE: this template is shared with prod (vars/cloud_api_prod.yaml).\\n      # Adding these four passthroughs changes prod's rendered compose and thus its\\n      # KMS-registered attestation measurement; the daily 02:00 UTC\\n      # update_cloud_api_prod.yml cron re-registers it (idempotent add-hash with an\\n      # on-chain pre-check) within ~24h. Behaviorally a no-op for prod \u2014 the `:-`\\n      # defaults resolve Chutes hard-off \u2014 but the measurement digest does change.\\n      - ENABLE_CHUTES=${ENABLE_CHUTES:-false}\\n      - CHUTES_ENABLE_STREAMING=${CHUTES_ENABLE_STREAMING:-false}\\n      - CHUTES_MODELS=${CHUTES_MODELS:-}\\n      - CHUTES_API_KEY=${CHUTES_API_KEY:-}\\n      # Tinfoil attested fallback provider (nearai/cloud-api#1213). Empty defaults\\n      # keep Tinfoil off (empty models register nothing; empty key is absent).\\n      - TINFOIL_MODELS=${TINFOIL_MODELS:-}\\n      - TINFOIL_API_KEY=${TINFOIL_API_KEY:-}\\n      # OHTTP gateway (RFC 9458). Off by default; opt in per-environment\\n      # via env_vars (vars/cloud_api_stg.yaml sets OHTTP_ENABLED=true).\\n      - OHTTP_ENABLED=${OHTTP_ENABLED:-false}\\n      # Smart-placement replica state (cloud-api reads signed state from the\\n      # shared Valkey). Values come from the CVM .env written from the\\n      # environment-specific vars file. An empty PLACEMENT_REDIS_HOST (or\\n      # password) leaves placement off with legacy routing, and the TLS CA may be\\n      # a one-line PEM with literal \\\\n escapes. Rendered only where the vars file\\n      # defines PLACEMENT_REDIS_HOST, so prod stays dark until it opts in.\\n      # AUDIT NOTE: this template is shared with prod; the guard keeps prod's\\n      # rendered compose, and so its KMS measurement, unchanged.\\n      - PLACEMENT_REDIS_HOST=${PLACEMENT_REDIS_HOST:-}\\n      - PLACEMENT_REDIS_PORT=${PLACEMENT_REDIS_PORT:-6379}\\n      - PLACEMENT_REDIS_TLS_ENABLED=${PLACEMENT_REDIS_TLS_ENABLED:-true}\\n      - PLACEMENT_REDIS_TLS_CA_CERT=${PLACEMENT_REDIS_TLS_CA_CERT:-}\\n      - PLACEMENT_REDIS_PASSWORD=${PLACEMENT_REDIS_PASSWORD:-}\\n      - TLS_CERT_PATH=/ingress-certs/cloud-api.near.ai/fullchain.pem\\n    dns:\\n      - 1.1.1.1\\n    ports:\\n      - \\\"3000:3000\\\"\\n    depends_on:\\n      api-init:\\n        condition: service_completed_successfully\\n      ingress:\\n        condition: service_healthy\\n    healthcheck:\\n      test:\\n        [\\\"CMD-SHELL\\\", \\\"curl -f http://127.0.0.1:3000/v1/model/list || exit 1\\\"]\\n      interval: 30s\\n      timeout: 3s\\n      retries: 10\\n      start_period: 40s\\n    labels:\\n      com.datadoghq.ad.logs: '[{\\\"source\\\": \\\"cloud-api\\\", \\\"service\\\": \\\"cloud-api\\\"}]'\\n    logging:\\n      driver: \\\"json-file\\\"\\n      options:\\n        max-size: \\\"100m\\\"\\n        max-file: \\\"10\\\"\\n        labels: \\\"com.datadoghq.ad.logs,com.docker.compose.service\\\"\\n\\n\\n  # Ingress sidecar: nginx reverse proxy (TLS optional)\\n  ingress:\\n    container_name: ingress\\n    image: nearaidev/cvm-ingress@sha256:1653c23200298a823c08c66d829c633fc36919bca1e09cf577b83b01353e0891\\n    restart: unless-stopped\\n    environment:\\n      - DOMAIN=cloud-api.near.ai\\n      - BACKEND_HOST=cloud-api\\n      - BACKEND_PORT=3000\\n      - TLS_ENABLED=true\\n      - CERTBOT_EMAIL=${CERTBOT_EMAIL}\\n      - CLOUDFLARE_API_TOKEN=${CLOUDFLARE_API_TOKEN}\\n      - S3_BUCKET=${INGRESS_S3_BUCKET}\\n      - S3_PREFIX=cloud-api-prod\\n      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}\\n      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}\\n      - AWS_DEFAULT_REGION=${AWS_DEFAULT_REGION}\\n      - STAGING=false\\n    volumes:\\n      - /var/run/dstack.sock:/var/run/dstack.sock\\n      - ingress_certs:/certs\\n    ports:\\n      - \\\"8443:8443\\\"\\n    healthcheck:\\n      test: [\\\"CMD-SHELL\\\", \\\"test -f /certs/cloud-api.near.ai/fullchain.pem\\\"]\\n      interval: 5s\\n      timeout: 3s\\n      retries: 60\\n      start_period: 10s\\n    labels:\\n      com.datadoghq.ad.logs: '[{\\\"source\\\": \\\"nginx\\\", \\\"service\\\": \\\"ingress\\\", \\\"tags\\\": [\\\"role:ingress\\\", \\\"deployment:cloud-api-prod\\\", \\\"env:${ENV}\\\", \\\"host:${CVM_HOST}\\\", \\\"ip:${HOST_IP}\\\", \\\"port:8443\\\", \\\"domain:cloud-api.near.ai\\\"]}]'\\n    logging:\\n      driver: \\\"json-file\\\"\\n      options:\\n        max-size: \\\"100m\\\"\\n        max-file: \\\"10\\\"\\n        labels: \\\"com.datadoghq.ad.logs,com.docker.compose.service\\\"\\n\\n\\nvolumes:\\n  otelcol-storage:\\n  otelcol-identity:\\n\\n  api_config:\\n  ingress_certs:\\nconfigs:\\n  \\n  # otelcol-contrib config for guest-level CVM telemetry. Dollar signs are\\n# escaped as $$ so docker compose leaves OTel's ${env:...} references intact.\\n  otelcol_cvm_config:\\n    content: |\\n      receivers:\\n        otlp:\\n          protocols:\\n            grpc:\\n              endpoint: 0.0.0.0:4317\\n            http:\\n              endpoint: 0.0.0.0:4318\\n\\n        filelog/docker_containers:\\n          include: [/var/lib/docker/containers/*/*-json.log]\\n          start_at: end\\n          storage: file_storage\\n          include_file_path: true\\n          operators:\\n            - type: json_parser\\n              parse_from: body\\n              parse_to: attributes\\n              timestamp:\\n                parse_from: attributes.time\\n                layout_type: gotime\\n                layout: '2006-01-02T15:04:05.999999999Z07:00'\\n              on_error: send_quiet\\n            - type: move\\n              from: attributes.log\\n              to: body\\n              if: 'attributes.log != nil'\\n            - type: move\\n              from: attributes.stream\\n              to: attributes[\\\"log.iostream\\\"]\\n              if: 'attributes.stream != nil'\\n            - type: remove\\n              field: attributes.time\\n              if: 'attributes.time != nil'\\n            - type: regex_parser\\n              parse_from: attributes[\\\"log.file.path\\\"]\\n              regex: '/var/lib/docker/containers/(?P<container_id>[a-f0-9]{12})[a-f0-9]*/'\\n              on_error: send_quiet\\n            # Preserve the low-cardinality Datadog autodiscovery tags operators\\n            # already use as log filters. High-cardinality tags like instance\\n            # and model_path stay inside the raw Docker label metadata.\\n            - type: regex_parser\\n              parse_from: attributes[\\\"attrs\\\"][\\\"com.datadoghq.ad.logs\\\"]\\n              regex: 'model:(?P<model>[^\\\",\\\\]]+)'\\n              on_error: send_quiet\\n            - type: regex_parser\\n              parse_from: attributes[\\\"attrs\\\"][\\\"com.datadoghq.ad.logs\\\"]\\n              regex: 'deployment:(?P<deployment>[^\\\",\\\\]]+)'\\n              on_error: send_quiet\\n            - type: regex_parser\\n              parse_from: attributes[\\\"attrs\\\"][\\\"com.datadoghq.ad.logs\\\"]\\n              regex: 'ip:(?P<ip>[^\\\",\\\\]]+)'\\n              on_error: send_quiet\\n            - type: regex_parser\\n              parse_from: attributes[\\\"attrs\\\"][\\\"com.datadoghq.ad.logs\\\"]\\n              regex: 'port:(?P<port>[^\\\",\\\\]]+)'\\n              on_error: send_quiet\\n            - type: regex_parser\\n              parse_from: attributes[\\\"attrs\\\"][\\\"com.datadoghq.ad.logs\\\"]\\n              regex: 'env:(?P<env>[^\\\",\\\\]]+)'\\n              on_error: send_quiet\\n            - type: regex_parser\\n              parse_from: attributes[\\\"attrs\\\"][\\\"com.datadoghq.ad.logs\\\"]\\n              regex: 'host:(?P<host>[^\\\",\\\\]]+)'\\n              on_error: send_quiet\\n            - type: add\\n              field: attributes[\\\"service.name\\\"]\\n              value: cvm-docker\\n\\n        hostmetrics/cvm:\\n          collection_interval: 30s\\n          root_path: $${env:CVM_HOSTMETRICS_ROOT_PATH}\\n          scrapers:\\n            cpu: {}\\n            memory: {}\\n            load: {}\\n            paging: {}\\n            network: {}\\n            disk: {}\\n            filesystem:\\n              exclude_mount_points:\\n                mount_points: [\\\"^/dev(/.*)?$\\\", \\\"^/proc(/.*)?$\\\", \\\"^/sys(/.*)?$\\\", \\\"^/run(/.*)?$\\\", \\\"^/var/lib/docker(/.*)?$\\\"]\\n                match_type: regexp\\n\\n        docker_stats/cvm:\\n          endpoint: unix:///var/run/docker.sock\\n          collection_interval: 30s\\n          timeout: 10s\\n          api_version: \\\"1.44\\\"\\n          container_labels_to_metric_labels:\\n            com.docker.compose.service: compose_service\\n            com.docker.compose.project: compose_project\\n\\n        prometheus/self:\\n          config:\\n            scrape_configs:\\n              - job_name: otelcol-cvm\\n                scrape_interval: 30s\\n                static_configs:\\n                  - targets: ['localhost:8888']\\n              - job_name: docker-labeled-services\\n                scrape_interval: 15s\\n                docker_sd_configs:\\n                  - host: unix:///var/run/docker.sock\\n                    refresh_interval: 30s\\n                relabel_configs:\\n                  - source_labels: [__meta_docker_container_label_nearai_otel_scrape]\\n                    regex: \\\"true\\\"\\n                    action: keep\\n                  - source_labels: [__meta_docker_network_name]\\n                    regex: dstack_default\\n                    action: keep\\n                  - source_labels: [__meta_docker_container_label_nearai_otel_port]\\n                    regex: \\\".+\\\"\\n                    action: keep\\n                  - source_labels: [__meta_docker_network_ip, __meta_docker_container_label_nearai_otel_port]\\n                    separator: \\\":\\\"\\n                    target_label: __address__\\n                    replacement: \\\"$$1:$$2\\\"\\n                  - source_labels: [__meta_docker_container_label_nearai_otel_path]\\n                    regex: \\\"(.+)\\\"\\n                    target_label: __metrics_path__\\n                  - source_labels: [__meta_docker_container_label_nearai_otel_job]\\n                    regex: \\\"(.+)\\\"\\n                    target_label: job\\n                  - source_labels: [__meta_docker_container_label_nearai_otel_service]\\n                    regex: \\\"(.+)\\\"\\n                    target_label: service\\n                  - source_labels: [__meta_docker_container_label_com_docker_compose_service]\\n                    regex: \\\"(.+)\\\"\\n                    target_label: container_name\\n                  - source_labels: [__meta_docker_container_label_nearai_otel_model]\\n                    regex: \\\"(.+)\\\"\\n                    target_label: model\\n                  - source_labels: [__meta_docker_container_label_nearai_otel_deployment]\\n                    regex: \\\"(.+)\\\"\\n                    target_label: deployment\\n                  - source_labels: [__meta_docker_container_label_nearai_otel_env]\\n                    regex: \\\"(.+)\\\"\\n                    target_label: env\\n                  - source_labels: [__meta_docker_container_label_nearai_otel_host]\\n                    regex: \\\"(.+)\\\"\\n                    target_label: host\\n                  - source_labels: [__meta_docker_container_label_nearai_otel_ip]\\n                    regex: \\\"(.+)\\\"\\n                    target_label: ip\\n                  - source_labels: [__meta_docker_container_label_nearai_otel_port]\\n                    regex: \\\"(.+)\\\"\\n                    target_label: port\\n              \\n        \\n\\n      processors:\\n        memory_limiter:\\n          check_interval: 1s\\n          limit_mib: 256\\n          spike_limit_mib: 64\\n\\n        resource:\\n          attributes:\\n            - key: host.name\\n              value: $${env:DD_HOSTNAME}\\n              action: upsert\\n            - key: cvm.name\\n              value: $${env:CVM_NAME}\\n              action: upsert\\n            - key: host.machine\\n              value: $${env:CVM_HOST}\\n              action: insert\\n            - key: deployment.environment\\n              value: $${env:ENV}\\n              action: upsert\\n            - key: service.namespace\\n              value: near-ai\\n              action: insert\\n\\n        \\n        resource/cvm_instance:\\n          attributes:\\n            - key: cvm.instance.id\\n              value: $${file:/telemetry/instance_id}\\n              action: upsert\\n\\n        # dstack-vpc-client writes instance_id with echo, so strip its trailing\\n        # newline before Prometheus converts cvm.instance.id to cvm_instance_id.\\n        transform/cvm_instance:\\n          error_mode: propagate\\n          metric_statements:\\n            - replace_pattern(resource.attributes[\\\"cvm.instance.id\\\"], \\\"\\\\\\\\s+$\\\", \\\"\\\")\\n            - delete_key(resource.attributes, \\\"cvm.instance.id\\\") where resource.attributes[\\\"cvm.instance.id\\\"] == \\\"unavailable\\\"\\n          log_statements:\\n            - context: resource\\n              statements:\\n                - replace_pattern(attributes[\\\"cvm.instance.id\\\"], \\\"\\\\\\\\s+$\\\", \\\"\\\")\\n                - delete_key(attributes, \\\"cvm.instance.id\\\") where attributes[\\\"cvm.instance.id\\\"] == \\\"unavailable\\\"\\n          trace_statements:\\n            - context: resource\\n              statements:\\n                - replace_pattern(attributes[\\\"cvm.instance.id\\\"], \\\"\\\\\\\\s+$\\\", \\\"\\\")\\n                - delete_key(attributes, \\\"cvm.instance.id\\\") where attributes[\\\"cvm.instance.id\\\"] == \\\"unavailable\\\"\\n        \\n\\n        transform/docker_metadata:\\n          error_mode: ignore\\n          log_statements:\\n            - context: log\\n              statements:\\n                - set(attributes[\\\"service.name\\\"], attributes[\\\"attrs\\\"][\\\"com.docker.compose.service\\\"]) where attributes[\\\"attrs\\\"] != nil and attributes[\\\"attrs\\\"][\\\"com.docker.compose.service\\\"] != nil\\n                - set(attributes[\\\"service.name\\\"], ParseJSON(attributes[\\\"attrs\\\"][\\\"com.datadoghq.ad.logs\\\"])[0][\\\"service\\\"]) where attributes[\\\"attrs\\\"] != nil and attributes[\\\"attrs\\\"][\\\"com.datadoghq.ad.logs\\\"] != nil\\n                - set(attributes[\\\"log.source\\\"], ParseJSON(attributes[\\\"attrs\\\"][\\\"com.datadoghq.ad.logs\\\"])[0][\\\"source\\\"]) where attributes[\\\"attrs\\\"] != nil and attributes[\\\"attrs\\\"][\\\"com.datadoghq.ad.logs\\\"] != nil\\n                - set(attributes[\\\"container.name\\\"], attributes[\\\"attrs\\\"][\\\"com.docker.compose.service\\\"]) where attributes[\\\"attrs\\\"] != nil and attributes[\\\"attrs\\\"][\\\"com.docker.compose.service\\\"] != nil\\n\\n        groupbyattrs/docker_service:\\n          keys:\\n            - service.name\\n            - container.name\\n            - log.source\\n            - log.iostream\\n            - model\\n            - deployment\\n            - env\\n            - host\\n            - ip\\n            - port\\n\\n        batch:\\n          send_batch_size: 1024\\n          send_batch_max_size: 2048\\n          timeout: 5s\\n\\n      exporters:\\n        otlphttp/gateway:\\n          endpoint: https://telemetry.infra.near.ai\\n          headers:\\n            Authorization: \\\"Bearer $${env:MONITORING_INGEST_TOKEN}\\\"\\n          # Keep source requests FIFO. The Collector default is ten queue\\n          # consumers; once they reorder cumulative samples, the gateway's\\n          # serialized remote-write queue cannot restore their order.\\n          sending_queue:\\n            num_consumers: 1\\n            queue_size: 128\\n            storage: file_storage\\n        \\n\\n      extensions:\\n        file_storage:\\n          directory: /var/lib/otelcol-contrib/storage\\n          create_directory: true\\n\\n      service:\\n        extensions: [file_storage]\\n        pipelines:\\n          logs/cvm:\\n            receivers: [filelog/docker_containers]\\n            processors: [memory_limiter, resource, resource/cvm_instance, transform/cvm_instance, transform/docker_metadata, groupbyattrs/docker_service, batch]\\n            exporters: [otlphttp/gateway]\\n          metrics/cvm_system:\\n            receivers: [hostmetrics/cvm, docker_stats/cvm]\\n            processors: [memory_limiter, resource, resource/cvm_instance, transform/cvm_instance, batch]\\n            exporters: [otlphttp/gateway]\\n          logs/otlp:\\n            receivers: [otlp]\\n            processors: [memory_limiter, resource, resource/cvm_instance, transform/cvm_instance, batch]\\n            exporters: [otlphttp/gateway]\\n          metrics/self:\\n            receivers: [prometheus/self]\\n            processors: [memory_limiter, resource, resource/cvm_instance, transform/cvm_instance, batch]\\n            exporters: [otlphttp/gateway]\\n          \\n          metrics/otlp:\\n            receivers: [otlp]\\n            processors: [memory_limiter, resource, resource/cvm_instance, transform/cvm_instance, batch]\\n            exporters: [otlphttp/gateway]\\n          traces:\\n            receivers: [otlp]\\n            processors: [memory_limiter, resource, resource/cvm_instance, transform/cvm_instance, batch]\\n            exporters: [otlphttp/gateway]\\n        telemetry:\\n          metrics:\\n            address: localhost:8888\\n          logs:\\n            level: info\\n\\n\\n  api_init_script:\\n    content: |\\n      #!/bin/sh\\n      set -e\\n\\n      echo \\\"Cloud API initialization starting...\\\"\\n\\n      # No instance identity source is available; the collector drops this\\n      # sentinel from metric resources.\\n      umask 077\\n      printf 'unavailable' > /telemetry/instance_id\\n      chmod 0444 /telemetry/instance_id\\n\\n      # Decode only inside the CVM; never place raw credentials in Compose.\\n      # RDS material is independent of the unchanged VPC-derived encryption keys.\\n      umask 077\\n      if ! printf '%s' \\\"$${CLOUD_API_RDS_PASSWORD_B64:?}\\\" | base64 -d > /config/postgres-password; then\\n        echo \\\"Invalid RDS password encoding\\\" >&2\\n        exit 1\\n      fi\\n      if ! printf '%s' \\\"$${CLOUD_API_RDS_CA_BUNDLE_B64:?}\\\" | base64 -d > /config/rds-ca-bundle.pem; then\\n        echo \\\"Invalid RDS CA bundle encoding\\\" >&2\\n        exit 1\\n      fi\\n      test -s /config/postgres-password\\n      test -s /config/rds-ca-bundle.pem\\n      chown 1000:1000 /config/postgres-password /config/rds-ca-bundle.pem\\n      chmod 600 /config/postgres-password /config/rds-ca-bundle.pem\\n      unset CLOUD_API_RDS_PASSWORD_B64 CLOUD_API_RDS_CA_BUNDLE_B64\\n\\n\\n      echo \\\"Initialization complete\\\"\\n\\n\",\"kms_enabled\":true,\"gateway_enabled\":true,\"local_key_provider_enabled\":false,\"key_provider_id\":\"\",\"public_logs\":false,\"public_sysinfo\":true,\"allowed_envs\":[\"DATABASE_NAME\",\"DATABASE_USERNAME\",\"CLOUD_API_RDS_PASSWORD_B64\",\"CLOUD_API_RDS_CA_BUNDLE_B64\",\"MODEL_DISCOVERY_SERVER_URL\",\"MODEL_DISCOVERY_API_KEY\",\"INFRA_PROMETHEUS_URL\",\"INFRA_PROMETHEUS_BEARER_TOKEN\",\"INFRA_PROMETHEUS_ENV\",\"INFRA_COST_PER_GPU_HOUR_USD\",\"INFERENCE_API_KEY\",\"CLOUD_API_USAGE_TOKEN\",\"AUTH_ENCODING_KEY\",\"DB_ENCRYPTION_WRITE_ENABLED\",\"GITHUB_CLIENT_ID\",\"GITHUB_CLIENT_SECRET\",\"GOOGLE_CLIENT_ID\",\"GOOGLE_CLIENT_SECRET\",\"AUTH_ADMIN_EMAILS\",\"AUTH_ADMIN_READ_ONLY_TOKENS_ENABLED\",\"AWS_S3_BUCKET\",\"AWS_S3_REGION\",\"AWS_REGION\",\"AWS_ACCESS_KEY_ID\",\"AWS_SECRET_ACCESS_KEY\",\"BRAVE_SEARCH_PRO_API_KEY\",\"BRAVE_LLM_CONTEXT_API_KEY\",\"CORS_ALLOWED_ORIGINS\",\"NEAR_EXPECTED_RECIPIENT\",\"NEAR_RPC_URL\",\"NEAR_NETWORK_ID\",\"CREDIT_USAGE_ORDER\",\"CREDIT_ALLOCATION_POLICY_VERSION\",\"STAKING_FARM_ENABLED\",\"STAKING_FARM_SELECTED_ORG_BINDING_ENABLED\",\"NEAR_STAKING_CONTRACT_ID\",\"STAKING_FARM_PRODUCT_ID\",\"STAKING_FARM_PRICE_ID\",\"STAKING_FARM_CREDIT_NANO_USD_PER_REWARD_UNIT\",\"STAKING_FARM_SYNC_STALENESS_SECONDS\",\"LUKKA_AML_ENABLED\",\"LUKKA_AML_BEARER_TOKEN\",\"LUKKA_AML_BASE_URL\",\"LUKKA_AML_REPORT_REFRESH_DAYS\",\"LUKKA_AML_MEMORY_CACHE_TTL_SECONDS\",\"LUKKA_AML_REQUEST_TIMEOUT_SECONDS\",\"LUKKA_AML_BLOCKED_RISK_LEVELS\",\"LUKKA_AML_SCORE_BLOCK_THRESHOLD\",\"LUKKA_AML_HIGH_RISK_SLACK_WEBHOOK_URL\",\"LUKKA_AML_HIGH_RISK_SLACK_TIMEOUT_MS\",\"GEMINI_API_KEY\",\"OPENAI_API_KEY\",\"ANTHROPIC_API_KEY\",\"TYPESAFE_API_KEY\",\"NATIVE_RESPONSES_MODELS\",\"ENABLE_ANTHROPIC_MESSAGES\",\"ANTHROPIC_ALLOWED_BETAS\",\"EXTERNAL_PROVIDER_TIMEOUT\",\"CERTBOT_EMAIL\",\"CLOUDFLARE_API_TOKEN\",\"INGRESS_S3_BUCKET\",\"AWS_DEFAULT_REGION\",\"INVITATION_EMAIL_ENABLED\",\"CONTACT_EMAIL_VERIFICATION_ENABLED\",\"INVITATION_EMAIL_FROM\",\"RESEND_API_KEY\",\"CLOUD_UI_BASE_URL\",\"ITA_API_KEY\",\"ENABLE_CHUTES\",\"CHUTES_ENABLE_STREAMING\",\"CHUTES_MODELS\",\"CHUTES_API_KEY\",\"TINFOIL_MODELS\",\"TINFOIL_API_KEY\",\"OHTTP_ENABLED\",\"PLACEMENT_REDIS_HOST\",\"PLACEMENT_REDIS_PORT\",\"PLACEMENT_REDIS_TLS_ENABLED\",\"PLACEMENT_REDIS_TLS_CA_CERT\",\"PLACEMENT_REDIS_PASSWORD\",\"DB_ENCRYPTION_KEYS\",\"S3_ENCRYPTION_KEYS\",\"OBJECT_ENCRYPTION_WRITE_ENABLED\",\"OBJECT_REWRAP_MAX_BYTES\",\"DD_API_KEY\",\"HUGGING_FACE_HUB_TOKEN\",\"PROXY_TOKEN\",\"ENV\",\"HOST_IP\",\"DD_HOSTNAME\",\"MONITORING_INGEST_TOKEN\",\"CVM_NAME\",\"CVM_HOST\"],\"no_instance_id\":false,\"secure_time\":false,\"port_policy\":{\"restrict_mode\":true,\"ports\":[{\"port\":443,\"pp\":false}]}}\n",
+   "runtime_measurements": {
+    "os_image_hash": "8db40cb23008d6213668b5816702d100b37b859a8a5bfd18d938ae3a1b3715bd",
+    "compose_hash": "cdb7727578dbbac45b27d46933d4ce84da093891af9eed3ff490ef0d41d1d096"
+   },
+   "compose_manager": null
+  },
+  "deployment_provenance": "not_checked",
+  "tls_binding": {
+   "kind": "attested",
+   "spki_fingerprint": "73862c254372091cc6895b900111503860694f8916ebf0c63b18d245ba8ba5ad"
+  }
+ },
+ "models": [
+  {
+   "signer": {
+    "signing_algo": "ed25519",
+    "signing_address": "236f5a6b91dd47dc3b7b36e43d4eb531a042ffb8f8fbf3a1555b78cef4fdda4c"
+   },
+   "tcb_status": "UpToDate",
+   "advisory_ids": [],
+   "deployment": {
+    "app_compose": "{\n    \"manifest_version\": 2,\n    \"name\": \"dstack-nvidia-0.5.11\",\n    \"runner\": \"docker-compose\",\n    \"docker_compose_file\": \"services:\\n  \\n  # OpenTelemetry collector sidecar for stable management visibility only.\\n  otelcol-management:\\n    image: otel/opentelemetry-collector-contrib@sha256:85ac41c2db88d0df9bd6145e608a3cb023f5d8443868adbfbbf66efb51087917\\n    container_name: otelcol-management\\n    command: [\\\"--config=/etc/otelcol-management/config.yaml\\\"]\\n    user: \\\"0:0\\\"\\n    mem_limit: \\\"768m\\\"\\n    environment:\\n      - MONITORING_INGEST_TOKEN=${MONITORING_INGEST_TOKEN}\\n      - CVM_NAME=${CVM_NAME}\\n      - CVM_HOST=${CVM_HOST}\\n      - DD_HOSTNAME=${DD_HOSTNAME}\\n      - ENV=${ENV}\\n      - CVM_HOSTMETRICS_ROOT_PATH=/hostfs\\n    volumes:\\n      - /var/run/docker.sock:/var/run/docker.sock:ro\\n      # Required for CVM guest hostmetrics parity. OTel prefixes host mount\\n      # points with root_path=/hostfs so the collector reports the guest host,\\n      # not the collector container filesystem.\\n      - /:/hostfs:ro\\n      - /var/lib/docker/containers:/var/lib/docker/containers:ro\\n      - otelcol-management-storage:/var/lib/otelcol-management\\n    configs:\\n      - source: otelcol_management_config\\n        target: /etc/otelcol-management/config.yaml\\n        mode: 0444\\n    restart: unless-stopped\\n    # Avoid the collector tailing its own Docker JSON log and creating a\\n    # feedback loop. The host-side Phase 1 collector still captures VM\\n    # serial/stderr if this sidecar itself needs debugging.\\n    logging:\\n      driver: \\\"local\\\"\\n      options:\\n        max-size: \\\"20m\\\"\\n        max-file: \\\"3\\\"\\n\\n\\n  certbot:\\n    image: certbot/dns-cloudflare@sha256:742dbd2e61c8709b930712c38958386c3cb3928e09eeb1f1e490600c127e2edb\\n    restart: unless-stopped\\n    entrypoint: \\\"/bin/sh -c 'trap exit TERM; while :; do certbot renew; sleep 12h & wait $${!}; done;'\\\"\\n    volumes:\\n      - certs:/etc/letsencrypt\\n    configs:\\n      - source: cloudflare_credentials\\n        target: /etc/cloudflare/credentials.ini\\n        mode: 0600\\n    depends_on:\\n      certbot-init:\\n        condition: service_completed_successfully\\n    labels:\\n      com.datadoghq.ad.logs: '[{\\\"source\\\": \\\"dns-cloudflare\\\", \\\"service\\\": \\\"dns-cloudflare\\\"}]'\\n    logging:\\n      driver: \\\"json-file\\\"\\n      options:\\n        max-size: \\\"100m\\\"\\n        max-file: \\\"10\\\"\\n        labels: \\\"com.datadoghq.ad.logs,com.docker.compose.service\\\"\\n\\n\\n  certbot-init:\\n    image: certbot/dns-cloudflare@sha256:742dbd2e61c8709b930712c38958386c3cb3928e09eeb1f1e490600c127e2edb\\n    volumes:\\n      - certs:/etc/letsencrypt\\n    restart: on-failure\\n    configs:\\n      - source: cloudflare_credentials\\n        target: /etc/cloudflare/credentials.ini\\n        mode: 0600\\n    command: >\\n      certonly\\n      --dns-cloudflare\\n      --dns-cloudflare-credentials /etc/cloudflare/credentials.ini\\n      --dns-cloudflare-propagation-seconds 30\\n      --email ${CERTBOT_EMAIL}\\n      --agree-tos --no-eff-email --non-interactive\\n      --key-type ecdsa --elliptic-curve secp256r1\\n      --cert-name completions.near.ai\\n      -d \\\"*.completions.near.ai\\\"\\n      -d \\\"completions.near.ai\\\"\\n      -d \\\"$HOSTNAME.hosts.near.ai\\\"\\n    labels:\\n      com.datadoghq.ad.logs: '[{\\\"source\\\": \\\"dns-cloudflare\\\", \\\"service\\\": \\\"dns-cloudflare\\\"}]'\\n    logging:\\n      driver: \\\"json-file\\\"\\n      options:\\n        max-size: \\\"100m\\\"\\n        max-file: \\\"10\\\"\\n        labels: \\\"com.datadoghq.ad.logs,com.docker.compose.service\\\"\\n\\n\\n  compose-manager:\\n    image: ${COMPOSE_MANAGER_IMAGE:-nearaidev/compose-manager@sha256:a0c073085684e12e19f31bb279fc8da663a374199bfecc47b04167ae79eaa766}\\n    container_name: compose-manager\\n    restart: unless-stopped\\n    ports:\\n      - \\\"8080:8080\\\"\\n    # pid:host + CAP_SYS_ADMIN + CAP_SYS_PTRACE let compose-manager run\\n    # `nsenter -t 1 -m -u -i -n -p -- ...` into PID 1's namespaces.\\n    #   - SYS_PTRACE: needed to open /proc/1/ns/* (ptrace_may_access gates\\n    #     this \u2014 PID 1 has `dumpable=0` because it was launched with a full\\n    #     cap set, so even root in the same user-ns needs SYS_PTRACE).\\n    #   - SYS_ADMIN: needed for the setns() that follows the open.\\n    # Without BOTH, every nsenter call fails with \\\"cannot open /proc/1/ns/*:\\n    # Permission denied\\\" \u2014 affecting `/dstack-agent/:action` (pre-existing)\\n    # and `/admin/kernel/algif-blacklist` (PR #14 / CVE-2026-31431).\\n    #\\n    # NOTE on AppArmor: on a host with AppArmor enabled, docker-default also\\n    # blocks this regardless of caps; the workable combo there is\\n    # `cap_add: [SYS_ADMIN, SYS_PTRACE]` PLUS `security_opt:\\n    # apparmor=unconfined`. dstack-OS does NOT ship AppArmor (verified\\n    # 2026-05-19 \u2014 no apparmor binaries/profiles in the rootfs, no AppArmor\\n    # strings in bzImage), so we omit the `security_opt` line. If a future\\n    # dstack-OS image enables AppArmor, this template must add it.\\n    pid: host\\n    cap_add:\\n      - SYS_ADMIN\\n      - SYS_PTRACE\\n    volumes:\\n      - /var/run/docker.sock:/var/run/docker.sock\\n      - /var/run/dstack.sock:/var/run/dstack.sock\\n      - /dstack/.host-shared/.decrypted-env:/app/.env:ro\\n      - work:/app/work\\n    environment:\\n      - GITHUB_REPO=https://github.com/nearai/cvm-compose-files\\n      - BEARER_TOKEN=${BEARER_TOKEN}\\n      - WORK_DIR=/app/work\\n      - MIN_TAG_AGE_HOURS=${CM_MIN_TAG_AGE_HOURS:-0}\\n      - ENV_FILES=/app/.env\\n      # Slack ops notifications (nearai/infra#141). INSTANCE_LABEL identifies\\n      # this host in the message (\\\"Deployed on gpuXX\\\"); SLACK_WEBHOOK_URL is a\\n      # secret sourced from the CVM decrypted env (empty = notifications off).\\n      - INSTANCE_LABEL=gpu02\\n      - SLACK_WEBHOOK_URL=${SLACK_WEBHOOK_URL:-}\\n    labels:\\n      com.datadoghq.ad.logs: '[{\\\"source\\\": \\\"compose-manager\\\", \\\"service\\\": \\\"compose-manager\\\"}]'\\n    logging:\\n      driver: \\\"json-file\\\"\\n      options:\\n        max-size: \\\"100m\\\"\\n        max-file: \\\"10\\\"\\n        labels: \\\"com.datadoghq.ad.logs,com.docker.compose.service\\\"\\n\\n\\n  compose-manager-launcher:\\n    image: nearaidev/compose-manager-launcher@sha256:079a14b41deb11e0e27f9b69648e8b3d89bd6fb9ccf6071643b8f447fa415085\\n    container_name: compose-manager-launcher\\n    restart: unless-stopped\\n    # Host network so the launcher's health check (LAUNCHER_HEALTH_URL below,\\n    # http://127.0.0.1:8080/version) can reach compose-manager, which publishes\\n    # 8080 on the guest host via `ports: 8080:8080`. On the default bridge,\\n    # 127.0.0.1 is the launcher's own loopback and the check can never pass \u2014\\n    # every swap/rollback would be wrongly declared failed.\\n    network_mode: host\\n    volumes:\\n      - /var/run/docker.sock:/var/run/docker.sock\\n      # Mounted read-only so the launcher can pass it as --env-file to docker compose,\\n      # allowing BEARER_TOKEN and other secrets to be substituted in the bundled\\n      # compose file without the launcher holding them in its own environment.\\n      - /dstack/.host-shared/.decrypted-env:/dstack-env:ro\\n      - work:/app/work\\n    environment:\\n      - COMPOSE_MANAGER_IMAGE_REPO=nearaidev/compose-manager\\n      # Keep launcher-driven recreates aligned with the initially booted\\n      # compose-manager container; the launcher's bundled compose file also\\n      # consumes this value.\\n      - CM_MIN_TAG_AGE_HOURS=${CM_MIN_TAG_AGE_HOURS:-0}\\n      - LAUNCHER_CHANNEL=${LAUNCHER_CHANNEL:-latest}\\n      - LAUNCHER_COMPOSE_PROJECT=dstack\\n      - LAUNCHER_ENV_FILE=/app/work/.env.launcher\\n      - LAUNCHER_BASE_ENV_FILE=/dstack-env\\n      - LAUNCHER_HEALTH_URL=http://127.0.0.1:8080/version\\n      # compose-manager does TLS/cert + S3 + git work on startup, so a container\\n      # recreate can take >60s to answer /version. 60s caused a genuine swap (and\\n      # its rollback) to be declared failed mid-startup -> false 30-min backoff.\\n      - LAUNCHER_HEALTH_TIMEOUT=180\\n      - LAUNCHER_COSIGN_IDENTITY_REGEXP=https://github.com/nearai/compose-manager/.github/workflows/.*\\n      - DOCKER_REGISTRY_USER=${DOCKER_REGISTRY_USER:-}\\n      - DOCKER_REGISTRY_TOKEN=${DOCKER_REGISTRY_TOKEN:-}\\n      - LAUNCHER_STATE_FILE=/app/work/launcher-state.json\\n    depends_on:\\n      - compose-manager\\n    labels:\\n      com.datadoghq.ad.logs: '[{\\\"source\\\": \\\"compose-manager-launcher\\\", \\\"service\\\": \\\"compose-manager-launcher\\\"}]'\\n    logging:\\n      driver: \\\"json-file\\\"\\n      options:\\n        max-size: \\\"100m\\\"\\n        max-file: \\\"10\\\"\\n        labels: \\\"com.datadoghq.ad.logs,com.docker.compose.service\\\"\\n\\n\\nnetworks:\\n  # Model compose files attach to this shared network so app-side telemetry can\\n  # reach management services without restarting the compose-manager CVM for\\n  # model scrape/log/trace changes.\\n  default:\\n    name: dstack_default\\n\\nvolumes:\\n  otelcol-management-storage:\\n\\n  work:\\n  # This volume can be re-used by other containers that need access to the TLS certificates.\\n  certs:\\n    name: certs\\n\\nconfigs:\\n  cloudflare_credentials:\\n    content: |\\n      dns_cloudflare_api_token = ${CLOUDFLARE_API_TOKEN}\\n\\n  \\n  # otelcol-management config for compose-manager/launcher telemetry only.\\n# Dollar signs are escaped as $$ so docker compose leaves OTel's\\n# ${env:...} references intact.\\n  otelcol_management_config:\\n    content: |\\n      receivers:\\n        filelog/docker_containers:\\n          include: [/var/lib/docker/containers/*/*-json.log]\\n          start_at: end\\n          storage: file_storage\\n          include_file_path: true\\n          operators:\\n            - type: json_parser\\n              parse_from: body\\n              parse_to: attributes\\n              timestamp:\\n                parse_from: attributes.time\\n                layout_type: gotime\\n                layout: '2006-01-02T15:04:05.999999999Z07:00'\\n              on_error: send_quiet\\n            - type: move\\n              from: attributes.log\\n              to: body\\n              if: 'attributes.log != nil'\\n            - type: move\\n              from: attributes.stream\\n              to: attributes[\\\"log.iostream\\\"]\\n              if: 'attributes.stream != nil'\\n            - type: remove\\n              field: attributes.time\\n              if: 'attributes.time != nil'\\n            - type: regex_parser\\n              parse_from: attributes[\\\"log.file.path\\\"]\\n              regex: '/var/lib/docker/containers/(?P<container_id>[a-f0-9]{12})[a-f0-9]*/'\\n              on_error: send_quiet\\n            - type: add\\n              field: attributes[\\\"service.name\\\"]\\n              value: cvm-docker\\n\\n        hostmetrics/cvm:\\n          collection_interval: 30s\\n          root_path: $${env:CVM_HOSTMETRICS_ROOT_PATH}\\n          scrapers:\\n            cpu: {}\\n            memory: {}\\n            load: {}\\n            paging: {}\\n            network: {}\\n            disk: {}\\n            filesystem:\\n              exclude_mount_points:\\n                mount_points: [\\\"^/dev(/.*)?$\\\", \\\"^/proc(/.*)?$\\\", \\\"^/sys(/.*)?$\\\", \\\"^/run(/.*)?$\\\", \\\"^/var/lib/docker(/.*)?$\\\"]\\n                match_type: regexp\\n\\n        docker_stats/cvm:\\n          endpoint: unix:///var/run/docker.sock\\n          collection_interval: 30s\\n          timeout: 10s\\n          api_version: \\\"1.44\\\"\\n          container_labels_to_metric_labels:\\n            com.docker.compose.service: compose_service\\n            com.docker.compose.project: compose_project\\n\\n        prometheus/self:\\n          config:\\n            scrape_configs:\\n              - job_name: otelcol-management\\n                scrape_interval: 30s\\n                static_configs:\\n                  - targets: ['localhost:8888']\\n\\n      processors:\\n        memory_limiter:\\n          check_interval: 1s\\n          limit_mib: 512\\n          spike_limit_mib: 128\\n\\n        resource:\\n          attributes:\\n            - key: host.name\\n              value: $${env:DD_HOSTNAME}\\n              action: upsert\\n            - key: cvm.name\\n              value: $${env:CVM_NAME}\\n              action: upsert\\n            - key: host.machine\\n              value: $${env:CVM_HOST}\\n              action: insert\\n            - key: deployment.environment\\n              value: $${env:ENV}\\n              action: upsert\\n            - key: service.namespace\\n              value: near-ai\\n              action: insert\\n\\n        transform/docker_metadata:\\n          error_mode: ignore\\n          log_statements:\\n            - context: log\\n              statements:\\n                - set(attributes[\\\"service.name\\\"], attributes[\\\"attrs\\\"][\\\"com.docker.compose.service\\\"]) where attributes[\\\"attrs\\\"] != nil and attributes[\\\"attrs\\\"][\\\"com.docker.compose.service\\\"] != nil\\n                - set(attributes[\\\"service.name\\\"], ParseJSON(attributes[\\\"attrs\\\"][\\\"com.datadoghq.ad.logs\\\"])[0][\\\"service\\\"]) where attributes[\\\"attrs\\\"] != nil and attributes[\\\"attrs\\\"][\\\"com.datadoghq.ad.logs\\\"] != nil\\n                - set(attributes[\\\"log.source\\\"], ParseJSON(attributes[\\\"attrs\\\"][\\\"com.datadoghq.ad.logs\\\"])[0][\\\"source\\\"]) where attributes[\\\"attrs\\\"] != nil and attributes[\\\"attrs\\\"][\\\"com.datadoghq.ad.logs\\\"] != nil\\n                - set(attributes[\\\"container.name\\\"], attributes[\\\"attrs\\\"][\\\"com.docker.compose.service\\\"]) where attributes[\\\"attrs\\\"] != nil and attributes[\\\"attrs\\\"][\\\"com.docker.compose.service\\\"] != nil\\n\\n        filter/management_logs:\\n          error_mode: ignore\\n          logs:\\n            log_record:\\n              - 'attributes[\\\"service.name\\\"] != \\\"compose-manager\\\" and attributes[\\\"service.name\\\"] != \\\"compose-manager-launcher\\\" and attributes[\\\"service.name\\\"] != \\\"dns-cloudflare\\\"'\\n\\n        groupbyattrs/docker_service:\\n          keys:\\n            - service.name\\n            - container.name\\n            - log.source\\n            - log.iostream\\n\\n        batch:\\n          send_batch_size: 1024\\n          send_batch_max_size: 2048\\n          timeout: 5s\\n\\n      exporters:\\n        otlphttp/gateway:\\n          endpoint: https://telemetry.infra.near.ai\\n          headers:\\n            Authorization: \\\"Bearer $${env:MONITORING_INGEST_TOKEN}\\\"\\n          # Keep source requests FIFO before the central gateway.\\n          sending_queue:\\n            num_consumers: 1\\n            queue_size: 128\\n            storage: file_storage\\n\\n      extensions:\\n        file_storage:\\n          directory: /var/lib/otelcol-management/storage\\n          create_directory: true\\n\\n      service:\\n        extensions: [file_storage]\\n        pipelines:\\n          logs/cvm:\\n            receivers: [filelog/docker_containers]\\n            processors: [memory_limiter, resource, transform/docker_metadata, filter/management_logs, groupbyattrs/docker_service, batch]\\n            exporters: [otlphttp/gateway]\\n          metrics/cvm_system:\\n            receivers: [hostmetrics/cvm, docker_stats/cvm]\\n            processors: [memory_limiter, resource, batch]\\n            exporters: [otlphttp/gateway]\\n          metrics/self:\\n            receivers: [prometheus/self]\\n            processors: [memory_limiter, resource, batch]\\n            exporters: [otlphttp/gateway]\\n        telemetry:\\n          metrics:\\n            address: localhost:8888\\n          logs:\\n            level: info\\n\",\n    \"kms_enabled\": true,\n    \"gateway_enabled\": false,\n    \"local_key_provider_enabled\": false,\n    \"key_provider_id\": \"\",\n    \"public_logs\": false,\n    \"public_sysinfo\": true,\n    \"allowed_envs\": [\n        \"BEARER_TOKEN\",\n        \"CM_MIN_TAG_AGE_HOURS\",\n        \"SLACK_WEBHOOK_URL\",\n        \"AWS_REGION\",\n        \"AWS_ACCESS_KEY_ID\",\n        \"AWS_SECRET_ACCESS_KEY\",\n        \"AWS_S3_BUCKET\",\n        \"CERTBOT_EMAIL\",\n        \"CLOUDFLARE_API_TOKEN\",\n        \"DOCKER_REGISTRY_USER\",\n        \"DOCKER_REGISTRY_TOKEN\",\n        \"LAUNCHER_CHANNEL\",\n        \"DD_API_KEY\",\n        \"HUGGING_FACE_HUB_TOKEN\",\n        \"PROXY_TOKEN\",\n        \"ENV\",\n        \"HOST_IP\",\n        \"DD_HOSTNAME\",\n        \"HOSTNAME\",\n        \"MONITORING_INGEST_TOKEN\",\n        \"CVM_NAME\",\n        \"CVM_HOST\"\n    ],\n    \"no_instance_id\": false,\n    \"secure_time\": false,\n    \"pre_launch_script\": \"#!/bin/bash\\nexport ENCRYPTION_KEY=$(cat /dstack/.host-shared/.appkeys.json | jq -r .k256_key)\\n\\n# Tune kernel for inference workloads\\necho 0 > /proc/sys/vm/swappiness            # prevent KV cache swap-out\\necho 5 > /proc/sys/vm/dirty_ratio            # reduce write-back cache pressure\\necho 1 > /proc/sys/vm/dirty_background_ratio # flush dirty pages sooner\\n\\n# Restore the launcher's last-known-good image override so a CVM reboot\\n# doesn't revert compose-manager to the Ansible-baked fallback digest.\\n# Parse the file as data (not `. file`) \u2014 sourcing would execute any\\n# shell metacharacters in the value, which is a root-RCE path if the\\n# launcher ever wrote an unvalidated digest. Path assumes default\\n# Docker data-root; dstack CVMs always use this.\\nOVERRIDES=\\\"/var/lib/docker/volumes/dstack_work/_data/.env.launcher\\\"\\n# Forced re-pin (repin_launcher_override=true): the launcher persists the\\n# last image it swapped to in $OVERRIDES, and the compose template gives\\n# that value precedence over the Ansible-pinned digest. After a promote we\\n# may intentionally recreate hosts whose persisted override is now stale\\n# (a pre-promote digest); overwrite it with the pinned image so\\n# compose-manager boots directly on the promoted digest instead of the\\n# superseded one. The launcher re-seeds this file from the running\\n# container on its next successful poll.\\nif [ \\\"false\\\" = \\\"true\\\" ]; then\\n  mkdir -p \\\"$(dirname \\\"$OVERRIDES\\\")\\\"\\n  printf 'COMPOSE_MANAGER_IMAGE=%s\\\\n' 'nearaidev/compose-manager@sha256:6e035c8fb99c1d31f41760d25af178683a658cca4afd73cd0d366fbb5bf884be' > \\\"$OVERRIDES\\\"\\n  echo \\\"[pre_launch] Re-pinned compose-manager image override to nearaidev/compose-manager@sha256:6e035c8fb99c1d31f41760d25af178683a658cca4afd73cd0d366fbb5bf884be\\\"\\nfi\\nif [ -f \\\"$OVERRIDES\\\" ]; then\\n  while IFS='=' read -r k v; do\\n    case \\\"$k\\\" in COMPOSE_MANAGER_IMAGE) export \\\"$k=$v\\\" ;; esac\\n  done < \\\"$OVERRIDES\\\"\\n  echo \\\"[pre_launch] Loaded compose-manager image override from $OVERRIDES\\\"\\nfi\\n\"\n}",
+    "runtime_measurements": {
+     "os_image_hash": "91fd5d69ccee3e5ea4f2aeb8c9b632c4358c4ecfc29ba1aa6fb1e402af209829",
+     "compose_hash": "c5e7bd5f9e1d5f8480d2bd57b9e601fab0650dd46e6a120b809a279be73436c0"
+    },
+    "compose_manager": {
+     "actions": [
+      {
+       "timestamp": "2026-09-09T02:14:50.829079556+00:00",
+       "action": "compose_manager_started",
+       "container": "compose-manager",
+       "image": "nearaidev/compose-manager@sha256:6e035c8fb99c1d31f41760d25af178683a658cca4afd73cd0d366fbb5bf884be"
+      },
+      {
+       "timestamp": "2026-09-09T02:24:56.004341137+00:00",
+       "action": "compose_up",
+       "tag": "v0.0.403",
+       "commit": "01356c5dedfec944058ebfa9dc935a82b1d1e754",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4.yaml",
+       "file_sha256": "a7549a898ed0fc641861b5dad103b70cd38aca286f700540a8c4a9fa8415e346"
+      },
+      {
+       "timestamp": "2026-09-09T04:30:50.710352171+00:00",
+       "action": "compose_up",
+       "tag": "v0.0.403",
+       "commit": "01356c5dedfec944058ebfa9dc935a82b1d1e754",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4.yaml",
+       "file_sha256": "a7549a898ed0fc641861b5dad103b70cd38aca286f700540a8c4a9fa8415e346",
+       "services": [
+        "model-sg-glm53-fp8-tp4-r1",
+        "model-sg-glm53-fp8-tp4-r2"
+       ]
+      },
+      {
+       "timestamp": "2026-09-09T04:31:03.989983990+00:00",
+       "action": "compose_up",
+       "tag": "v0.0.403",
+       "commit": "01356c5dedfec944058ebfa9dc935a82b1d1e754",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4.yaml",
+       "file_sha256": "a7549a898ed0fc641861b5dad103b70cd38aca286f700540a8c4a9fa8415e346"
+      },
+      {
+       "timestamp": "2026-09-09T04:35:26.568639332+00:00",
+       "action": "compose_up",
+       "tag": "v0.0.380",
+       "commit": "d36548db2486f91cc527792ea0c735068eede5de",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4.yaml",
+       "file_sha256": "d76413cd231a4e871a515e4fa829c6510a374fe335e77fae3ea5a6dccf783909"
+      },
+      {
+       "timestamp": "2026-09-09T04:55:14.495801920+00:00",
+       "action": "compose_down",
+       "tag": "v0.0.403",
+       "commit": "01356c5dedfec944058ebfa9dc935a82b1d1e754",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4.yaml"
+      },
+      {
+       "timestamp": "2026-09-09T04:56:04.568714464+00:00",
+       "action": "compose_down",
+       "tag": "v0.0.403",
+       "commit": "01356c5dedfec944058ebfa9dc935a82b1d1e754",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4.yaml",
+       "services": [
+        "model-sg-dsv4-flash-fp4-tp4"
+       ]
+      },
+      {
+       "timestamp": "2026-09-09T04:56:24.620734049+00:00",
+       "action": "compose_down",
+       "tag": "v0.0.402",
+       "commit": "02254afadea3c4a90b1226306b0dc87a2c990a5b",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4.yaml",
+       "services": [
+        "model-sg-dsv4-flash-fp4-tp4"
+       ]
+      },
+      {
+       "timestamp": "2026-09-09T04:56:43.337112472+00:00",
+       "action": "compose_down",
+       "tag": "v0.0.403",
+       "commit": "01356c5dedfec944058ebfa9dc935a82b1d1e754",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4.yaml",
+       "services": [
+        "model-sg-dsv4-flash-fp4-tp4"
+       ]
+      },
+      {
+       "timestamp": "2026-09-09T04:59:30.917631615+00:00",
+       "action": "compose_down",
+       "tag": "v0.0.403",
+       "commit": "01356c5dedfec944058ebfa9dc935a82b1d1e754",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4.yaml",
+       "services": [
+        "model-sg-dsv4-flash-fp4-tp4"
+       ]
+      },
+      {
+       "timestamp": "2026-09-09T05:05:32.179452630+00:00",
+       "action": "compose_up",
+       "tag": "v0.0.394",
+       "commit": "aea5fbfd284860bb15d57c4ec74cab124329e0c7",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4-Canary.yaml",
+       "file_sha256": "5a5b72283a75c8bc363dfce1d460e4162b89e4040061fd5ff9cd6ff08481924d"
+      },
+      {
+       "timestamp": "2026-09-09T05:34:26.296055372+00:00",
+       "action": "compose_up",
+       "tag": "v0.0.394",
+       "commit": "aea5fbfd284860bb15d57c4ec74cab124329e0c7",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4-Canary.yaml",
+       "file_sha256": "5a5b72283a75c8bc363dfce1d460e4162b89e4040061fd5ff9cd6ff08481924d",
+       "services": [
+        "otelcol-contrib"
+       ]
+      },
+      {
+       "timestamp": "2026-09-09T20:17:40.527598885+00:00",
+       "action": "compose_down",
+       "tag": "v0.0.394",
+       "commit": "aea5fbfd284860bb15d57c4ec74cab124329e0c7",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4-Canary.yaml",
+       "services": [
+        "model-proxy-registrar",
+        "dcgm-glm53"
+       ]
+      },
+      {
+       "timestamp": "2026-09-09T20:18:02.675915507+00:00",
+       "action": "compose_up",
+       "tag": "v0.0.404",
+       "commit": "0eb5c6d9f0842af579e24e39d661ede0ed79e440",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4.yaml",
+       "file_sha256": "a2d3f073aa2f01864bb8eac72ba1f4292ad8391aebdc28e29b84fe8cde48afab",
+       "services": [
+        "model-proxy-registrar",
+        "dcgm-glm53"
+       ]
+      },
+      {
+       "timestamp": "2026-09-09T23:15:08.085154004+00:00",
+       "action": "compose_stage",
+       "tag": "v0.0.408",
+       "commit": "676532b98f9a01da5d43f98299af297b573d242d",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4.yaml",
+       "file_sha256": "e5d80ab6e1a1188fdf8cd3e7bc2f74da5d4767da15b0644acf07dad08a3b461b",
+       "services": [
+        "model-sg-glm53-fp8-tp4-r1"
+       ]
+      },
+      {
+       "timestamp": "2026-09-09T23:17:08.511086703+00:00",
+       "action": "compose_down",
+       "tag": "v0.0.408",
+       "commit": "676532b98f9a01da5d43f98299af297b573d242d",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4.yaml",
+       "services": [
+        "model-sg-glm53-fp8-tp4-r1"
+       ]
+      },
+      {
+       "timestamp": "2026-09-09T23:18:19.605872623+00:00",
+       "action": "compose_up",
+       "tag": "v0.0.408",
+       "commit": "676532b98f9a01da5d43f98299af297b573d242d",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4.yaml",
+       "file_sha256": "e5d80ab6e1a1188fdf8cd3e7bc2f74da5d4767da15b0644acf07dad08a3b461b",
+       "services": [
+        "model-sg-glm53-fp8-tp4-r1"
+       ]
+      },
+      {
+       "timestamp": "2026-09-09T23:29:25.217964998+00:00",
+       "action": "compose_up",
+       "tag": "v0.0.408",
+       "commit": "676532b98f9a01da5d43f98299af297b573d242d",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4.yaml",
+       "file_sha256": "e5d80ab6e1a1188fdf8cd3e7bc2f74da5d4767da15b0644acf07dad08a3b461b",
+       "services": [
+        "glm53-perception-check"
+       ]
+      },
+      {
+       "timestamp": "2026-09-09T23:34:53.861422626+00:00",
+       "action": "compose_down",
+       "tag": "v0.0.408",
+       "commit": "676532b98f9a01da5d43f98299af297b573d242d",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4.yaml",
+       "services": [
+        "model-sg-glm53-fp8-tp4-r2"
+       ]
+      },
+      {
+       "timestamp": "2026-09-09T23:35:47.364842188+00:00",
+       "action": "compose_up",
+       "tag": "v0.0.408",
+       "commit": "676532b98f9a01da5d43f98299af297b573d242d",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4.yaml",
+       "file_sha256": "e5d80ab6e1a1188fdf8cd3e7bc2f74da5d4767da15b0644acf07dad08a3b461b",
+       "services": [
+        "model-sg-glm53-fp8-tp4-r2"
+       ]
+      },
+      {
+       "timestamp": "2026-09-09T23:44:55.954335603+00:00",
+       "action": "compose_up",
+       "tag": "v0.0.409",
+       "commit": "e14107901d202215ab44eb027eb4792047d5ec83",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4.yaml",
+       "file_sha256": "2878b9c4c6db512a7538dc4e8981fd5acae72cdaace7794509f48161bcce08e3",
+       "services": [
+        "proxy-glm53"
+       ]
+      },
+      {
+       "timestamp": "2026-09-09T23:47:13.924312233+00:00",
+       "action": "compose_up",
+       "tag": "v0.0.408",
+       "commit": "676532b98f9a01da5d43f98299af297b573d242d",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4.yaml",
+       "file_sha256": "e5d80ab6e1a1188fdf8cd3e7bc2f74da5d4767da15b0644acf07dad08a3b461b",
+       "services": [
+        "glm53-perception-check"
+       ]
+      },
+      {
+       "timestamp": "2026-09-09T23:50:57.784443404+00:00",
+       "action": "compose_up",
+       "tag": "v0.0.409",
+       "commit": "e14107901d202215ab44eb027eb4792047d5ec83",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4.yaml",
+       "file_sha256": "2878b9c4c6db512a7538dc4e8981fd5acae72cdaace7794509f48161bcce08e3",
+       "services": [
+        "proxy-glm53"
+       ]
+      },
+      {
+       "timestamp": "2026-09-09T23:53:31.294993761+00:00",
+       "action": "compose_up",
+       "tag": "v0.0.408",
+       "commit": "676532b98f9a01da5d43f98299af297b573d242d",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4.yaml",
+       "file_sha256": "e5d80ab6e1a1188fdf8cd3e7bc2f74da5d4767da15b0644acf07dad08a3b461b",
+       "services": [
+        "glm53-perception-check"
+       ]
+      },
+      {
+       "timestamp": "2026-09-10T21:19:04.943660980+00:00",
+       "action": "compose_up",
+       "tag": "v0.0.409",
+       "commit": "e14107901d202215ab44eb027eb4792047d5ec83",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4.yaml",
+       "file_sha256": "2878b9c4c6db512a7538dc4e8981fd5acae72cdaace7794509f48161bcce08e3",
+       "services": [
+        "otelcol-contrib"
+       ]
+      },
+      {
+       "timestamp": "2026-09-11T20:36:46.184788800+00:00",
+       "action": "compose_down",
+       "tag": "v0.0.409",
+       "commit": "e14107901d202215ab44eb027eb4792047d5ec83",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4.yaml",
+       "services": [
+        "model-sg-glm53-fp8-tp4-r2"
+       ]
+      },
+      {
+       "timestamp": "2026-09-11T20:38:43.198509745+00:00",
+       "action": "compose_up",
+       "tag": "v0.0.412",
+       "commit": "d1a72bf122962f1582d8ba9ae38f56c3dfdfb139",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4.yaml",
+       "file_sha256": "e063942a0d88eeff6d085beaceb43c0d4c2d2426bc81003aa9fb42839ad39eab",
+       "services": [
+        "model-sg-glm53-fp8-tp4-r2",
+        "otelcol-contrib"
+       ]
+      },
+      {
+       "timestamp": "2026-09-11T20:39:46.624650293+00:00",
+       "action": "docker_restart",
+       "container": "otelcol-contrib"
+      },
+      {
+       "timestamp": "2026-09-11T20:49:56.015830686+00:00",
+       "action": "compose_up",
+       "tag": "v0.0.409",
+       "commit": "e14107901d202215ab44eb027eb4792047d5ec83",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4.yaml",
+       "file_sha256": "2878b9c4c6db512a7538dc4e8981fd5acae72cdaace7794509f48161bcce08e3",
+       "services": [
+        "nginx"
+       ]
+      },
+      {
+       "timestamp": "2026-09-11T21:01:38.575741016+00:00",
+       "action": "compose_down",
+       "tag": "v0.0.412",
+       "commit": "d1a72bf122962f1582d8ba9ae38f56c3dfdfb139",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4.yaml",
+       "services": [
+        "model-sg-glm53-fp8-tp4-r2"
+       ]
+      },
+      {
+       "timestamp": "2026-09-11T21:02:01.420550389+00:00",
+       "action": "compose_up",
+       "tag": "v0.0.409",
+       "commit": "e14107901d202215ab44eb027eb4792047d5ec83",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4.yaml",
+       "file_sha256": "2878b9c4c6db512a7538dc4e8981fd5acae72cdaace7794509f48161bcce08e3",
+       "services": [
+        "model-sg-glm53-fp8-tp4-r2",
+        "otelcol-contrib"
+       ]
+      },
+      {
+       "timestamp": "2026-09-11T21:02:31.594889624+00:00",
+       "action": "docker_restart",
+       "container": "otelcol-contrib"
+      },
+      {
+       "timestamp": "2026-09-11T21:14:40.935319385+00:00",
+       "action": "compose_up",
+       "tag": "v0.0.409",
+       "commit": "e14107901d202215ab44eb027eb4792047d5ec83",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4.yaml",
+       "file_sha256": "2878b9c4c6db512a7538dc4e8981fd5acae72cdaace7794509f48161bcce08e3",
+       "services": [
+        "glm53-perception-check"
+       ]
+      },
+      {
+       "timestamp": "2026-09-15T19:35:37.789784121+00:00",
+       "action": "compose_up",
+       "tag": "v0.0.422",
+       "commit": "8f97e8f22db8a32b915b7b59702fc09635a8ac24",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4.yaml",
+       "file_sha256": "dac8e7bd277ba8f6dbf51201a859374f956e92d2546637e17c73608911e65bf4",
+       "services": [
+        "proxy-glm53"
+       ]
+      },
+      {
+       "timestamp": "2026-09-15T19:47:52.726113188+00:00",
+       "action": "compose_up",
+       "tag": "v0.0.422",
+       "commit": "8f97e8f22db8a32b915b7b59702fc09635a8ac24",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4.yaml",
+       "file_sha256": "dac8e7bd277ba8f6dbf51201a859374f956e92d2546637e17c73608911e65bf4",
+       "services": [
+        "nginx"
+       ]
+      },
+      {
+       "timestamp": "2026-09-16T00:08:15.486991917+00:00",
+       "action": "compose_down",
+       "tag": "v0.0.422",
+       "commit": "8f97e8f22db8a32b915b7b59702fc09635a8ac24",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4.yaml",
+       "services": [
+        "model-sg-glm53-fp8-tp4-r2"
+       ]
+      },
+      {
+       "timestamp": "2026-09-16T00:14:47.363639378+00:00",
+       "action": "compose_up",
+       "tag": "v0.0.423",
+       "commit": "065340e05635b885dfb238fe9f3601ad351d68a8",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4.yaml",
+       "file_sha256": "367d6c1324eb363e14fc76a7370b5af4019fb58272d8bdfb4de2cd14dc9283ad",
+       "services": [
+        "model-sg-glm53-fp8-tp4-r2"
+       ]
+      },
+      {
+       "timestamp": "2026-09-16T00:26:17.344491522+00:00",
+       "action": "compose_up",
+       "tag": "v0.0.423",
+       "commit": "065340e05635b885dfb238fe9f3601ad351d68a8",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4.yaml",
+       "file_sha256": "367d6c1324eb363e14fc76a7370b5af4019fb58272d8bdfb4de2cd14dc9283ad",
+       "services": [
+        "glm53-perception-check"
+       ]
+      },
+      {
+       "timestamp": "2026-09-16T00:43:47.769061016+00:00",
+       "action": "compose_down",
+       "tag": "v0.0.423",
+       "commit": "065340e05635b885dfb238fe9f3601ad351d68a8",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4.yaml",
+       "services": [
+        "model-sg-glm53-fp8-tp4-r1"
+       ]
+      },
+      {
+       "timestamp": "2026-09-16T00:45:06.642750878+00:00",
+       "action": "compose_up",
+       "tag": "v0.0.423",
+       "commit": "065340e05635b885dfb238fe9f3601ad351d68a8",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4.yaml",
+       "file_sha256": "367d6c1324eb363e14fc76a7370b5af4019fb58272d8bdfb4de2cd14dc9283ad",
+       "services": [
+        "model-sg-glm53-fp8-tp4-r1"
+       ]
+      },
+      {
+       "timestamp": "2026-09-16T00:45:49.198101532+00:00",
+       "action": "compose_up",
+       "tag": "v0.0.423",
+       "commit": "065340e05635b885dfb238fe9f3601ad351d68a8",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4.yaml",
+       "file_sha256": "367d6c1324eb363e14fc76a7370b5af4019fb58272d8bdfb4de2cd14dc9283ad",
+       "services": [
+        "model-sg-glm53-fp8-tp4-r1"
+       ]
+      },
+      {
+       "timestamp": "2026-09-16T00:57:29.774073005+00:00",
+       "action": "compose_up",
+       "tag": "v0.0.423",
+       "commit": "065340e05635b885dfb238fe9f3601ad351d68a8",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4.yaml",
+       "file_sha256": "367d6c1324eb363e14fc76a7370b5af4019fb58272d8bdfb4de2cd14dc9283ad",
+       "services": [
+        "glm53-perception-check"
+       ]
+      },
+      {
+       "timestamp": "2026-09-16T21:03:41.467915899+00:00",
+       "action": "compose_down",
+       "tag": "v0.0.423",
+       "commit": "065340e05635b885dfb238fe9f3601ad351d68a8",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4.yaml",
+       "services": [
+        "model-proxy-registrar"
+       ]
+      },
+      {
+       "timestamp": "2026-09-16T21:06:46.241501145+00:00",
+       "action": "compose_down",
+       "tag": "v0.0.423",
+       "commit": "065340e05635b885dfb238fe9f3601ad351d68a8",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4.yaml",
+       "services": [
+        "model-sg-glm53-fp8-tp4-r1",
+        "model-sg-glm53-fp8-tp4-r2"
+       ]
+      },
+      {
+       "timestamp": "2026-09-16T21:19:23.782171303+00:00",
+       "action": "compose_up",
+       "tag": "v0.0.424",
+       "commit": "b4e57d602a538142d60f88a7522ebf8a796d224e",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4-LongContext.yaml",
+       "file_sha256": "19edbb8fc65cf78bfb082ab1ee5c0e75153eb332e73a44de6c3c5ab01a753138"
+      },
+      {
+       "timestamp": "2026-09-16T22:32:19.445459551+00:00",
+       "action": "compose_down",
+       "tag": "v0.0.424",
+       "commit": "b4e57d602a538142d60f88a7522ebf8a796d224e",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4-LongContext.yaml",
+       "services": [
+        "model-sg-glm53-fp8-tp4-r1",
+        "model-sg-glm53-fp8-tp4-r2"
+       ]
+      },
+      {
+       "timestamp": "2026-09-16T22:34:10.057489042+00:00",
+       "action": "compose_up",
+       "tag": "v0.0.425",
+       "commit": "d190cde8a974ab51e3cb81c466f224189ce96b81",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4-LongContext.yaml",
+       "file_sha256": "72bcddd89bb5174075e79b502b32ce0b7356cbfa6812ea40a34a7a9306ff9421",
+       "services": [
+        "model-sg-glm53-fp8-tp4-r1",
+        "model-sg-glm53-fp8-tp4-r2"
+       ]
+      },
+      {
+       "timestamp": "2026-09-17T16:35:20.972286233+00:00",
+       "action": "compose_up",
+       "tag": "v0.0.425",
+       "commit": "d190cde8a974ab51e3cb81c466f224189ce96b81",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4-LongContext.yaml",
+       "file_sha256": "72bcddd89bb5174075e79b502b32ce0b7356cbfa6812ea40a34a7a9306ff9421",
+       "services": [
+        "glm53-soak-relay"
+       ]
+      },
+      {
+       "timestamp": "2026-09-17T16:40:23.954546181+00:00",
+       "action": "compose_down",
+       "tag": "v0.0.425",
+       "commit": "d190cde8a974ab51e3cb81c466f224189ce96b81",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4-LongContext.yaml",
+       "services": [
+        "glm53-soak-relay"
+       ]
+      },
+      {
+       "timestamp": "2026-09-17T20:58:40.912547329+00:00",
+       "action": "compose_down",
+       "tag": "v0.0.425",
+       "commit": "d190cde8a974ab51e3cb81c466f224189ce96b81",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4-LongContext.yaml",
+       "services": [
+        "model-sg-glm53-fp8-tp4-r2"
+       ]
+      },
+      {
+       "timestamp": "2026-09-17T21:01:39.988787378+00:00",
+       "action": "compose_up",
+       "tag": "v0.0.427",
+       "commit": "7e8e1aba17ba2e358c29049925d59a4fe40f2ee5",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4-LongContext.yaml",
+       "file_sha256": "dfbeadd8dfd4b894a3010d2c58696495e7ba0c44c2fa7658bd275be47c24c63c",
+       "services": [
+        "model-sg-glm53-fp8-tp4-r2"
+       ]
+      },
+      {
+       "timestamp": "2026-09-17T21:48:06.070788012+00:00",
+       "action": "compose_down",
+       "tag": "v0.0.427",
+       "commit": "7e8e1aba17ba2e358c29049925d59a4fe40f2ee5",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4-LongContext.yaml",
+       "services": [
+        "model-proxy-registrar"
+       ]
+      },
+      {
+       "timestamp": "2026-09-18T00:12:24.546042056+00:00",
+       "action": "compose_up",
+       "tag": "v0.0.428",
+       "commit": "5ba5a5bb92b7b1bbbe72fe9b7a8fbaec729627a1",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4-LongContext.yaml",
+       "file_sha256": "82ab8350f32f7adb3cf2affb5b739510689f1788b8a1e310cfcf5329c560e6d2",
+       "services": [
+        "model-proxy-registrar"
+       ]
+      },
+      {
+       "timestamp": "2026-09-18T00:35:09.421798343+00:00",
+       "action": "compose_down",
+       "tag": "v0.0.428",
+       "commit": "5ba5a5bb92b7b1bbbe72fe9b7a8fbaec729627a1",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4-LongContext.yaml",
+       "services": [
+        "model-sg-glm53-fp8-tp4-r2"
+       ]
+      },
+      {
+       "timestamp": "2026-09-18T00:37:28.371813333+00:00",
+       "action": "compose_up",
+       "tag": "v0.0.425",
+       "commit": "d190cde8a974ab51e3cb81c466f224189ce96b81",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4-LongContext.yaml",
+       "file_sha256": "72bcddd89bb5174075e79b502b32ce0b7356cbfa6812ea40a34a7a9306ff9421",
+       "services": [
+        "model-sg-glm53-fp8-tp4-r2"
+       ]
+      },
+      {
+       "timestamp": "2026-09-18T18:29:05.728902845+00:00",
+       "action": "compose_up",
+       "tag": "v0.0.429",
+       "commit": "23ba05275cb6263b4235564d825ed5de6e45a140",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4-LongContext.yaml",
+       "file_sha256": "b020c87160fd3ea0512017519fc0e1207f2ab7f580e02defa68be6048a377001",
+       "services": [
+        "model-sg-glm53-fp8-tp4-r2"
+       ]
+      },
+      {
+       "timestamp": "2026-09-18T18:33:05.028065013+00:00",
+       "action": "compose_down",
+       "tag": "v0.0.429",
+       "commit": "23ba05275cb6263b4235564d825ed5de6e45a140",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4-LongContext.yaml",
+       "services": [
+        "model-sg-glm53-fp8-tp4-r2"
+       ]
+      },
+      {
+       "timestamp": "2026-09-18T18:33:47.336332945+00:00",
+       "action": "compose_up",
+       "tag": "v0.0.429",
+       "commit": "23ba05275cb6263b4235564d825ed5de6e45a140",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4-LongContext.yaml",
+       "file_sha256": "b020c87160fd3ea0512017519fc0e1207f2ab7f580e02defa68be6048a377001",
+       "services": [
+        "model-sg-glm53-fp8-tp4-r2"
+       ]
+      },
+      {
+       "timestamp": "2026-09-18T19:08:35.525036534+00:00",
+       "action": "compose_down",
+       "tag": "v0.0.429",
+       "commit": "23ba05275cb6263b4235564d825ed5de6e45a140",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4-LongContext.yaml",
+       "services": [
+        "otelcol-contrib"
+       ]
+      },
+      {
+       "timestamp": "2026-09-18T19:08:41.873109477+00:00",
+       "action": "compose_up",
+       "tag": "v0.0.429",
+       "commit": "23ba05275cb6263b4235564d825ed5de6e45a140",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4-LongContext.yaml",
+       "file_sha256": "b020c87160fd3ea0512017519fc0e1207f2ab7f580e02defa68be6048a377001",
+       "services": [
+        "otelcol-contrib"
+       ]
+      },
+      {
+       "timestamp": "2026-09-22T00:07:20.895534718+00:00",
+       "action": "compose_down",
+       "tag": "v0.0.429",
+       "commit": "23ba05275cb6263b4235564d825ed5de6e45a140",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4-LongContext.yaml",
+       "services": [
+        "model-sg-glm53-fp8-tp4-r1"
+       ]
+      },
+      {
+       "timestamp": "2026-09-22T00:13:14.438544274+00:00",
+       "action": "compose_up",
+       "tag": "v0.0.436",
+       "commit": "2cbf20de04e740fc3c7f1f44d81676cbc724d919",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4-W4AFP8-Canary.yaml",
+       "file_sha256": "e8aecce4817e693f4624ec67b87b63b128138051b222f6365ca5aadfb81378b7",
+       "services": [
+        "model-downloader"
+       ]
+      },
+      {
+       "timestamp": "2026-09-22T00:27:16.306341590+00:00",
+       "action": "compose_up",
+       "tag": "v0.0.436",
+       "commit": "2cbf20de04e740fc3c7f1f44d81676cbc724d919",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4-W4AFP8-Canary.yaml",
+       "file_sha256": "e8aecce4817e693f4624ec67b87b63b128138051b222f6365ca5aadfb81378b7",
+       "services": [
+        "model-sg-glm53-w4afp8-tp4-r1"
+       ]
+      },
+      {
+       "timestamp": "2026-09-22T00:41:15.265514975+00:00",
+       "action": "compose_up",
+       "tag": "v0.0.436",
+       "commit": "2cbf20de04e740fc3c7f1f44d81676cbc724d919",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4-W4AFP8-Canary.yaml",
+       "file_sha256": "e8aecce4817e693f4624ec67b87b63b128138051b222f6365ca5aadfb81378b7",
+       "services": [
+        "glm53-soak-relay"
+       ]
+      },
+      {
+       "timestamp": "2026-09-22T00:45:51.003450508+00:00",
+       "action": "compose_up",
+       "tag": "v0.0.436",
+       "commit": "2cbf20de04e740fc3c7f1f44d81676cbc724d919",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4-W4AFP8-Canary.yaml",
+       "file_sha256": "e8aecce4817e693f4624ec67b87b63b128138051b222f6365ca5aadfb81378b7",
+       "services": [
+        "otelcol-contrib",
+        "proxy-glm53"
+       ]
+      },
+      {
+       "timestamp": "2026-09-22T00:47:21.121962529+00:00",
+       "action": "compose_down",
+       "tag": "v0.0.436",
+       "commit": "2cbf20de04e740fc3c7f1f44d81676cbc724d919",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4-W4AFP8-Canary.yaml",
+       "services": [
+        "glm53-soak-relay"
+       ]
+      },
+      {
+       "timestamp": "2026-09-22T01:35:57.072488138+00:00",
+       "action": "compose_up",
+       "tag": "v0.0.436",
+       "commit": "2cbf20de04e740fc3c7f1f44d81676cbc724d919",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4-W4AFP8-Canary.yaml",
+       "file_sha256": "e8aecce4817e693f4624ec67b87b63b128138051b222f6365ca5aadfb81378b7",
+       "services": [
+        "model-sg-glm53-w4afp8-tp4-r1"
+       ]
+      },
+      {
+       "timestamp": "2026-09-22T01:51:53.230840850+00:00",
+       "action": "compose_up",
+       "tag": "v0.0.436",
+       "commit": "2cbf20de04e740fc3c7f1f44d81676cbc724d919",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4-W4AFP8-Canary.yaml",
+       "file_sha256": "e8aecce4817e693f4624ec67b87b63b128138051b222f6365ca5aadfb81378b7",
+       "services": [
+        "glm53-soak-relay"
+       ]
+      },
+      {
+       "timestamp": "2026-09-22T01:57:08.171128590+00:00",
+       "action": "compose_down",
+       "tag": "v0.0.436",
+       "commit": "2cbf20de04e740fc3c7f1f44d81676cbc724d919",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4-W4AFP8-Canary.yaml",
+       "services": [
+        "glm53-soak-relay"
+       ]
+      },
+      {
+       "timestamp": "2026-09-22T02:39:27.816155801+00:00",
+       "action": "compose_up",
+       "tag": "v0.0.437",
+       "commit": "29ffc67c425120282f8a96af113993f31c66ee9e",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4-W4AFP8-Canary.yaml",
+       "file_sha256": "b0d9bce1899a7f7fc0f9645c3477b21eab1a6ec0b28ac74f6ff4c1a739b7464f",
+       "services": [
+        "model-sg-glm53-w4afp8-tp4-r1"
+       ]
+      },
+      {
+       "timestamp": "2026-09-22T02:53:43.244487144+00:00",
+       "action": "compose_up",
+       "tag": "v0.0.437",
+       "commit": "29ffc67c425120282f8a96af113993f31c66ee9e",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4-W4AFP8-Canary.yaml",
+       "file_sha256": "b0d9bce1899a7f7fc0f9645c3477b21eab1a6ec0b28ac74f6ff4c1a739b7464f",
+       "services": [
+        "glm53-soak-relay"
+       ]
+      },
+      {
+       "timestamp": "2026-09-22T02:54:56.388015214+00:00",
+       "action": "compose_down",
+       "tag": "v0.0.437",
+       "commit": "29ffc67c425120282f8a96af113993f31c66ee9e",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4-W4AFP8-Canary.yaml",
+       "services": [
+        "glm53-soak-relay"
+       ]
+      },
+      {
+       "timestamp": "2026-09-22T17:22:59.722290472+00:00",
+       "action": "compose_up",
+       "tag": "v0.0.439",
+       "commit": "01a983b21b69c48ff781fbfac711bd242c8f9cda",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4-W4AFP8-Canary.yaml",
+       "file_sha256": "01a140994a0b8e3324b33c027dbf5c9e370ea4316d1f5089d44341bb42a2f508",
+       "services": [
+        "model-sg-glm53-w4afp8-tp4-r1"
+       ]
+      },
+      {
+       "timestamp": "2026-09-23T21:28:48.971594045+00:00",
+       "action": "compose_down",
+       "tag": "v0.0.439",
+       "commit": "01a983b21b69c48ff781fbfac711bd242c8f9cda",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4-W4AFP8-Canary.yaml",
+       "services": [
+        "model-sg-glm53-fp8-tp4-r2"
+       ]
+      },
+      {
+       "timestamp": "2026-09-23T21:32:10.514424468+00:00",
+       "action": "compose_up",
+       "tag": "v0.0.443",
+       "commit": "0a51138ef3ec104706c40a53dab0c3bcea75d7b3",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4-W4AFP8-LongContext.yaml",
+       "file_sha256": "28f261d7a3f5a8089076d5d02ca6dbf67fb74601a5a8a2a8adcb42b19785012b",
+       "services": [
+        "model-sg-glm53-w4afp8-tp4-r2"
+       ]
+      },
+      {
+       "timestamp": "2026-09-23T21:47:24.577067628+00:00",
+       "action": "compose_up",
+       "tag": "v0.0.443",
+       "commit": "0a51138ef3ec104706c40a53dab0c3bcea75d7b3",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4-W4AFP8-LongContext.yaml",
+       "file_sha256": "28f261d7a3f5a8089076d5d02ca6dbf67fb74601a5a8a2a8adcb42b19785012b",
+       "services": [
+        "glm53-soak-relay"
+       ]
+      },
+      {
+       "timestamp": "2026-09-23T21:48:40.769742501+00:00",
+       "action": "compose_up",
+       "tag": "v0.0.443",
+       "commit": "0a51138ef3ec104706c40a53dab0c3bcea75d7b3",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4-W4AFP8-LongContext.yaml",
+       "file_sha256": "28f261d7a3f5a8089076d5d02ca6dbf67fb74601a5a8a2a8adcb42b19785012b",
+       "services": [
+        "glm53-perception-check"
+       ]
+      },
+      {
+       "timestamp": "2026-09-23T21:49:51.214584128+00:00",
+       "action": "compose_up",
+       "tag": "v0.0.443",
+       "commit": "0a51138ef3ec104706c40a53dab0c3bcea75d7b3",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4-W4AFP8-LongContext.yaml",
+       "file_sha256": "28f261d7a3f5a8089076d5d02ca6dbf67fb74601a5a8a2a8adcb42b19785012b",
+       "services": [
+        "proxy-glm53",
+        "otelcol-contrib",
+        "dcgm-glm53"
+       ]
+      },
+      {
+       "timestamp": "2026-09-24T00:50:44.816105833+00:00",
+       "action": "compose_down",
+       "tag": "v0.0.443",
+       "commit": "0a51138ef3ec104706c40a53dab0c3bcea75d7b3",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4-W4AFP8-LongContext.yaml",
+       "services": [
+        "model-sg-glm53-w4afp8-tp4-r1"
+       ]
+      },
+      {
+       "timestamp": "2026-09-24T00:51:55.575158027+00:00",
+       "action": "compose_up",
+       "tag": "v0.0.443",
+       "commit": "0a51138ef3ec104706c40a53dab0c3bcea75d7b3",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4-W4AFP8-LongContext.yaml",
+       "file_sha256": "28f261d7a3f5a8089076d5d02ca6dbf67fb74601a5a8a2a8adcb42b19785012b",
+       "services": [
+        "model-sg-glm53-w4afp8-tp4-r1"
+       ]
+      },
+      {
+       "timestamp": "2026-09-24T02:06:10.715160205+00:00",
+       "action": "compose_up",
+       "tag": "v0.0.443",
+       "commit": "0a51138ef3ec104706c40a53dab0c3bcea75d7b3",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4-W4AFP8-LongContext.yaml",
+       "file_sha256": "28f261d7a3f5a8089076d5d02ca6dbf67fb74601a5a8a2a8adcb42b19785012b",
+       "services": [
+        "otelcol-contrib"
+       ]
+      },
+      {
+       "timestamp": "2026-09-25T02:42:33.755967302+00:00",
+       "action": "compose_down",
+       "tag": "v0.0.448",
+       "commit": "4c5d986d66131aa0244f423d9602b851a9b1b495",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4-W4AFP8-LongContext.yaml",
+       "services": [
+        "model-sg-glm53-w4afp8-tp4-r2"
+       ]
+      },
+      {
+       "timestamp": "2026-09-25T02:43:49.282115978+00:00",
+       "action": "compose_up",
+       "tag": "v0.0.448",
+       "commit": "4c5d986d66131aa0244f423d9602b851a9b1b495",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4-W4AFP8-LongContext.yaml",
+       "file_sha256": "59ad63dc2197830e759ade1e783e011be304ee001a9b2844b2ee389343029256",
+       "services": [
+        "model-sg-glm53-w4afp8-tp4-r2"
+       ]
+      },
+      {
+       "timestamp": "2026-09-25T03:01:17.152157778+00:00",
+       "action": "compose_up",
+       "tag": "v0.0.448",
+       "commit": "4c5d986d66131aa0244f423d9602b851a9b1b495",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4-W4AFP8-LongContext.yaml",
+       "file_sha256": "59ad63dc2197830e759ade1e783e011be304ee001a9b2844b2ee389343029256",
+       "services": [
+        "otelcol-contrib"
+       ]
+      },
+      {
+       "timestamp": "2026-09-25T17:31:40.101069016+00:00",
+       "action": "compose_down",
+       "tag": "v0.0.448",
+       "commit": "4c5d986d66131aa0244f423d9602b851a9b1b495",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4-W4AFP8-LongContext.yaml",
+       "services": [
+        "model-sg-glm53-w4afp8-tp4-r2"
+       ]
+      },
+      {
+       "timestamp": "2026-09-25T17:37:56.046916775+00:00",
+       "action": "compose_up",
+       "tag": "v0.0.443",
+       "commit": "0a51138ef3ec104706c40a53dab0c3bcea75d7b3",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4-W4AFP8-LongContext.yaml",
+       "file_sha256": "28f261d7a3f5a8089076d5d02ca6dbf67fb74601a5a8a2a8adcb42b19785012b",
+       "services": [
+        "model-sg-glm53-w4afp8-tp4-r2"
+       ]
+      },
+      {
+       "timestamp": "2026-09-25T17:38:23.771553174+00:00",
+       "action": "compose_up",
+       "tag": "v0.0.443",
+       "commit": "0a51138ef3ec104706c40a53dab0c3bcea75d7b3",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4-W4AFP8-LongContext.yaml",
+       "file_sha256": "28f261d7a3f5a8089076d5d02ca6dbf67fb74601a5a8a2a8adcb42b19785012b",
+       "services": [
+        "otelcol-contrib"
+       ]
+      },
+      {
+       "timestamp": "2026-09-25T19:45:58.128942839+00:00",
+       "action": "compose_down",
+       "tag": "v0.0.449",
+       "commit": "653fce0906a3015561c1e9757b9bc10ec7bb815b",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4-W4AFP8-LongContext.yaml",
+       "services": [
+        "model-sg-glm53-w4afp8-tp4-r2"
+       ]
+      },
+      {
+       "timestamp": "2026-09-25T19:49:27.817876275+00:00",
+       "action": "compose_up",
+       "tag": "v0.0.449",
+       "commit": "653fce0906a3015561c1e9757b9bc10ec7bb815b",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4-W4AFP8-LongContext.yaml",
+       "file_sha256": "236e573c94db7062e3c265ea97d7161bc6c55371fd090e00ac028f2c963761a1",
+       "services": [
+        "model-sg-glm53-w4afp8-tp4-r2"
+       ]
+      },
+      {
+       "timestamp": "2026-09-25T20:06:01.898780344+00:00",
+       "action": "compose_down",
+       "tag": "v0.0.449",
+       "commit": "653fce0906a3015561c1e9757b9bc10ec7bb815b",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4-W4AFP8-LongContext.yaml",
+       "services": [
+        "model-sg-glm53-w4afp8-tp4-r1"
+       ]
+      },
+      {
+       "timestamp": "2026-09-25T20:08:18.829573724+00:00",
+       "action": "compose_up",
+       "tag": "v0.0.449",
+       "commit": "653fce0906a3015561c1e9757b9bc10ec7bb815b",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4-W4AFP8-LongContext.yaml",
+       "file_sha256": "236e573c94db7062e3c265ea97d7161bc6c55371fd090e00ac028f2c963761a1",
+       "services": [
+        "model-sg-glm53-w4afp8-tp4-r1"
+       ]
+      },
+      {
+       "timestamp": "2026-09-25T20:08:42.359365159+00:00",
+       "action": "compose_up",
+       "tag": "v0.0.449",
+       "commit": "653fce0906a3015561c1e9757b9bc10ec7bb815b",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4-W4AFP8-LongContext.yaml",
+       "file_sha256": "236e573c94db7062e3c265ea97d7161bc6c55371fd090e00ac028f2c963761a1",
+       "services": [
+        "otelcol-contrib"
+       ]
+      },
+      {
+       "timestamp": "2026-09-25T20:41:30.820986549+00:00",
+       "action": "compose_up",
+       "tag": "v0.0.449",
+       "commit": "653fce0906a3015561c1e9757b9bc10ec7bb815b",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4-W4AFP8-LongContext.yaml",
+       "file_sha256": "236e573c94db7062e3c265ea97d7161bc6c55371fd090e00ac028f2c963761a1",
+       "services": [
+        "model-proxy-registrar"
+       ]
+      },
+      {
+       "timestamp": "2026-09-25T20:58:08.443382541+00:00",
+       "action": "compose_manager_started",
+       "container": "compose-manager",
+       "image": "nearaidev/compose-manager@sha256:bc44e44e619dc003b3b5bcf53420b759a0ea058d0b81cf0caffc063a9d733193"
+      },
+      {
+       "timestamp": "2026-09-25T21:38:35.178138777+00:00",
+       "action": "compose_manager_started",
+       "container": "compose-manager",
+       "image": "nearaidev/compose-manager@sha256:6e035c8fb99c1d31f41760d25af178683a658cca4afd73cd0d366fbb5bf884be"
+      },
+      {
+       "timestamp": "2026-09-26T01:51:49.968678098+00:00",
+       "action": "compose_up",
+       "tag": "v0.0.451",
+       "commit": "b996e382492b0b19e801d70b8d357e2c9d8160d1",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4-W4AFP8-LongContext.yaml",
+       "file_sha256": "6827cd7694a7e7f88fd309142ae0fc40b5da089d35246d5d4791dcc7e156652c",
+       "services": [
+        "proxy-glm53"
+       ]
+      },
+      {
+       "timestamp": "2026-09-26T04:18:48.845779638+00:00",
+       "action": "compose_stage",
+       "tag": "v0.0.452",
+       "commit": "f4ead96cb9eeb0600b0e795d2c58665205b24a59",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4-W4AFP8-LongContext.yaml",
+       "file_sha256": "8ec139aac98ac5fc3f493eb4e8f71670c8585d78e4434785e2bd5a2618462223",
+       "services": [
+        "model-sg-glm53-w4afp8-tp4-r2"
+       ]
+      },
+      {
+       "timestamp": "2026-09-26T04:24:23.424130540+00:00",
+       "action": "compose_down",
+       "tag": "v0.0.451",
+       "commit": "b996e382492b0b19e801d70b8d357e2c9d8160d1",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4-W4AFP8-LongContext.yaml",
+       "services": [
+        "model-sg-glm53-w4afp8-tp4-r2"
+       ]
+      },
+      {
+       "timestamp": "2026-09-26T04:30:05.193037461+00:00",
+       "action": "compose_up",
+       "tag": "v0.0.452",
+       "commit": "f4ead96cb9eeb0600b0e795d2c58665205b24a59",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4-W4AFP8-LongContext.yaml",
+       "file_sha256": "8ec139aac98ac5fc3f493eb4e8f71670c8585d78e4434785e2bd5a2618462223",
+       "services": [
+        "model-sg-glm53-w4afp8-tp4-r2"
+       ]
+      },
+      {
+       "timestamp": "2026-09-28T09:04:00.238934710+00:00",
+       "action": "compose_stage",
+       "tag": "v0.0.453",
+       "commit": "7ff6756bd05296538b79dc975dd237949aa94195",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4-W4AFP8-LongContext.yaml",
+       "file_sha256": "f2b024f1e01fe34e9b508f2f2e0009f2abec65fe5423bafa14d2a81016e4d9a1",
+       "services": [
+        "model-sg-glm53-w4afp8-tp4-r1"
+       ]
+      },
+      {
+       "timestamp": "2026-09-28T10:52:40.216842531+00:00",
+       "action": "compose_stage",
+       "tag": "v0.0.453",
+       "commit": "7ff6756bd05296538b79dc975dd237949aa94195",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4-W4AFP8-LongContext.yaml",
+       "file_sha256": "f2b024f1e01fe34e9b508f2f2e0009f2abec65fe5423bafa14d2a81016e4d9a1",
+       "services": [
+        "model-sg-glm53-w4afp8-tp4-r1"
+       ]
+      },
+      {
+       "timestamp": "2026-09-28T10:52:42.822035760+00:00",
+       "action": "compose_down",
+       "tag": "v0.0.452",
+       "commit": "f4ead96cb9eeb0600b0e795d2c58665205b24a59",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4-W4AFP8-LongContext.yaml",
+       "services": [
+        "model-sg-glm53-w4afp8-tp4-r1"
+       ]
+      },
+      {
+       "timestamp": "2026-09-28T10:55:34.500154660+00:00",
+       "action": "compose_up",
+       "tag": "v0.0.453",
+       "commit": "7ff6756bd05296538b79dc975dd237949aa94195",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4-W4AFP8-LongContext.yaml",
+       "file_sha256": "f2b024f1e01fe34e9b508f2f2e0009f2abec65fe5423bafa14d2a81016e4d9a1",
+       "services": [
+        "model-sg-glm53-w4afp8-tp4-r1"
+       ]
+      },
+      {
+       "timestamp": "2026-09-28T23:18:26.712767238+00:00",
+       "action": "compose_down",
+       "tag": "v0.0.453",
+       "commit": "7ff6756bd05296538b79dc975dd237949aa94195",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4-W4AFP8-LongContext.yaml",
+       "services": [
+        "model-proxy-registrar"
+       ]
+      },
+      {
+       "timestamp": "2026-09-28T23:25:07.324670083+00:00",
+       "action": "compose_up",
+       "tag": "v0.0.454",
+       "commit": "81ea8f03871957a0ed9e13eb4d526b06e2d62fb8",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4-W4AFP8-LongContext.yaml",
+       "file_sha256": "c5b5b7e0cdf4c6a22bb02b3ee6222bedf5039dd06abb70bfe6a2082470bd3632",
+       "services": [
+        "nginx"
+       ]
+      },
+      {
+       "timestamp": "2026-09-28T23:26:27.674870012+00:00",
+       "action": "compose_up",
+       "tag": "v0.0.454",
+       "commit": "81ea8f03871957a0ed9e13eb4d526b06e2d62fb8",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4-W4AFP8-LongContext.yaml",
+       "file_sha256": "c5b5b7e0cdf4c6a22bb02b3ee6222bedf5039dd06abb70bfe6a2082470bd3632",
+       "services": [
+        "model-proxy-registrar"
+       ]
+      },
+      {
+       "timestamp": "2026-09-29T06:00:29.298563116+00:00",
+       "action": "compose_up",
+       "tag": "v0.0.457",
+       "commit": "3c2f033b2a44d08832ffec32417dc35a95cdbe2c",
+       "file": "prod/rotate-compose-manager-token.yaml",
+       "file_sha256": "0d1263e5169ebacdb1da157857aafff9a5bb5645aabbd921b3bd7e18d60a8ee2",
+       "services": [
+        "rotate-token"
+       ]
+      },
+      {
+       "timestamp": "2026-09-29T06:01:17.131942959+00:00",
+       "action": "compose_manager_started",
+       "container": "compose-manager",
+       "image": "nearaidev/compose-manager@sha256:6e035c8fb99c1d31f41760d25af178683a658cca4afd73cd0d366fbb5bf884be"
+      },
+      {
+       "timestamp": "2026-09-30T19:50:32.394963663+00:00",
+       "action": "compose_up",
+       "tag": "v0.0.454",
+       "commit": "81ea8f03871957a0ed9e13eb4d526b06e2d62fb8",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4-W4AFP8-LongContext.yaml",
+       "file_sha256": "c5b5b7e0cdf4c6a22bb02b3ee6222bedf5039dd06abb70bfe6a2082470bd3632",
+       "services": [
+        "nginx",
+        "proxy-glm53"
+       ]
+      },
+      {
+       "timestamp": "2026-09-30T20:48:03.410608208+00:00",
+       "action": "compose_up",
+       "tag": "v0.0.461",
+       "commit": "b177e78bc2e79664d76e9f59a64edfdf27cc1021",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4-W4AFP8-LongContext.yaml",
+       "file_sha256": "09cbbffd508d7f0037f34fde22cbda57a45c950c1f91ac86ccff4e57cf7055fe",
+       "services": [
+        "proxy-glm53",
+        "nginx"
+       ]
+      },
+      {
+       "timestamp": "2026-10-06T05:46:36.305121625+00:00",
+       "action": "compose_down",
+       "tag": "v0.0.461",
+       "commit": "b177e78bc2e79664d76e9f59a64edfdf27cc1021",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4-W4AFP8-LongContext.yaml",
+       "services": [
+        "model-sg-glm53-w4afp8-tp4-r2"
+       ]
+      },
+      {
+       "timestamp": "2026-10-06T05:50:38.362867432+00:00",
+       "action": "compose_up",
+       "tag": "v0.0.468",
+       "commit": "47449a204dcaadc0e8877465359c57339ff72b1f",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4-W4AFP8-LongContext.yaml",
+       "file_sha256": "cf76958c3cdf2eebe54bde99626d6c77df7a77ebdfb66d61c9b5a533cf3c3409",
+       "services": [
+        "model-sg-glm53-w4afp8-tp2-r2a",
+        "model-sg-glm53-w4afp8-tp2-r2b",
+        "proxy-glm53",
+        "otelcol-contrib"
+       ]
+      },
+      {
+       "timestamp": "2026-10-06T05:51:17.874846493+00:00",
+       "action": "docker_restart",
+       "container": "nginx"
+      },
+      {
+       "timestamp": "2026-10-06T05:51:31.872427462+00:00",
+       "action": "compose_up",
+       "tag": "v0.0.468",
+       "commit": "47449a204dcaadc0e8877465359c57339ff72b1f",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4-W4AFP8-LongContext.yaml",
+       "file_sha256": "cf76958c3cdf2eebe54bde99626d6c77df7a77ebdfb66d61c9b5a533cf3c3409",
+       "services": [
+        "otelcol-contrib"
+       ]
+      },
+      {
+       "timestamp": "2026-10-06T16:00:47.589728966+00:00",
+       "action": "compose_down",
+       "tag": "v0.0.468",
+       "commit": "47449a204dcaadc0e8877465359c57339ff72b1f",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4-W4AFP8-LongContext.yaml",
+       "services": [
+        "model-sg-glm53-w4afp8-tp4-r1"
+       ]
+      },
+      {
+       "timestamp": "2026-10-06T16:04:38.888797670+00:00",
+       "action": "compose_up",
+       "tag": "v0.0.472",
+       "commit": "8c9938be32f0a40fa4ea29f3b6913b0fe758b77b",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4-W4AFP8-LongContext.yaml",
+       "file_sha256": "80765431a2ec9204b92af01ef3e7f7a69cca4ce676127c0b8ab0a508aaace3ce",
+       "services": [
+        "model-sg-glm53-w4afp8-tp2-r1a",
+        "model-sg-glm53-w4afp8-tp2-r1b",
+        "proxy-glm53"
+       ]
+      },
+      {
+       "timestamp": "2026-10-06T16:05:21.724970146+00:00",
+       "action": "docker_restart",
+       "container": "nginx"
+      },
+      {
+       "timestamp": "2026-10-06T16:05:33.990162952+00:00",
+       "action": "compose_up",
+       "tag": "v0.0.472",
+       "commit": "8c9938be32f0a40fa4ea29f3b6913b0fe758b77b",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4-W4AFP8-LongContext.yaml",
+       "file_sha256": "80765431a2ec9204b92af01ef3e7f7a69cca4ce676127c0b8ab0a508aaace3ce",
+       "services": [
+        "otelcol-contrib"
+       ]
+      },
+      {
+       "timestamp": "2026-10-06T19:01:13.667541020+00:00",
+       "action": "compose_down",
+       "tag": "v0.0.474",
+       "commit": "678a6b5ee3e4e7b83340f810c76530958eecc499",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4-W4AFP8-LongContext.yaml",
+       "services": [
+        "model-sg-glm53-w4afp8-tp2-r2a"
+       ]
+      },
+      {
+       "timestamp": "2026-10-06T19:02:45.861570581+00:00",
+       "action": "compose_up",
+       "tag": "v0.0.474",
+       "commit": "678a6b5ee3e4e7b83340f810c76530958eecc499",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4-W4AFP8-LongContext.yaml",
+       "file_sha256": "80765431a2ec9204b92af01ef3e7f7a69cca4ce676127c0b8ab0a508aaace3ce",
+       "services": [
+        "model-sg-glm53-w4afp8-tp2-r2a"
+       ]
+      },
+      {
+       "timestamp": "2026-10-06T19:36:21.826087421+00:00",
+       "action": "compose_down",
+       "tag": "v0.0.474",
+       "commit": "678a6b5ee3e4e7b83340f810c76530958eecc499",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4-W4AFP8-LongContext.yaml",
+       "services": [
+        "model-sg-glm53-w4afp8-tp2-r2b"
+       ]
+      },
+      {
+       "timestamp": "2026-10-06T19:38:24.974085462+00:00",
+       "action": "compose_up",
+       "tag": "v0.0.474",
+       "commit": "678a6b5ee3e4e7b83340f810c76530958eecc499",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4-W4AFP8-LongContext.yaml",
+       "file_sha256": "80765431a2ec9204b92af01ef3e7f7a69cca4ce676127c0b8ab0a508aaace3ce",
+       "services": [
+        "model-sg-glm53-w4afp8-tp2-r2b"
+       ]
+      },
+      {
+       "timestamp": "2026-10-06T21:45:45.522630512+00:00",
+       "action": "compose_down",
+       "tag": "v0.0.474",
+       "commit": "678a6b5ee3e4e7b83340f810c76530958eecc499",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4-W4AFP8-LongContext.yaml",
+       "services": [
+        "model-sg-glm53-w4afp8-tp2-r2a"
+       ]
+      },
+      {
+       "timestamp": "2026-10-06T21:50:56.679919738+00:00",
+       "action": "compose_up",
+       "tag": "v0.0.474",
+       "commit": "678a6b5ee3e4e7b83340f810c76530958eecc499",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4-W4AFP8-LongContext.yaml",
+       "file_sha256": "80765431a2ec9204b92af01ef3e7f7a69cca4ce676127c0b8ab0a508aaace3ce",
+       "services": [
+        "model-sg-glm53-w4afp8-tp2-r2a"
+       ]
+      },
+      {
+       "timestamp": "2026-10-06T21:51:59.521738426+00:00",
+       "action": "compose_up",
+       "tag": "v0.0.475",
+       "commit": "9bbcef0e013464ec42862e3ed9069afbd2942b4b",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4-W4AFP8-LongContext.yaml",
+       "file_sha256": "b4b985d4b109b31f7a006a80aa2eb9e9fc61833d4e1904153c571b45ec28a76b",
+       "services": [
+        "otelcol-contrib"
+       ]
+      },
+      {
+       "timestamp": "2026-10-06T21:52:16.283544564+00:00",
+       "action": "compose_up",
+       "tag": "v0.0.475",
+       "commit": "9bbcef0e013464ec42862e3ed9069afbd2942b4b",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4-W4AFP8-LongContext.yaml",
+       "file_sha256": "b4b985d4b109b31f7a006a80aa2eb9e9fc61833d4e1904153c571b45ec28a76b",
+       "services": [
+        "glm53-ghost-aggregator",
+        "model-sg-glm53-w4afp8-tp2-r2b"
+       ]
+      },
+      {
+       "timestamp": "2026-10-08T00:13:15.468521279+00:00",
+       "action": "compose_up",
+       "tag": "v0.0.479",
+       "commit": "652bf62441fcf8067170a683959a49d6193fd74f",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4-W4AFP8-LongContext-V7Canary.yaml",
+       "file_sha256": "3eaec0304838811267e0997f937d1c7d50ff64c4d81d48f4f4ffbf00c922ed22",
+       "services": [
+        "model-sg-glm53-w4afp8-tp2-r2a"
+       ]
+      },
+      {
+       "timestamp": "2026-10-08T00:36:54.724653776+00:00",
+       "action": "compose_up",
+       "tag": "v0.0.479",
+       "commit": "652bf62441fcf8067170a683959a49d6193fd74f",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4-W4AFP8-LongContext-V7Canary.yaml",
+       "file_sha256": "3eaec0304838811267e0997f937d1c7d50ff64c4d81d48f4f4ffbf00c922ed22",
+       "services": [
+        "otelcol-contrib"
+       ]
+      },
+      {
+       "timestamp": "2026-10-08T06:21:18.093885293+00:00",
+       "action": "compose_up",
+       "tag": "340606fe18490ae546a65a12b2f23a1f1cdd200f",
+       "commit": "340606fe18490ae546a65a12b2f23a1f1cdd200f",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4-W4AFP8-LongContext-V7-HiCacheOff-r2b.yaml",
+       "file_sha256": "51a767693e4e2277c0ce48ec2fa2f3964659b63a5faed037a2b234c970c0c6e8",
+       "services": [
+        "model-sg-glm53-w4afp8-tp2-r2b"
+       ]
+      },
+      {
+       "timestamp": "2026-10-08T06:25:21.961686590+00:00",
+       "action": "compose_up",
+       "tag": "340606fe18490ae546a65a12b2f23a1f1cdd200f",
+       "commit": "340606fe18490ae546a65a12b2f23a1f1cdd200f",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4-W4AFP8-LongContext-V7-HiCacheOff-r2b.yaml",
+       "file_sha256": "51a767693e4e2277c0ce48ec2fa2f3964659b63a5faed037a2b234c970c0c6e8",
+       "services": [
+        "model-sg-glm53-w4afp8-tp2-r2b"
+       ]
+      },
+      {
+       "timestamp": "2026-10-08T06:27:17.108424701+00:00",
+       "action": "compose_up",
+       "tag": "340606fe18490ae546a65a12b2f23a1f1cdd200f",
+       "commit": "340606fe18490ae546a65a12b2f23a1f1cdd200f",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4-W4AFP8-LongContext-V7-HiCacheOff-r2b.yaml",
+       "file_sha256": "51a767693e4e2277c0ce48ec2fa2f3964659b63a5faed037a2b234c970c0c6e8",
+       "services": [
+        "model-sg-glm53-w4afp8-tp2-r2b"
+       ]
+      },
+      {
+       "timestamp": "2026-10-08T06:29:09.642479035+00:00",
+       "action": "compose_up",
+       "tag": "340606fe18490ae546a65a12b2f23a1f1cdd200f",
+       "commit": "340606fe18490ae546a65a12b2f23a1f1cdd200f",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4-W4AFP8-LongContext-V7-HiCacheOff-r2b.yaml",
+       "file_sha256": "51a767693e4e2277c0ce48ec2fa2f3964659b63a5faed037a2b234c970c0c6e8",
+       "services": [
+        "model-sg-glm53-w4afp8-tp2-r2b"
+       ]
+      },
+      {
+       "timestamp": "2026-10-08T20:01:40.807592489+00:00",
+       "action": "compose_up",
+       "tag": "v0.0.480",
+       "commit": "1121ee56851dcec7dc89e60099d7be28fc51a73e",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4-W4AFP8-LongContext.yaml",
+       "file_sha256": "0055fa14dc69454bd1e02a3b18095ec3e43ef0675db4cac0e99a5ed8e25fa71e",
+       "services": [
+        "model-sg-glm53-w4afp8-tp2-r1a"
+       ]
+      },
+      {
+       "timestamp": "2026-10-08T20:29:54.547414014+00:00",
+       "action": "compose_up",
+       "tag": "v0.0.480",
+       "commit": "1121ee56851dcec7dc89e60099d7be28fc51a73e",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4-W4AFP8-LongContext.yaml",
+       "file_sha256": "0055fa14dc69454bd1e02a3b18095ec3e43ef0675db4cac0e99a5ed8e25fa71e",
+       "services": [
+        "model-sg-glm53-w4afp8-tp2-r1b"
+       ]
+      },
+      {
+       "timestamp": "2026-10-08T20:55:03.870437382+00:00",
+       "action": "compose_up",
+       "tag": "v0.0.480",
+       "commit": "1121ee56851dcec7dc89e60099d7be28fc51a73e",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4-W4AFP8-LongContext.yaml",
+       "file_sha256": "0055fa14dc69454bd1e02a3b18095ec3e43ef0675db4cac0e99a5ed8e25fa71e",
+       "services": [
+        "model-sg-glm53-w4afp8-tp2-r2a"
+       ]
+      },
+      {
+       "timestamp": "2026-10-08T21:21:29.178309563+00:00",
+       "action": "compose_up",
+       "tag": "v0.0.480",
+       "commit": "1121ee56851dcec7dc89e60099d7be28fc51a73e",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4-W4AFP8-LongContext.yaml",
+       "file_sha256": "0055fa14dc69454bd1e02a3b18095ec3e43ef0675db4cac0e99a5ed8e25fa71e",
+       "services": [
+        "model-sg-glm53-w4afp8-tp2-r2b"
+       ]
+      },
+      {
+       "timestamp": "2026-10-08T22:02:47.851017863+00:00",
+       "action": "compose_up",
+       "tag": "v0.0.480",
+       "commit": "1121ee56851dcec7dc89e60099d7be28fc51a73e",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4-W4AFP8-LongContext.yaml",
+       "file_sha256": "0055fa14dc69454bd1e02a3b18095ec3e43ef0675db4cac0e99a5ed8e25fa71e",
+       "services": [
+        "glm53-ghost-aggregator"
+       ]
+      },
+      {
+       "timestamp": "2026-10-08T22:03:30.007346311+00:00",
+       "action": "compose_up",
+       "tag": "v0.0.480",
+       "commit": "1121ee56851dcec7dc89e60099d7be28fc51a73e",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4-W4AFP8-LongContext.yaml",
+       "file_sha256": "0055fa14dc69454bd1e02a3b18095ec3e43ef0675db4cac0e99a5ed8e25fa71e",
+       "services": [
+        "otelcol-contrib"
+       ]
+      },
+      {
+       "timestamp": "2026-10-09T07:15:28.500883193+00:00",
+       "action": "compose_up",
+       "tag": "v0.0.482",
+       "commit": "218a69238f589ce112b1a9d3c3afa415033ac7ed",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4-W4AFP8-LongContext.yaml",
+       "file_sha256": "b4006c232e5d5820ebcd73789f2a2afd684071c11e43cc92512182b618e0045d",
+       "services": [
+        "model-sg-glm53-w4afp8-tp2-r1a"
+       ]
+      },
+      {
+       "timestamp": "2026-10-09T15:23:38.939273748+00:00",
+       "action": "compose_up",
+       "tag": "v0.0.482",
+       "commit": "218a69238f589ce112b1a9d3c3afa415033ac7ed",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4-W4AFP8-LongContext.yaml",
+       "file_sha256": "b4006c232e5d5820ebcd73789f2a2afd684071c11e43cc92512182b618e0045d",
+       "services": [
+        "model-sg-glm53-w4afp8-tp2-r1b"
+       ]
+      },
+      {
+       "timestamp": "2026-10-09T15:54:54.164760165+00:00",
+       "action": "compose_up",
+       "tag": "v0.0.482",
+       "commit": "218a69238f589ce112b1a9d3c3afa415033ac7ed",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4-W4AFP8-LongContext.yaml",
+       "file_sha256": "b4006c232e5d5820ebcd73789f2a2afd684071c11e43cc92512182b618e0045d",
+       "services": [
+        "model-sg-glm53-w4afp8-tp2-r2a"
+       ]
+      },
+      {
+       "timestamp": "2026-10-09T16:27:22.240806623+00:00",
+       "action": "compose_up",
+       "tag": "v0.0.482",
+       "commit": "218a69238f589ce112b1a9d3c3afa415033ac7ed",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4-W4AFP8-LongContext.yaml",
+       "file_sha256": "b4006c232e5d5820ebcd73789f2a2afd684071c11e43cc92512182b618e0045d",
+       "services": [
+        "model-sg-glm53-w4afp8-tp2-r2b"
+       ]
+      },
+      {
+       "timestamp": "2026-10-09T17:04:48.948796864+00:00",
+       "action": "compose_up",
+       "tag": "v0.0.482",
+       "commit": "218a69238f589ce112b1a9d3c3afa415033ac7ed",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4-W4AFP8-LongContext.yaml",
+       "file_sha256": "b4006c232e5d5820ebcd73789f2a2afd684071c11e43cc92512182b618e0045d",
+       "services": [
+        "otelcol-contrib"
+       ]
+      },
+      {
+       "timestamp": "2026-10-18T05:15:08.260665578+00:00",
+       "action": "compose_up",
+       "tag": "v0.0.491",
+       "commit": "5bee1e758cb4fe9c7380ef83d873d46cfa2b04bf",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4-W4AFP8-LongContext-Q8Canary.yaml",
+       "file_sha256": "e489578d948b2b82e863f56062af22b8c4fdbe37a542b6049c054b0bd5692af6",
+       "services": [
+        "model-sg-glm53-w4afp8-tp2-r2b"
+       ]
+      },
+      {
+       "timestamp": "2026-10-18T05:21:24.167162220+00:00",
+       "action": "compose_up",
+       "tag": "v0.0.491",
+       "commit": "5bee1e758cb4fe9c7380ef83d873d46cfa2b04bf",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4-W4AFP8-LongContext-Q8Canary.yaml",
+       "file_sha256": "e489578d948b2b82e863f56062af22b8c4fdbe37a542b6049c054b0bd5692af6",
+       "services": [
+        "model-sg-glm53-w4afp8-tp2-r2b"
+       ]
+      },
+      {
+       "timestamp": "2026-10-18T17:50:07.052690115+00:00",
+       "action": "compose_up",
+       "tag": "v0.0.492",
+       "commit": "4addbf4ea0e7a2fc7415aa46b4cfb4b27fd5fd8e",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4-W4AFP8-LongContext.yaml",
+       "file_sha256": "f77f4b5dd41f4e322d2194a3d0774235a2686c5d7105e24bc1b800b4a4842196",
+       "services": [
+        "model-sg-glm53-w4afp8-tp2-r1a"
+       ]
+      },
+      {
+       "timestamp": "2026-10-18T18:16:25.454362684+00:00",
+       "action": "compose_up",
+       "tag": "v0.0.492",
+       "commit": "4addbf4ea0e7a2fc7415aa46b4cfb4b27fd5fd8e",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4-W4AFP8-LongContext.yaml",
+       "file_sha256": "f77f4b5dd41f4e322d2194a3d0774235a2686c5d7105e24bc1b800b4a4842196",
+       "services": [
+        "model-sg-glm53-w4afp8-tp2-r1b"
+       ]
+      },
+      {
+       "timestamp": "2026-10-18T18:41:15.930996529+00:00",
+       "action": "compose_up",
+       "tag": "v0.0.492",
+       "commit": "4addbf4ea0e7a2fc7415aa46b4cfb4b27fd5fd8e",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4-W4AFP8-LongContext.yaml",
+       "file_sha256": "f77f4b5dd41f4e322d2194a3d0774235a2686c5d7105e24bc1b800b4a4842196",
+       "services": [
+        "model-sg-glm53-w4afp8-tp2-r2a"
+       ]
+      },
+      {
+       "timestamp": "2026-10-18T19:05:14.058433982+00:00",
+       "action": "compose_up",
+       "tag": "v0.0.492",
+       "commit": "4addbf4ea0e7a2fc7415aa46b4cfb4b27fd5fd8e",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4-W4AFP8-LongContext.yaml",
+       "file_sha256": "f77f4b5dd41f4e322d2194a3d0774235a2686c5d7105e24bc1b800b4a4842196",
+       "services": [
+        "model-sg-glm53-w4afp8-tp2-r2b"
+       ]
+      },
+      {
+       "timestamp": "2026-10-18T19:34:40.100529101+00:00",
+       "action": "compose_up",
+       "tag": "v0.0.492",
+       "commit": "4addbf4ea0e7a2fc7415aa46b4cfb4b27fd5fd8e",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4-W4AFP8-LongContext.yaml",
+       "file_sha256": "f77f4b5dd41f4e322d2194a3d0774235a2686c5d7105e24bc1b800b4a4842196",
+       "services": [
+        "glm53-ghost-aggregator"
+       ]
+      },
+      {
+       "timestamp": "2026-10-18T19:34:57.996144980+00:00",
+       "action": "compose_up",
+       "tag": "v0.0.492",
+       "commit": "4addbf4ea0e7a2fc7415aa46b4cfb4b27fd5fd8e",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4-W4AFP8-LongContext.yaml",
+       "file_sha256": "f77f4b5dd41f4e322d2194a3d0774235a2686c5d7105e24bc1b800b4a4842196",
+       "services": [
+        "otelcol-contrib"
+       ]
+      },
+      {
+       "timestamp": "2026-10-21T23:31:36.136747355+00:00",
+       "action": "compose_down",
+       "tag": "v0.0.492",
+       "commit": "4addbf4ea0e7a2fc7415aa46b4cfb4b27fd5fd8e",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4-W4AFP8-LongContext.yaml",
+       "services": [
+        "model-proxy-registrar"
+       ]
+      },
+      {
+       "timestamp": "2026-10-21T23:35:34.848923126+00:00",
+       "action": "compose_down",
+       "tag": "v0.0.492",
+       "commit": "4addbf4ea0e7a2fc7415aa46b4cfb4b27fd5fd8e",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4-W4AFP8-LongContext.yaml"
+      },
+      {
+       "timestamp": "2026-10-22T01:01:33.903572169+00:00",
+       "action": "compose_manager_started",
+       "container": "compose-manager",
+       "image": "nearaidev/compose-manager@sha256:6e035c8fb99c1d31f41760d25af178683a658cca4afd73cd0d366fbb5bf884be"
+      },
+      {
+       "timestamp": "2026-10-22T01:10:59.023258432+00:00",
+       "action": "compose_up",
+       "tag": "v0.0.502",
+       "commit": "8977a0e8383685752d4a43621c9226bbaccd857d",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4-W4AFP8-LongContext.yaml",
+       "file_sha256": "94580ae74c8a903cf3ca7c039d8e2465c05692bc7e283de6459eb9061ddb10a7"
+      },
+      {
+       "timestamp": "2026-10-22T01:12:51.783504559+00:00",
+       "action": "compose_down",
+       "tag": "v0.0.502",
+       "commit": "8977a0e8383685752d4a43621c9226bbaccd857d",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4-W4AFP8-LongContext.yaml",
+       "services": [
+        "model-sg-glm53-w4afp8-tp4-r1",
+        "model-sg-glm53-w4afp8-tp4-r2"
+       ]
+      },
+      {
+       "timestamp": "2026-10-23T17:54:12.939073030+00:00",
+       "action": "compose_stage",
+       "tag": "v0.0.508",
+       "commit": "0e51e3bc9a16cce57c119c95a910f08b2cda9f8d",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4-W4AFP8-LongContext.yaml",
+       "file_sha256": "e8142ee2a1ef5340bcee2ec41e1d3e1b1fe49ed9b79fadd52521a6bc68b81bab",
+       "services": [
+        "model-sg-glm53-w4afp8-tp2-r2b"
+       ]
+      },
+      {
+       "timestamp": "2026-10-23T17:55:08.175328847+00:00",
+       "action": "compose_down",
+       "tag": "v0.0.502",
+       "commit": "8977a0e8383685752d4a43621c9226bbaccd857d",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4-W4AFP8-LongContext.yaml",
+       "services": [
+        "model-sg-glm53-w4afp8-tp2-r2b"
+       ]
+      },
+      {
+       "timestamp": "2026-10-23T18:00:25.869065653+00:00",
+       "action": "compose_up",
+       "tag": "v0.0.508",
+       "commit": "0e51e3bc9a16cce57c119c95a910f08b2cda9f8d",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4-W4AFP8-LongContext.yaml",
+       "file_sha256": "e8142ee2a1ef5340bcee2ec41e1d3e1b1fe49ed9b79fadd52521a6bc68b81bab",
+       "services": [
+        "model-sg-glm53-w4afp8-tp2-r2b"
+       ]
+      },
+      {
+       "timestamp": "2026-10-23T19:28:02.172129557+00:00",
+       "action": "compose_down",
+       "tag": "v0.0.502",
+       "commit": "8977a0e8383685752d4a43621c9226bbaccd857d",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4-W4AFP8-LongContext.yaml",
+       "services": [
+        "model-sg-glm53-w4afp8-tp2-r1a"
+       ]
+      },
+      {
+       "timestamp": "2026-10-23T19:30:00.171763611+00:00",
+       "action": "compose_up",
+       "tag": "v0.0.508",
+       "commit": "0e51e3bc9a16cce57c119c95a910f08b2cda9f8d",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4-W4AFP8-LongContext.yaml",
+       "file_sha256": "e8142ee2a1ef5340bcee2ec41e1d3e1b1fe49ed9b79fadd52521a6bc68b81bab",
+       "services": [
+        "model-sg-glm53-w4afp8-tp2-r1a"
+       ]
+      },
+      {
+       "timestamp": "2026-10-23T19:51:36.892898226+00:00",
+       "action": "compose_down",
+       "tag": "v0.0.502",
+       "commit": "8977a0e8383685752d4a43621c9226bbaccd857d",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4-W4AFP8-LongContext.yaml",
+       "services": [
+        "model-sg-glm53-w4afp8-tp2-r1b"
+       ]
+      },
+      {
+       "timestamp": "2026-10-23T19:54:50.009075030+00:00",
+       "action": "compose_up",
+       "tag": "v0.0.508",
+       "commit": "0e51e3bc9a16cce57c119c95a910f08b2cda9f8d",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4-W4AFP8-LongContext.yaml",
+       "file_sha256": "e8142ee2a1ef5340bcee2ec41e1d3e1b1fe49ed9b79fadd52521a6bc68b81bab",
+       "services": [
+        "model-sg-glm53-w4afp8-tp2-r1b"
+       ]
+      },
+      {
+       "timestamp": "2026-10-23T20:16:23.111914720+00:00",
+       "action": "compose_down",
+       "tag": "v0.0.502",
+       "commit": "8977a0e8383685752d4a43621c9226bbaccd857d",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4-W4AFP8-LongContext.yaml",
+       "services": [
+        "model-sg-glm53-w4afp8-tp2-r2a"
+       ]
+      },
+      {
+       "timestamp": "2026-10-23T20:18:07.803092084+00:00",
+       "action": "compose_up",
+       "tag": "v0.0.508",
+       "commit": "0e51e3bc9a16cce57c119c95a910f08b2cda9f8d",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4-W4AFP8-LongContext.yaml",
+       "file_sha256": "e8142ee2a1ef5340bcee2ec41e1d3e1b1fe49ed9b79fadd52521a6bc68b81bab",
+       "services": [
+        "model-sg-glm53-w4afp8-tp2-r2a"
+       ]
+      },
+      {
+       "timestamp": "2026-10-26T19:08:18.408942474+00:00",
+       "action": "compose_down",
+       "tag": "v0.0.508",
+       "commit": "0e51e3bc9a16cce57c119c95a910f08b2cda9f8d",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4-W4AFP8-LongContext.yaml",
+       "services": [
+        "model-proxy-registrar"
+       ]
+      },
+      {
+       "timestamp": "2026-10-26T23:04:17.720585630+00:00",
+       "action": "compose_manager_started",
+       "container": "compose-manager",
+       "image": "nearaidev/compose-manager@sha256:6e035c8fb99c1d31f41760d25af178683a658cca4afd73cd0d366fbb5bf884be"
+      },
+      {
+       "timestamp": "2026-10-26T23:04:20.892575634+00:00",
+       "action": "compose_down",
+       "tag": "v0.0.508",
+       "commit": "0e51e3bc9a16cce57c119c95a910f08b2cda9f8d",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4-W4AFP8-LongContext.yaml",
+       "services": [
+        "model-sg-glm53-w4afp8-tp2-r1a"
+       ]
+      },
+      {
+       "timestamp": "2026-10-26T23:04:34.079673691+00:00",
+       "action": "compose_down",
+       "tag": "v0.0.508",
+       "commit": "0e51e3bc9a16cce57c119c95a910f08b2cda9f8d",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4-W4AFP8-LongContext.yaml",
+       "services": [
+        "model-sg-glm53-w4afp8-tp2-r1b"
+       ]
+      },
+      {
+       "timestamp": "2026-10-26T23:04:45.991167446+00:00",
+       "action": "compose_down",
+       "tag": "v0.0.508",
+       "commit": "0e51e3bc9a16cce57c119c95a910f08b2cda9f8d",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4-W4AFP8-LongContext.yaml",
+       "services": [
+        "model-sg-glm53-w4afp8-tp2-r2a"
+       ]
+      },
+      {
+       "timestamp": "2026-10-26T23:04:57.613910061+00:00",
+       "action": "compose_down",
+       "tag": "v0.0.508",
+       "commit": "0e51e3bc9a16cce57c119c95a910f08b2cda9f8d",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4-W4AFP8-LongContext.yaml",
+       "services": [
+        "model-sg-glm53-w4afp8-tp2-r2b"
+       ]
+      },
+      {
+       "timestamp": "2026-10-26T23:42:43.502433963+00:00",
+       "action": "compose_up",
+       "tag": "v0.0.513",
+       "commit": "e99f50fc2c08db4081e5436113e60fad68840cb4",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4-W4AFP8-LongContext.yaml",
+       "file_sha256": "e8142ee2a1ef5340bcee2ec41e1d3e1b1fe49ed9b79fadd52521a6bc68b81bab",
+       "services": [
+        "model-sg-glm53-w4afp8-tp2-r1a"
+       ]
+      },
+      {
+       "timestamp": "2026-10-26T23:42:48.848873827+00:00",
+       "action": "compose_up",
+       "tag": "v0.0.513",
+       "commit": "e99f50fc2c08db4081e5436113e60fad68840cb4",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4-W4AFP8-LongContext.yaml",
+       "file_sha256": "e8142ee2a1ef5340bcee2ec41e1d3e1b1fe49ed9b79fadd52521a6bc68b81bab",
+       "services": [
+        "model-sg-glm53-w4afp8-tp2-r1b"
+       ]
+      },
+      {
+       "timestamp": "2026-10-26T23:42:52.454341542+00:00",
+       "action": "compose_up",
+       "tag": "v0.0.513",
+       "commit": "e99f50fc2c08db4081e5436113e60fad68840cb4",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4-W4AFP8-LongContext.yaml",
+       "file_sha256": "e8142ee2a1ef5340bcee2ec41e1d3e1b1fe49ed9b79fadd52521a6bc68b81bab",
+       "services": [
+        "model-sg-glm53-w4afp8-tp2-r2a"
+       ]
+      },
+      {
+       "timestamp": "2026-10-26T23:42:56.342564398+00:00",
+       "action": "compose_up",
+       "tag": "v0.0.513",
+       "commit": "e99f50fc2c08db4081e5436113e60fad68840cb4",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4-W4AFP8-LongContext.yaml",
+       "file_sha256": "e8142ee2a1ef5340bcee2ec41e1d3e1b1fe49ed9b79fadd52521a6bc68b81bab",
+       "services": [
+        "model-sg-glm53-w4afp8-tp2-r2b"
+       ]
+      },
+      {
+       "timestamp": "2026-10-27T00:17:14.692880036+00:00",
+       "action": "compose_up",
+       "tag": "v0.0.513",
+       "commit": "e99f50fc2c08db4081e5436113e60fad68840cb4",
+       "file": "prod/GLM-5.3-Flash-SGL-TP4-W4AFP8-LongContext.yaml",
+       "file_sha256": "e8142ee2a1ef5340bcee2ec41e1d3e1b1fe49ed9b79fadd52521a6bc68b81bab",
+       "services": [
+        "model-proxy-registrar"
+       ]
+      },
+      {
+       "timestamp": "2026-10-27T02:06:40.059272906+00:00",
+       "action": "compose_up",
+       "tag": "v0.0.515",
+       "commit": "704326e7193ca2dea8b47d59c248fe42f229541b",
+       "file": "prod/DeepSeek-V4.1-Flash-1017-vLLM-DEP4x2-Abliterated.yaml",
+       "file_sha256": "ae925dc16636019222486191f99453e58cc8d0ef81caaafa39790f335f4826b5"
+      },
+      {
+       "timestamp": "2026-10-27T03:07:09.774135306+00:00",
+       "action": "compose_up",
+       "tag": "v0.0.515",
+       "commit": "704326e7193ca2dea8b47d59c248fe42f229541b",
+       "file": "prod/DeepSeek-V4.1-Flash-1017-vLLM-DEP4x2-Abliterated.yaml",
+       "file_sha256": "ae925dc16636019222486191f99453e58cc8d0ef81caaafa39790f335f4826b5"
+      },
+      {
+       "timestamp": "2026-10-27T03:52:32.693127134+00:00",
+       "action": "compose_up",
+       "tag": "v0.0.517",
+       "commit": "604ff808dd8059f7aff4626e9ff40b7d8dd71099",
+       "file": "prod/DeepSeek-V4.1-Flash-1017-vLLM-DEP4x2-Abliterated.yaml",
+       "file_sha256": "4ec10de4f0c5ff9e694bcd1c8ba3d1828f8ce3f4f1180717df195a28c7dbcf8e"
+      },
+      {
+       "timestamp": "2026-10-27T05:34:03.779728503+00:00",
+       "action": "compose_up",
+       "tag": "v0.0.519",
+       "commit": "39cd52d45c6c37730a432a2b5a6fc981c96d96c4",
+       "file": "prod/DeepSeek-V4.1-Flash-1017-vLLM-DEP4x2-Abliterated.yaml",
+       "file_sha256": "295abb81acd08e6aae039668e805db3eb57bf4e331ed93e44c9eb7fed864f3e1"
+      },
+      {
+       "timestamp": "2026-10-27T05:54:16.588525986+00:00",
+       "action": "compose_up",
+       "tag": "v0.0.519",
+       "commit": "39cd52d45c6c37730a432a2b5a6fc981c96d96c4",
+       "file": "prod/DeepSeek-V4.1-Flash-1017-vLLM-DEP4x2-Abliterated.yaml",
+       "file_sha256": "295abb81acd08e6aae039668e805db3eb57bf4e331ed93e44c9eb7fed864f3e1"
+      },
+      {
+       "timestamp": "2026-10-28T18:48:39.087760379+00:00",
+       "action": "compose_manager_started",
+       "container": "compose-manager",
+       "image": "nearaidev/compose-manager@sha256:6e035c8fb99c1d31f41760d25af178683a658cca4afd73cd0d366fbb5bf884be"
+      },
+      {
+       "timestamp": "2026-10-28T18:49:00.500967423+00:00",
+       "action": "compose_up",
+       "tag": "v0.0.523",
+       "commit": "5fa33740fc3547bb51af014b7cdae87b2ceb10b4",
+       "file": "prod/DeepSeek-V4.1-Flash-1017-vLLM-DEP8-Abliterated.yaml",
+       "file_sha256": "bb8f92c98ba528f0effbaee6d9d79730a08acbce89e86cde8d04f0317e50bef1"
+      },
+      {
+       "timestamp": "2026-10-28T20:14:08.561643589+00:00",
+       "action": "compose_up",
+       "tag": "v0.0.524",
+       "commit": "9624ceb0a8bb31742206a99caf5ef39c8fc07229",
+       "file": "prod/DeepSeek-V4.1-Flash-1017-vLLM-DEP8-Abliterated.yaml",
+       "file_sha256": "f23ec5142bccb616962959caddb62a775dead50a279b9341bbade577c70f69a9",
+       "services": [
+        "nginx",
+        "model-proxy-registrar"
+       ]
+      },
+      {
+       "timestamp": "2026-10-28T23:26:16.496213907+00:00",
+       "action": "compose_up",
+       "tag": "v0.0.525",
+       "commit": "e1870e54025fd8c918aecd8a16d30308d7068c2b",
+       "file": "prod/DeepSeek-V4.1-Flash-1017-vLLM-DEP8-Abliterated.yaml",
+       "file_sha256": "61421d16f8b4ed5487172cb0b08e5de2f8476ff75d47d43ffa005567bca1c591",
+       "services": [
+        "stg-cert-init",
+        "proxy-dsv41",
+        "proxy-dsv41-abliterated",
+        "nginx"
+       ]
+      },
+      {
+       "timestamp": "2026-10-29T04:06:03.353655738+00:00",
+       "action": "compose_up",
+       "tag": "v0.0.527",
+       "commit": "f2cf37b92ee9c5e1adb73208c8ab867016c0e0a5",
+       "file": "prod/DeepSeek-V4.1-Flash-1017-vLLM-DEP8-Abliterated.yaml",
+       "file_sha256": "e5468c4e676aef7f2653546f8c1f86395ad281cb9d074a1af234bbf28a27e5ad",
+       "services": [
+        "model-vllm-dsv41-dp0",
+        "model-vllm-dsv41-dp1",
+        "model-vllm-dsv41-dp2",
+        "model-vllm-dsv41-dp3",
+        "model-vllm-dsv41-dp4",
+        "model-vllm-dsv41-dp5",
+        "model-vllm-dsv41-dp6",
+        "model-vllm-dsv41-dp7"
+       ]
+      },
+      {
+       "timestamp": "2026-10-29T06:04:28.224679209+00:00",
+       "action": "compose_manager_started",
+       "container": "compose-manager",
+       "image": "nearaidev/compose-manager@sha256:a320bb4882341c8e19ef1944436f6591ed73303732009ed5db9f6db6c9da756a"
+      },
+      {
+       "timestamp": "2026-10-29T06:24:03.226789796+00:00",
+       "action": "compose_up",
+       "tag": "v0.0.528",
+       "commit": "4f7a11dcf5ebf8cbe7c4c28f900bcba688264774",
+       "file": "prod/DeepSeek-V4.1-Flash-1017-vLLM-DEP8-Abliterated.yaml",
+       "file_sha256": "ce0dbf705aa950db96e6c5cb169b13d1feb1716b02968418a3b5b43606e26440",
+       "services": [
+        "proxy-dsv41",
+        "proxy-dsv41-abliterated",
+        "nginx",
+        "model-proxy-registrar"
+       ]
+      },
+      {
+       "timestamp": "2026-10-31T00:17:20.273063095+00:00",
+       "action": "compose_up",
+       "tag": "v0.0.533",
+       "commit": "1a40196fbb453442c5806a4429acdff0785cdd64",
+       "file": "prod/DeepSeek-V4.1-Flash-1017-vLLM-DEP4x2-Abliterated.yaml",
+       "file_sha256": "0200eef6bda2c9df78722c8b660b29365e5dbda72e76a0b26e57940a74d81bfe"
+      },
+      {
+       "timestamp": "2026-11-03T02:07:51.708554488+00:00",
+       "action": "compose_up",
+       "tag": "v0.0.537",
+       "commit": "368dc049942ae672968ffaa6b9182b9dd06a7525",
+       "file": "prod/DeepSeek-V4.1-Flash-1017-vLLM-DEP8-Abliterated.yaml",
+       "file_sha256": "594648eec0c19759ea2f595a8ac21fa84ef0c98023127ce24db95cf0c3370335"
+      },
+      {
+       "timestamp": "2026-11-04T03:00:44.822005577+00:00",
+       "action": "compose_stage",
+       "tag": "v0.0.540",
+       "commit": "75d31e6461dc51465a81ff69203200a51a820d1c",
+       "file": "prod/DeepSeek-V4.1-Flash-1017-vLLM-DEP8-Abliterated.yaml",
+       "file_sha256": "048f54e8ed740216bbe6e5ecf0e65b59433c1754da5b26e9e68228cd6c5039ff",
+       "services": [
+        "proxy-dsv41",
+        "proxy-dsv41-abliterated"
+       ]
+      },
+      {
+       "timestamp": "2026-11-04T03:01:00.669847105+00:00",
+       "action": "compose_up",
+       "tag": "v0.0.540",
+       "commit": "75d31e6461dc51465a81ff69203200a51a820d1c",
+       "file": "prod/DeepSeek-V4.1-Flash-1017-vLLM-DEP8-Abliterated.yaml",
+       "file_sha256": "048f54e8ed740216bbe6e5ecf0e65b59433c1754da5b26e9e68228cd6c5039ff",
+       "services": [
+        "proxy-dsv41",
+        "proxy-dsv41-abliterated",
+        "nginx"
+       ]
+      },
+      {
+       "timestamp": "2026-11-04T04:15:37.845496631+00:00",
+       "action": "compose_manager_started",
+       "container": "compose-manager",
+       "image": "nearaidev/compose-manager@sha256:a0c073085684e12e19f31bb279fc8da663a374199bfecc47b04167ae79eaa766"
+      },
+      {
+       "timestamp": "2026-11-04T19:52:57.458785357+00:00",
+       "action": "compose_down",
+       "tag": "v0.0.546",
+       "commit": "c4a3ce6a2e48174ed622de02492099d40596cf5f",
+       "file": "prod/DeepSeek-V4.1-Flash-1017-vLLM-DEP8-Abliterated.yaml",
+       "services": [
+        "proxy-dsv41",
+        "proxy-dsv41-abliterated"
+       ]
+      },
+      {
+       "timestamp": "2026-11-04T19:54:03.810203493+00:00",
+       "action": "compose_up",
+       "tag": "v0.0.546",
+       "commit": "c4a3ce6a2e48174ed622de02492099d40596cf5f",
+       "file": "prod/DeepSeek-V4.1-Flash-1017-vLLM-DEP8-Abliterated.yaml",
+       "file_sha256": "80ab61cebfe424f79c981493176b27e4964a26daeac81b7ef3e4d1017f5819f6",
+       "services": [
+        "model-vllm-dsv41-dp0",
+        "model-vllm-dsv41-dp1",
+        "model-vllm-dsv41-dp2",
+        "model-vllm-dsv41-dp3",
+        "model-vllm-dsv41-dp4",
+        "model-vllm-dsv41-dp5",
+        "model-vllm-dsv41-dp6",
+        "model-vllm-dsv41-dp7"
+       ]
+      },
+      {
+       "timestamp": "2026-11-04T20:03:47.462052761+00:00",
+       "action": "compose_up",
+       "tag": "v0.0.546",
+       "commit": "c4a3ce6a2e48174ed622de02492099d40596cf5f",
+       "file": "prod/DeepSeek-V4.1-Flash-1017-vLLM-DEP8-Abliterated.yaml",
+       "file_sha256": "80ab61cebfe424f79c981493176b27e4964a26daeac81b7ef3e4d1017f5819f6",
+       "services": [
+        "proxy-dsv41",
+        "proxy-dsv41-abliterated"
+       ]
+      },
+      {
+       "timestamp": "2026-11-04T20:08:57.910564483+00:00",
+       "action": "docker_restart",
+       "container": "nginx"
+      },
+      {
+       "timestamp": "2026-11-08T02:01:53.977739608+00:00",
+       "action": "compose_up",
+       "tag": "v0.0.546",
+       "commit": "c4a3ce6a2e48174ed622de02492099d40596cf5f",
+       "file": "prod/DeepSeek-V4.1-Flash-1017-vLLM-DEP8-Abliterated.yaml",
+       "file_sha256": "80ab61cebfe424f79c981493176b27e4964a26daeac81b7ef3e4d1017f5819f6",
+       "services": [
+        "dry"
+       ]
+      },
+      {
+       "timestamp": "2026-11-08T02:03:09.998904649+00:00",
+       "action": "compose_up",
+       "tag": "v0.0.546",
+       "commit": "c4a3ce6a2e48174ed622de02492099d40596cf5f",
+       "file": "prod/DeepSeek-V4.1-Flash-1017-vLLM-DEP8-Abliterated.yaml",
+       "file_sha256": "80ab61cebfe424f79c981493176b27e4964a26daeac81b7ef3e4d1017f5819f6",
+       "services": [
+        "model-proxy-registrar"
+       ]
+      },
+      {
+       "timestamp": "2026-11-08T02:39:01.352748122+00:00",
+       "action": "compose_up",
+       "tag": "v0.0.550",
+       "commit": "132912c5a119d6011e73c98ec2b23f806c2411cc",
+       "file": "prod/rotate-compose-manager-token.yaml",
+       "file_sha256": "3154095bde664e261c18e034f2c74419014559583e260799f1528fd9bb016371",
+       "services": [
+        "rotate-token"
+       ]
+      },
+      {
+       "timestamp": "2026-11-08T02:39:02.873908915+00:00",
+       "action": "compose_manager_started",
+       "container": "compose-manager",
+       "image": "nearaidev/compose-manager@sha256:a0c073085684e12e19f31bb279fc8da663a374199bfecc47b04167ae79eaa766"
+      },
+      {
+       "timestamp": "2026-11-08T02:39:07.500621904+00:00",
+       "action": "compose_down",
+       "tag": "v0.0.550",
+       "commit": "132912c5a119d6011e73c98ec2b23f806c2411cc",
+       "file": "prod/rotate-compose-manager-token.yaml",
+       "services": [
+        "rotate-token"
+       ]
+      },
+      {
+       "timestamp": "2026-11-08T06:14:35.856136112+00:00",
+       "action": "compose_manager_started",
+       "container": "compose-manager",
+       "image": "nearaidev/compose-manager@sha256:a0c073085684e12e19f31bb279fc8da663a374199bfecc47b04167ae79eaa766"
+      },
+      {
+       "timestamp": "2026-11-08T06:15:27.359600943+00:00",
+       "action": "compose_up",
+       "tag": "v0.0.551",
+       "commit": "f2b0b35c9189a5a059ab3b6a795271d9d504f9af",
+       "file": "prod/DeepSeek-V4.1-Flash-1017-vLLM-DEP8-Abliterated.yaml",
+       "file_sha256": "44e8d39ea2978c8f7775b5c425ee272a1ed3e5fccd096b6d7d7742f13942f14d",
+       "services": [
+        "proxy-dsv41",
+        "proxy-dsv41-abliterated",
+        "nginx",
+        "model-proxy-registrar",
+        "model-downloader"
+       ]
+      },
+      {
+       "timestamp": "2026-11-08T20:55:56.493774275+00:00",
+       "action": "compose_up",
+       "tag": "v0.0.553",
+       "commit": "4d64477b298038f59e92b268a2a5feb34e597fe0",
+       "file": "prod/DeepSeek-V4.1-Flash-1017-vLLM-DEP8-Abliterated.yaml",
+       "file_sha256": "fe8407db7ed9b7f30b6a4c954d4559be45679f8e7d14905e30ce78db43634686",
+       "services": [
+        "nginx",
+        "proxy-dsv41",
+        "proxy-dsv41-abliterated"
+       ]
+      },
+      {
+       "timestamp": "2026-11-08T20:56:26.946357198+00:00",
+       "action": "compose_stage",
+       "tag": "v0.0.553",
+       "commit": "4d64477b298038f59e92b268a2a5feb34e597fe0",
+       "file": "prod/DeepSeek-V4.1-Flash-1017-vLLM-DEP8-Abliterated.yaml",
+       "file_sha256": "fe8407db7ed9b7f30b6a4c954d4559be45679f8e7d14905e30ce78db43634686",
+       "services": [
+        "nginx",
+        "proxy-dsv41",
+        "proxy-dsv41-abliterated"
+       ]
+      },
+      {
+       "timestamp": "2026-11-08T21:54:53.480202111+00:00",
+       "action": "compose_up",
+       "tag": "v0.0.553",
+       "commit": "4d64477b298038f59e92b268a2a5feb34e597fe0",
+       "file": "prod/DeepSeek-V4.1-Flash-1017-vLLM-DEP8-Abliterated.yaml",
+       "file_sha256": "fe8407db7ed9b7f30b6a4c954d4559be45679f8e7d14905e30ce78db43634686",
+       "services": [
+        "proxy-dsv41",
+        "proxy-dsv41-abliterated",
+        "nginx"
+       ]
+      }
+     ],
+     "tcb_status": "UpToDate",
+     "advisory_ids": [],
+     "runtime_measurements": {
+      "os_image_hash": "91fd5d69ccee3e5ea4f2aeb8c9b632c4358c4ecfc29ba1aa6fb1e402af209829",
+      "compose_hash": "c5e7bd5f9e1d5f8480d2bd57b9e601fab0650dd46e6a120b809a279be73436c0"
+     }
+    }
+   },
+   "deployment_provenance": "verified",
+   "gpu_evidence": "verified",
+   "signing_public_key": "236f5a6b91dd47dc3b7b36e43d4eb531a042ffb8f8fbf3a1555b78cef4fdda4c"
+  }
+ ],
+ "verified_at": 1794188941945
+}

@@ -50,6 +50,11 @@ def client_options(box, person, ctx) -> dict | None:
     return checker.client_options()
 
 
+# The box looks for this mark before a live question: if pins exist but no hook carries it (this file
+# failed to import, or register() broke), the box refuses to ask NEAR rather than skip the check.
+client_options.guards_near_code = True
+
+
 def register(box) -> None:
     box.pre_checks.append(pre_check)
     box.client_options.append(client_options)
@@ -119,7 +124,11 @@ def run_cli(args, cfg) -> int | None:
             print(f"history entries: {len(store.history())}, chain intact: {'yes' if store.verify_history() else 'NO'}")
         elif act == "check":
             from ..pinning import check_now
-            results = asyncio.run(check_now(cfg, store=store))
+            try:
+                results = asyncio.run(check_now(cfg, store=store))
+            except Exception as e:  # noqa: BLE001 - network or SDK trouble: say so plainly, no traceback
+                print(f"error: the box could not check NEAR right now ({type(e).__name__}: {e})", file=sys.stderr)
+                return 1
             if args.json:
                 print(json.dumps(results, indent=1))
             else:
@@ -167,6 +176,9 @@ def run_cli(args, cfg) -> int | None:
                 print(f"chain intact: {'yes' if store.verify_history() else 'NO'}")
     except KeyError:
         print("no such review"); return 2
+    except ValueError:
+        print("error: the NEAR code history log is damaged; the owner must check the box", file=sys.stderr)
+        return 1
     except PinError as e:
         print(f"error: {e}", file=sys.stderr); return 1
     return 0
@@ -209,6 +221,8 @@ def web_routes(ctx) -> list:
         try:
             data = store.load()
             waiting = store.reviews("waiting")
+            hist = store.history()[-8:]
+            chain = "intact" if store.verify_history() else "BROKEN (an entry was removed or edited)"
         except PinError as e:
             body = f'<h1>NEAR code</h1>{note}<p class="bad">{esc(str(e))}.</p>'
             return ctx.page(sess, "NEAR code", body, "/pins", status)
@@ -242,10 +256,8 @@ def web_routes(ctx) -> list:
         pinned = "".join(
             f'<li><strong>{esc(name)}</strong>: {len(c["accepted"])} trusted version(s), since '
             f'{esc(nice_date(c.get("pinned_at")))}</li>' for name, c in sorted(data["components"].items()))
-        hist = store.history()[-8:]
         hist_rows = "".join(f'<li>{esc(nice_date(h["time"]))}: {esc(h["event"])} {esc(h.get("component", ""))}'
                             f'{" by " + esc(h["by"]) if h.get("by") else ""}</li>' for h in reversed(hist))
-        chain = "intact" if store.verify_history() else "BROKEN (someone edited it)"
         body = (f'<h1>NEAR code</h1>{note}{state}{intro}{"".join(cards)}'
                 f'<h2>Trusted now</h2><ul>{pinned or "<li>Nothing yet</li>"}</ul>'
                 f'<h2>Recent history</h2><ul>{hist_rows or "<li>Nothing yet</li>"}</ul>'

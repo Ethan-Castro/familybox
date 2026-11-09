@@ -36,6 +36,12 @@ box.client_options.append(fn)         # fn(box, person, ctx) -> dict | None, liv
 cache lifetimes (the question stops if a plugin tries). Two hooks that set the same key also stop the
 question. The pinning plugin (`plugins/pinning.py`) is the example.
 
+Pinning is the one plugin the box will not run without. Its `client_options` hook carries the mark
+`guards_near_code = True`. If no registered hook has that mark (the plugin failed to import, or its
+`register()` broke), and the box has pins of its own or the repo ships `pins/near-ai-cloud.json`, and
+`[pins] level` is not `"off"`, every live question stops with "the NEAR code check did not load; the
+owner must check the box". Replay mode is not affected.
+
 The model is offered the union of every provider's tools (the built-in `search_files` and `read_file`
 come first; the first provider to offer a name wins). A tool the model was not offered is refused. A
 provider that raises gives the model an error result. If a post check bumps to refused without changing

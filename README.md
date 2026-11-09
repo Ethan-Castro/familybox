@@ -101,14 +101,20 @@ With E2EE on, a request whose history contains `assistant.tool_calls` plus `tool
 ### NEAR changes its serving code often, so the box pins it
 
 Attestation says the model ran in an enclave, not which code ran there. The box keeps a fingerprint of
-NEAR's gateway, the model's enclave (firmware, kernel, OS, container images) and the model's deployed
-compose file. The first verified use is pinned unless `pins/near-ai-cloud.json` already names the
-expected values. If anything changes, questions stop before any prompt is sent, and the owner reviews
-the difference with `familybox pins show`, `familybox pins diff <id>` and
-`familybox pins accept --as <admin> <id>`, or on the box page under "NEAR code". Every fingerprint and
-decision goes into a hash-chained history (`familybox pins history`). In live checks on 2026-11-08 the
-model's deployed compose file changed twice in one day, so expect reviews. Set `[pins] level = "platform"`
-in family.toml to stop only for enclave and image changes. Details: [docs/BUILD_LOG.md](docs/BUILD_LOG.md).
+NEAR's gateway, the model's enclave (firmware, kernel, OS, container images, and the list of settings NEAR
+may fill in at runtime), the program inside it that installs the model (the compose manager),
+and the model compose files it has deployed. The first verified use is pinned unless
+`pins/near-ai-cloud.json` already names the expected values. If anything changes, questions stop
+before any prompt is sent, and the owner reviews the difference with `familybox pins show`,
+`familybox pins diff <id>` and `familybox pins accept --as <admin> <id>`, or on the box page under
+"NEAR code". Every fingerprint and decision goes into a hash-chained history
+(`familybox pins history`). Removing or editing an entry shows, unless someone rewrites both the
+history and the pin file. In live checks on 2026-11-08 the model's deployed compose files changed
+twice in one day, and two model instances had different sets of compose files deployed, so expect
+reviews under the default level. Set `[pins] level = "platform"` in family.toml for fewer: it still
+stops for changes to NEAR's gateway, the model's enclave and OS, and the program that installs the
+model; it only logs which model compose files were deployed. If the check itself fails to load, the
+box stops live questions instead of skipping it. Details: [docs/BUILD_LOG.md](docs/BUILD_LOG.md).
 
 ## Layout
 

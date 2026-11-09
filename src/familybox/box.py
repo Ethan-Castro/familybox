@@ -37,7 +37,23 @@ from .config import Config, Person
 from .store import Sensitive, Store
 
 REPO_REPLAYS = Path(__file__).resolve().parents[2] / "replays"
+REPO_PINS = Path(__file__).resolve().parents[2] / "pins" / "near-ai-cloud.json"
+PIN_LEVELS = ("strict", "platform", "off")
 log = logging.getLogger("familybox.box")
+
+
+def _pin_level(cfg: Config) -> str:
+    """[pins] level from family.toml, or FAMILYBOX_PIN_LEVEL. Anything unknown means strict.
+    Lives here, not in familybox.pinning, so the box can still read it if that module fails to load."""
+    import os
+    import tomllib
+    level = os.environ.get("FAMILYBOX_PIN_LEVEL")
+    if not level:
+        try:
+            level = tomllib.loads((cfg.home / "family.toml").read_text()).get("pins", {}).get("level", "strict")
+        except (OSError, ValueError, AttributeError):
+            level = "strict"
+    return level if level in PIN_LEVELS else "strict"
 
 
 @dataclass
@@ -218,6 +234,7 @@ class Box:
                 if not key:
                     ctx.emit("error", message="NEAR_AI_CLOUD_API_KEY is not set")
                     raise enclave.EnclaveError("NEAR_AI_CLOUD_API_KEY is not set")
+                self._require_pinning(ctx)
                 extra = {"client_options": opts} if (opts := self._client_options(person, ctx)) else {}
                 draft = await enclave.ask_live(api_key=key, model=self.cfg.model, person_display=person.display,
                                                question=question, run_tool=run_tool, tools=tools, emit=ctx.emit,
@@ -261,6 +278,22 @@ class Box:
             from .approvals import Approvals
             ans.held_ids = Approvals(self.cfg).add(person_id, question, result.held)
         return self._finish(ctx, ans)
+
+    def _require_pinning(self, ctx: Question) -> None:
+        """Fail closed if the NEAR code check should run but did not load.
+
+        Plugins that fail to import are skipped (plugins/__init__.py). For the pinning plugin that would
+        quietly turn a safety check off, so when this box has pins (its own, or the repo's shipped ones)
+        and the level is not "off", a live question needs a hook marked guards_near_code.
+        """
+        if any(getattr(h, "guards_near_code", False) for h in self.client_options):
+            return
+        if _pin_level(self.cfg) == "off":
+            return
+        rt = self.cfg.runtime
+        if (rt / "pins.json").exists() or (rt / "pins_history.jsonl").exists() or REPO_PINS.exists():
+            ctx.emit("pinning", status="not_loaded")
+            raise enclave.EnclaveError("the NEAR code check did not load; the owner must check the box")
 
     def _client_options(self, person: Person, ctx: Question) -> dict:
         merged: dict = {}
