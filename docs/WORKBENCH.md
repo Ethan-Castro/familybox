@@ -44,7 +44,10 @@ Try a script by hand with `familybox workbench run --as maya script.py`, and lis
 `familybox workbench log --as maya`.
 
 The tool is only offered to the model when the sandbox actually works on the computer. On a Mac, or on a
-Linux computer that does not allow unprivileged user namespaces, it is not offered and `status` says why.
+Linux computer that does not allow unprivileged user namespaces, it is not offered and `status` says why. Raspberry Pi OS
+(Debian 13) allows them. Ubuntu 24.04 blocks them by default through AppArmor
+(`kernel.apparmor_restrict_unprivileged_userns = 1`, seen on a Jetson Orin Nano on 2026-11-09), so the workbench
+stays off there unless the owner changes that system setting; the box never changes it.
 
 ## How the sandbox is built
 

@@ -6,10 +6,11 @@ without Ethan's yes. The real payload is never committed (it holds personal data
 ## Checklist
 
 - [x] Final attack report numbers in README, DEMO_SCRIPT and the X post (three runs, show the range)
-- [ ] Pi run on the merged build: tests including the 16 sandbox tests, live demo questions, workbench
+- [x] Pi run on the merged build: 691 passed, 2 skipped, sandbox tests included, workbench ready (2026-11-09)
+- [ ] Live answers on the Pi (needs the NEAR key on the board; Ethan's OK)
 - [x] Clean-install check from a fresh clone, following the README word for word, replay mode, no key (2026-11-09: 675 passed, 17 skipped)
-- [ ] No secrets anywhere in git history (`git log -p | grep -E 'sk-|jpt_'` plus a scanner)
-- [ ] `docs/private/` and `.env` still untracked
+- [x] No keys or fleet tokens in git history (grep for `sk-` and `jpt_`; a dedicated scanner is still worth running)
+- [x] `docs/private/` and `.env` still untracked (checked before the first push)
 - [ ] Pre-hackathon separation: all code is from 2026-11-07 onward (README "Prior work and disclosures")
 - [ ] Repo public on GitHub (Ethan pushes and flips it)
 - [ ] Demo video recorded from DEMO_SCRIPT.md

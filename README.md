@@ -22,7 +22,7 @@ uv run familybox ask --as maya "What medications am I on?"
 uv run familybox ask --as maya "What did the doctor say at Mom's last visit?"
 uv run familybox ask --as dana "What were our combined 2025 W-2 wages, and what do we still need for Maya's FAFSA?"
 uv run familybox pending --as maya        # values held for Maya's approval
-uv run pytest -q tests                    # 692 tests; 16 sandbox tests run only on Linux (the Pi)
+uv run pytest -q tests                    # 693 tests; 16 sandbox tests run only on Linux (the Pi)
 ```
 
 Without a key, `ask` replays recorded enclave conversations (`replays/`) for the six demo questions. The box's real tools, access checks and answer gate still run, and the output says "(replayed recording)". With a key, every question goes to NEAR AI Cloud live:

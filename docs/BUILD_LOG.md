@@ -432,3 +432,22 @@ the pinning feature exists to surface. Every question was stopped before any pro
 For the attack suite only, pinning is now off (`eval/attacks.py`, `make_home`). Pinning can stop a question but
 never lets more through, so it does not change what leaks. Attestation, E2EE and the provider_tee signature on
 every turn stay on. Runs discarded: none were written (the run was stopped before its report).
+
+## 2026-11-09: Merged build on the Raspberry Pi (decision-tree, Pi 5, 2 GB)
+
+Installed through fleet exec (no SSH), via the public console URL because the laptop had moved to another
+network. `scripts/pi_install.sh` on the board:
+
+- Tests: **691 passed, 2 skipped** in 45 s. All 16 sandbox tests that skip on the Mac ran and passed here
+  (`tests/test_workbench.py`: 38 passed). Skips: the live photo test (no key on the board) and one test that
+  only checks the non-Linux message.
+- Analysis sandbox: "Ready: the analysis workbench is on" (unprivileged namespaces, no sudo).
+- Replay demo: answers and holds as on the laptop.
+- `familybox pins check` from the Pi, keyless: NEAR's gateway, model enclave and compose manager match the
+  shipped fingerprints; the model workload was pinned on first use.
+- Not run on the board: live answers. They need the NEAR API key on the Pi, and anything sent through fleet
+  exec is kept in the control plane's job history, so the key would land there. Waiting for Ethan's OK.
+
+Jetsons as a second Linux test machine: jetson-03 (Ubuntu 24.04, aarch64) blocks unprivileged user namespaces
+(`kernel.apparmor_restrict_unprivileged_userns = 1`) and its disk is 95% full, so the sandbox can't run there
+without changing a system security setting. Not changed. Documented in docs/WORKBENCH.md.
