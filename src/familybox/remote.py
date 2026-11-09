@@ -21,7 +21,11 @@ copy of state.json reveals who linked which assistant, never a usable credential
 
 Lifetimes: consent request 10 minutes, authorization code 5 minutes (single use), access token
 1 hour, refresh token 30 days from last use (rotated on every use; presenting an old one again
-revokes the whole connection). API tokens last until revoked.
+revokes the whole connection, except a retry within 30 seconds, which gets the same new pair back).
+API tokens last until revoked.
+
+The internet should only reach the routes in REMOTE_PATHS. `familybox serve --remote-port N` opens a
+second listener on 127.0.0.1 that serves nothing else; point the tunnel at that port.
 """
 
 from __future__ import annotations
@@ -29,7 +33,6 @@ from __future__ import annotations
 import asyncio
 import base64
 import binascii
-import contextlib
 import contextvars
 import fcntl
 import hashlib
@@ -71,6 +74,9 @@ REFRESH_TTL_S = 30 * 24 * 60 * 60
 UNLINKED_CLIENT_TTL_S = 24 * 60 * 60
 MAX_CLIENTS = 200
 MAX_PENDING = 50
+MAX_PENDING_PER_CLIENT = 3
+MAX_CODE_MISSES = 3          # wrong sign-in codes on one consent request before it is thrown away
+REFRESH_GRACE_S = 30         # a refresh retried this soon gets the same new pair, not a revoke
 MAX_REDIRECT_URIS = 10
 MAX_URI_LEN = 2000
 LAST_USED_EVERY_S = 60
@@ -80,8 +86,19 @@ REFRESH_PREFIX = "fbr_"
 API_PREFIX = "fbk_"
 CODE_PREFIX = "fbc_"
 
-BLOCKED_SCHEMES = {"javascript", "data", "file", "vbscript", "about", "blob", "ftp", "ws", "wss", "filesystem"}
+# App links (custom schemes) must look like a reversed domain name (RFC 8252 section 7.1), so
+# Windows and Android protocol handlers (ms-msdt:, search-ms:, intent:) can never be a redirect.
+APP_SCHEMES_WITHOUT_DOT = {"cursor"}
+BLOCKED_SCHEMES = {"javascript", "data", "file", "vbscript", "about", "blob", "ftp", "ws", "wss", "filesystem",
+                   "intent", "search-ms", "search", "shell", "jar", "view-source", "chrome", "res"}
 LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "[::1]", "::1"}
+
+# Everything the internet needs. The remote-only listener serves these paths and nothing else.
+REMOTE_PATHS = frozenset({
+    "/mcp", "/register", "/authorize", "/authorize/consent", "/token", "/revoke", "/static/style.css",
+    "/.well-known/oauth-authorization-server", "/.well-known/oauth-authorization-server/mcp",
+    "/.well-known/oauth-protected-resource", "/.well-known/oauth-protected-resource/mcp",
+})
 
 
 def _h(secret: str) -> str:
@@ -130,13 +147,17 @@ def resource_matches(requested: str | None, base: str) -> bool:
 
 
 def check_redirect_uri(uri: str) -> None:
-    """https anywhere, http only to this computer (loopback), app links (custom schemes) for desktop apps."""
+    """https anywhere, http only to this computer (loopback), and app links in reversed-domain form
+    (com.example.app:/cb) for desktop apps. Everything else is refused."""
     if len(uri) > MAX_URI_LEN:
         raise RegistrationError("invalid_redirect_uri", "redirect_uri is too long")
     parts = urlsplit(uri)
     scheme = parts.scheme.lower()
-    if not scheme or scheme in BLOCKED_SCHEMES:
+    if not scheme or scheme in BLOCKED_SCHEMES or scheme.startswith("ms-"):
         raise RegistrationError("invalid_redirect_uri", f"redirect_uri scheme {scheme!r} is not allowed")
+    if scheme not in ("http", "https") and "." not in scheme and scheme not in APP_SCHEMES_WITHOUT_DOT:
+        raise RegistrationError("invalid_redirect_uri",
+                                "app redirect_uri schemes must be a reversed domain name, like com.example.app")
     if parts.fragment:
         raise RegistrationError("invalid_redirect_uri", "redirect_uri must not have a fragment")
     if scheme == "http" and (parts.hostname or "").lower() not in LOOPBACK_HOSTS:
@@ -162,19 +183,11 @@ class RemoteStore:
         self.path = self.dir / "state.json"
         self._last_used_mem: dict[str, float] = {}
 
-    @contextlib.contextmanager
-    def edit(self):
-        """Yields the state dict; it is saved on exit. Expired items are dropped first."""
-        fd = os.open(self.dir / ".lock", os.O_WRONLY | os.O_CREAT, 0o600)
-        try:
-            fcntl.flock(fd, fcntl.LOCK_EX)
-            st = self._read()
-            self._prune(st)
-            yield st
-            self._write(st)
-        finally:
-            fcntl.flock(fd, fcntl.LOCK_UN)
-            os.close(fd)
+    def edit(self) -> "_Edit":
+        """Yields the state dict; it is saved on exit unless an error is raised. Expired items are dropped
+        first. A class, not @contextmanager: the MCP SDK's errors are frozen dataclasses, and
+        contextlib's generator wrapper fails on them (it sets __traceback__) instead of re-raising."""
+        return _Edit(self)
 
     def read(self) -> dict:
         st = self._read()
@@ -199,6 +212,9 @@ class RemoteStore:
             st[k] = {h: v for h, v in st[k].items() if v["expires"] > now}
         st["used_codes"] = {h: v for h, v in st["used_codes"].items() if v["expires"] > now}
         st["retired"] = {h: v for h, v in st["retired"].items() if v["expires"] > now}
+        for v in st["retired"].values():
+            if v.get("grace_until", 0) <= now:
+                v.pop("grace", None)
         live_clients = {g["client_id"] for g in st["grants"].values()}
         live_clients |= {p["client_id"] for p in st["pending"].values()}
         st["clients"] = {cid: c for cid, c in st["clients"].items()
@@ -295,6 +311,32 @@ class RemoteStore:
                     st[k][conn]["last_used"] = int(now)
 
 
+class _Edit:
+    def __init__(self, store: RemoteStore):
+        self.store = store
+        self.fd: int | None = None
+
+    def __enter__(self) -> dict:
+        self.fd = os.open(self.store.dir / ".lock", os.O_WRONLY | os.O_CREAT, 0o600)
+        try:
+            fcntl.flock(self.fd, fcntl.LOCK_EX)
+            self.st = self.store._read()
+            self.store._prune(self.st)
+        except BaseException:
+            os.close(self.fd)
+            raise
+        return self.st
+
+    def __exit__(self, exc_type, exc, tb) -> bool:
+        try:
+            if exc_type is None:
+                self.store._write(self.st)
+        finally:
+            fcntl.flock(self.fd, fcntl.LOCK_UN)
+            os.close(self.fd)
+        return False
+
+
 # --- the OAuth provider (plugs into the SDK's handlers) --------------------------------------------
 
 # The request's base address (https://host[:port]), set by the routes for each auth request.
@@ -311,6 +353,28 @@ class BoxCode(AuthorizationCode):
 class BoxRefresh(RefreshToken):
     grant: str = ""
     person: str = ""
+    replay: str = ""        # a retry inside the grace window: the pair already issued, as JSON
+
+
+def _grace_key(old_refresh: str) -> bytes:
+    return hashlib.sha256(b"familybox-refresh-grace:" + old_refresh.encode()).digest()
+
+
+def _seal(old_refresh: str, data: bytes) -> str:
+    """Encrypt the new pair under a key only the holder of the old refresh token can derive."""
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+    nonce = secrets.token_bytes(12)
+    return base64.b64encode(nonce + AESGCM(_grace_key(old_refresh)).encrypt(nonce, data, None)).decode()
+
+
+def _unseal(old_refresh: str, blob: str) -> bytes | None:
+    from cryptography.exceptions import InvalidTag
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+    try:
+        raw = base64.b64decode(blob)
+        return AESGCM(_grace_key(old_refresh)).decrypt(raw[:12], raw[12:], None)
+    except (ValueError, InvalidTag, binascii.Error):
+        return None
 
 
 class BoxProvider:
@@ -354,18 +418,19 @@ class BoxProvider:
             rec["secret_hash"] = _h(secret)
         with self.store.edit() as st:
             if len(st["clients"]) >= MAX_CLIENTS:
-                # Make room by dropping the oldest apps that never linked to anyone, so a flood of
-                # registrations can't lock real assistants out.
+                # Make room by dropping the oldest apps that are idle: never linked to anyone and with
+                # no sign-in in progress. An app partway through linking is never dropped.
                 busy = {g["client_id"] for g in st["grants"].values()} | \
-                       {p["client_id"] for p in st["pending"].values() if p.get("person")}
+                       {p["client_id"] for p in st["pending"].values()}
                 idle = sorted((c.get("client_id_issued_at", 0), cid) for cid, c in st["clients"].items()
                               if cid not in busy)
                 for _, cid in idle[:len(st["clients"]) - MAX_CLIENTS + 1]:
                     st["clients"].pop(cid)
-                    st["pending"] = {h: p for h, p in st["pending"].items() if p["client_id"] != cid}
-            if len(st["clients"]) >= MAX_CLIENTS:
-                raise RegistrationError("invalid_client_metadata", "too many apps are linked to this box")
-            st["clients"][client_info.client_id] = rec
+            full = len(st["clients"]) >= MAX_CLIENTS
+            if not full:
+                st["clients"][client_info.client_id] = rec
+        if full:
+            raise RegistrationError("invalid_client_metadata", "too many apps are linked to this box")
 
     # ---- authorize: park the request until the family member approves it on the consent page
 
@@ -378,42 +443,68 @@ class BoxProvider:
             raise AuthorizeError("invalid_scope", f"the only scope is {SCOPE!r}")
         req_id = secrets.token_urlsafe(24)
         with self.store.edit() as st:
-            if len(st["pending"]) >= MAX_PENDING:
-                # Drop the oldest requests nobody has typed a code into yet.
-                fresh = sorted((p["created"], h) for h, p in st["pending"].items() if not p.get("person"))
-                for _, h in fresh[:len(st["pending"]) - MAX_PENDING + 1]:
-                    st["pending"].pop(h)
-            if len(st["pending"]) >= MAX_PENDING:
-                raise AuthorizeError("temporarily_unavailable", "too many sign-in requests; try again soon")
-            st["pending"][_h(req_id)] = {
-                "client_id": client.client_id, "client_name": (client.client_name or "")[:80],
-                "redirect_uri": str(params.redirect_uri),
-                "redirect_explicit": params.redirect_uri_provided_explicitly,
-                "state": params.state, "scopes": scopes, "code_challenge": params.code_challenge,
-                "resource": resource_of(base), "created": int(_now()), "expires": _now() + PENDING_TTL_S,
-                "person": None, "nonce": None}
+            # Each app may have a few sign-ins open; a new one pushes out only that app's own oldest
+            # untouched request. Other apps' requests are never dropped to make room: when the box is
+            # full, the newest request is the one refused.
+            mine = sorted((p["created"], h) for h, p in st["pending"].items()
+                          if p["client_id"] == client.client_id and not p.get("person"))
+            drop = max(0, len(mine) - MAX_PENDING_PER_CLIENT + 1, len(st["pending"]) - MAX_PENDING + 1)
+            for _, h in mine[:drop]:
+                st["pending"].pop(h)
+            full = sum(1 for p in st["pending"].values() if p["client_id"] == client.client_id) \
+                >= MAX_PENDING_PER_CLIENT or len(st["pending"]) >= MAX_PENDING
+            if not full:
+                st["pending"][_h(req_id)] = {
+                    "client_id": client.client_id, "client_name": (client.client_name or "")[:80],
+                    "redirect_uri": str(params.redirect_uri),
+                    "redirect_explicit": params.redirect_uri_provided_explicitly,
+                    "state": params.state, "scopes": scopes, "code_challenge": params.code_challenge,
+                    "resource": resource_of(base), "created": int(_now()), "expires": _now() + PENDING_TTL_S,
+                    "person": None, "nonce": None, "misses": 0}
+        if full:
+            raise AuthorizeError("temporarily_unavailable", "too many sign-in requests; try again soon")
         return f"/authorize/consent?req={req_id}"
 
-    # The consent page calls these three.
+    # The consent page calls these.
 
     def pending(self, req_id: str) -> dict | None:
         if not req_id or len(req_id) > 100:
             return None
         return self.store.read()["pending"].get(_h(req_id))
 
+    def miss(self, req_id: str) -> bool:
+        """A wrong code on this request. True if the request is now thrown away (too many misses)."""
+        with self.store.edit() as st:
+            p = st["pending"].get(_h(req_id))
+            if p is None:
+                return True
+            p["misses"] = int(p.get("misses", 0)) + 1
+            if p["misses"] >= MAX_CODE_MISSES:
+                st["pending"].pop(_h(req_id))
+                return True
+        return False
+
     def bind_person(self, req_id: str, person_id: str) -> str | None:
-        """After a good sign-in code: remember who is approving. Returns a one-time approval nonce."""
+        """After a good sign-in code: remember who is approving. Returns a one-time approval nonce.
+
+        A request belongs to the first person who signs in to it. A code for someone else throws the
+        request away (None), so the page can never switch who is linking partway through."""
         nonce = secrets.token_urlsafe(24)
         with self.store.edit() as st:
             p = st["pending"].get(_h(req_id))
             if p is None:
                 return None
+            if p.get("person") and p["person"] != person_id:
+                st["pending"].pop(_h(req_id))
+                return None
             p["person"] = person_id
             p["nonce"] = _h(nonce)
         return nonce
 
-    def finish(self, req_id: str, nonce: str, approve: bool) -> str | None:
-        """Approve or deny a pending request. Returns the URL to send the browser back to, or None."""
+    def finish(self, req_id: str, nonce: str, approve: bool) -> tuple[str, bool] | None:
+        """Approve or deny a pending request. Returns (URL to send the browser back to, whether the
+        family member signed in first), or None. An unvetted app's address is never redirected to
+        automatically: the page only shows it as a link."""
         with self.store.edit() as st:
             p = st["pending"].get(_h(req_id))
             if p is None:
@@ -426,15 +517,16 @@ class BoxProvider:
                 return None
             st["pending"].pop(_h(req_id))
             if not approve:
-                return construct_redirect_uri(p["redirect_uri"], error="access_denied",
-                                              error_description="The family member said no.", state=p["state"])
+                return (construct_redirect_uri(p["redirect_uri"], error="access_denied",
+                                               error_description="The family member said no.", state=p["state"]),
+                        bool(p.get("person")))
             code = CODE_PREFIX + secrets.token_urlsafe(32)
             st["codes"][_h(code)] = {
                 "client_id": p["client_id"], "person": p["person"], "redirect_uri": p["redirect_uri"],
                 "redirect_explicit": p["redirect_explicit"], "scopes": p["scopes"],
                 "code_challenge": p["code_challenge"], "resource": p["resource"],
                 "client_name": p["client_name"], "expires": _now() + CODE_TTL_S}
-        return construct_redirect_uri(p["redirect_uri"], code=code, state=p["state"])
+        return construct_redirect_uri(p["redirect_uri"], code=code, state=p["state"]), True
 
     # ---- token endpoint
 
@@ -500,6 +592,22 @@ class BoxProvider:
         with self.store.edit() as st:
             old = st["retired"].get(rh)
             if old is not None:
+                # A retry soon after a refresh (a timeout, or two at once): hand back the pair that was
+                # already issued, if it is still the live one.
+                if old.get("grace") and old.get("grace_until", 0) > _now() and old["grant"] in st["grants"]:
+                    raw = _unseal(refresh_token, old["grace"])
+                    pair = json.loads(raw) if raw else None
+                    if pair and _h(pair["refresh_token"]) in st["refresh"] \
+                            and _h(pair["access_token"]) in st["access"]:
+                        r = st["refresh"][_h(pair["refresh_token"])]
+                        if r["client_id"] != client.client_id:
+                            return None
+                        log.info("refresh retried within %ss; same pair returned for %s", REFRESH_GRACE_S,
+                                 old["grant"])
+                        return BoxRefresh(token=refresh_token, client_id=r["client_id"], scopes=r["scopes"],
+                                          expires_at=int(r["expires"]), resource=r.get("resource"),
+                                          subject=r["person"], grant=old["grant"], person=r["person"],
+                                          replay=raw.decode())
                 # A refresh token that was already swapped for a new one: someone has a copy. Cut it off.
                 log.warning("rotated refresh token reused; revoking connection %s", old["grant"])
                 self.store._drop_grant(st, old["grant"])
@@ -515,15 +623,28 @@ class BoxProvider:
     async def exchange_refresh_token(self, client: OAuthClientInformationFull, refresh_token, scopes: list[str]):
         rt: BoxRefresh = refresh_token
         rh = _h(rt.token)
+        if rt.replay:
+            pair = json.loads(rt.replay)
+            with self.store.edit() as st:
+                a = st["access"].get(_h(pair["access_token"]))
+                if a is None or a["grant"] not in st["grants"] or a["client_id"] != client.client_id:
+                    raise TokenError("invalid_grant", "refresh token does not exist")
+                left = max(1, int(a["expires"] - _now()))
+            return OAuthToken(access_token=pair["access_token"], token_type="Bearer", expires_in=left,
+                              scope=" ".join(a["scopes"]), refresh_token=pair["refresh_token"])
         with self.store.edit() as st:
             r = st["refresh"].pop(rh, None)
             g = st["grants"].get(rt.grant)
             if r is None or g is None or r["client_id"] != client.client_id:
                 raise TokenError("invalid_grant", "refresh token does not exist")
-            st["retired"][rh] = {"grant": rt.grant, "expires": _now() + REFRESH_TTL_S}
             # Old access tokens for this connection stop working once a new one is issued.
             st["access"] = {h: a for h, a in st["access"].items() if a["grant"] != rt.grant}
-            return self._issue(st, rt.grant, g, scopes or r["scopes"])
+            tok = self._issue(st, rt.grant, g, scopes or r["scopes"])
+            sealed = _seal(rt.token, json.dumps({"access_token": tok.access_token,
+                                                 "refresh_token": tok.refresh_token}).encode())
+            st["retired"][rh] = {"grant": rt.grant, "expires": _now() + REFRESH_TTL_S,
+                                 "grace": sealed, "grace_until": _now() + REFRESH_GRACE_S}
+            return tok
 
     async def load_access_token(self, token: str) -> AccessToken | None:
         if not token.startswith(ACCESS_PREFIX):
@@ -698,5 +819,6 @@ class McpGateway:
         scope["user"] = AuthenticatedUser(tok)
         scope["auth"] = AuthCredentials([SCOPE])
         scope["familybox_person"] = hit["person"]
+        scope["familybox_connection"] = hit["conn"]
         mgr = await self._runner(hit["person"]).get()
         await mgr.handle_request(scope, receive, send)

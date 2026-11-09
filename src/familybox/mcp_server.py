@@ -6,6 +6,7 @@ answer; it has no tool that lists, searches or reads files directly.
 
   FAMILYBOX_HOME=demo FAMILYBOX_PERSON=maya familybox-mcp            # stdio
   FAMILYBOX_PERSON=maya familybox-mcp --http --port 8790             # streamable HTTP on 127.0.0.1
+                                                                     # (no sign-in, logged as mcp-http-local)
 """
 
 from __future__ import annotations
@@ -15,7 +16,7 @@ import os
 import sys
 from typing import Annotated
 
-from mcp.server.mcpserver import MCPServer
+from mcp.server.mcpserver import Context, MCPServer
 from pydantic import Field
 
 from . import config
@@ -27,6 +28,16 @@ plain language with ask_family_box and it answers using only the files this pers
 Answers are checked before you receive them: full Social Security numbers, ID numbers and health
 details are replaced with placeholders, and the full value is shown only on the owner's own device
 after they approve. Do not ask for full identifiers; ask for what you need them for instead."""
+
+
+def connection_of(ctx) -> str:
+    """The remote connection id (set by familybox.remote.McpGateway on the HTTP request), else ""."""
+    try:
+        req = ctx.request_context.request
+    except (ValueError, AttributeError):
+        return ""
+    scope = getattr(req, "scope", None) or {}
+    return str(scope.get("familybox_connection", ""))[:40]
 
 
 def build_server(person_id: str, mode: str = "auto", source: str = "mcp-stdio", *,
@@ -44,8 +55,9 @@ def build_server(person_id: str, mode: str = "auto", source: str = "mcp-stdio", 
     async def ask_family_box(
         question: Annotated[str, Field(min_length=3, max_length=2000,
                                        description="The question, in plain language.")],
+        ctx: Context,
     ) -> str:
-        ans = await box.ask_async(person.id, question, source=source)
+        ans = await box.ask_async(person.id, question, source=source, connection=connection_of(ctx))
         e = ans.enclave or {}
         lines = [ans.text, "", "---"]
         if ans.outcome == "error":
@@ -82,7 +94,7 @@ def main(argv: list[str] | None = None) -> int:
     if not args.person:
         print("Set FAMILYBOX_PERSON or --person (who this assistant asks as).", file=sys.stderr)
         return 2
-    server = build_server(args.person, args.mode, source="mcp-remote" if args.http else "mcp-stdio")
+    server = build_server(args.person, args.mode, source="mcp-http-local" if args.http else "mcp-stdio")
     if args.http:
         server.run("streamable-http", host="127.0.0.1", port=args.port)
     else:

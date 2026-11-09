@@ -22,6 +22,8 @@ from starlette.routing import Route
 
 from .. import remote
 
+REMOTE_BUCKET = "remote_failures.json"
+
 # --- web ---------------------------------------------------------------------------------------------
 
 
@@ -156,8 +158,8 @@ def web_routes(ctx):
                 f'<div class="card"><p>You are <strong>{esc(person.display)}</strong>. If you say yes, {esc(name)} can '
                 f'ask the family box questions as you.</p><ul>'
                 f'<li>It only gets checked answers, never your files.</li>'
-                f'<li>Full ID numbers and private health details stay on the box. You see them only here, after '
-                f'you approve each one.</li>'
+                f'<li>Full ID numbers and private health details stay on the box. You see them only on the box\'s '
+                f'Approvals page, after you approve each one.</li>'
                 f'<li>You can cut it off any time on the Assistants page, or with '
                 f'<code>familybox revoke</code>.</li></ul>'
                 f'<p class="muted">It will send you back to: <strong>{esc(returns_to(p))}</strong></p></div>'
@@ -171,8 +173,18 @@ def web_routes(ctx):
                 f'<button class="main quiet" type="submit">No</button></form></div>')
         return consent_shell("Link an assistant", body)
 
-    def go_back(url: str, linked: bool):
+    def go_back(url: str, linked: bool, vetted: bool):
         # A page, not a redirect: the page's form-action rule would block a form that redirects off the box.
+        # Only after a family member signed in does it send the browser on by itself. Before that, the app
+        # is unvetted, so the box never forwards to it: the page names where the link goes and stops.
+        if not vetted:
+            parts = urlsplit(url)
+            where = parts.netloc or f"the {parts.scheme} app"
+            body = (f'<h1>Not linked</h1><p>Nothing was linked. You can close this page.</p>'
+                    f'<p class="muted">If you started this from your assistant, this link goes back to it: '
+                    f'<strong>{esc(where)}</strong></p>'
+                    f'<p><a href="{esc(url)}" rel="noreferrer">Go back to {esc(where)}</a></p>')
+            return consent_shell("Not linked", body)
         head = "Linked. Taking you back now." if linked else "Not linked. Taking you back now."
         body = (f'<meta http-equiv="refresh" content="0;url={esc(url)}">'
                 f'<h1>{esc(head)}</h1><p><a class="button" href="{esc(url)}">Continue</a></p>')
@@ -195,36 +207,70 @@ def web_routes(ctx):
         if p is None:
             return expired_page()
         if step == "code":
-            person_id, why = signin.redeem(str(form.get("code", "")))
+            # Codes typed here count against their own lockout (remote_failures.json), so traffic from the
+            # internet can never lock the home sign-in or the Approvals page.
+            person_id, why = signin.redeem(str(form.get("code", "")), bucket=REMOTE_BUCKET)
             if person_id is None:
                 if why == "locked":
                     return code_form(req_id, p, "Too many wrong codes. Wait 10 minutes, then try again.", 429)
+                if provider.miss(req_id):
+                    return consent_shell("Link expired", '<h1>Too many wrong codes</h1><p>Nothing was linked. '
+                                         'Go back to your assistant and start connecting the family box '
+                                         'again.</p>', 401)
                 return code_form(req_id, p, "That code didn't work. Check it, or ask for a new one.", 401)
             nonce = provider.bind_person(req_id, person_id)
             if nonce is None:
                 return expired_page()
             return approve_form(req_id, nonce, p, cfg.person(person_id))
         if step in ("approve", "deny"):
-            url = provider.finish(req_id, str(form.get("nonce", "")), step == "approve")
-            if url is None:
+            done = provider.finish(req_id, str(form.get("nonce", "")), step == "approve")
+            if done is None:
                 return ctx.forbidden("That request wasn't allowed. Start again from your assistant.")
-            return go_back(url, step == "approve")
+            url, vetted = done
+            return go_back(url, step == "approve", vetted)
         return ctx.forbidden()
 
     # ---- Assistants page
 
-    def mcp_address(request: Request) -> str:
-        return remote.resource_of(base_of(request))
+    def add_one(request: Request) -> str:
+        if fixed:
+            return (f'<p>In ChatGPT or Claude, add a custom connector with this address, then sign in with a '
+                    f'code from the box:</p><div class="value">{esc(remote.resource_of(fixed))}</div>')
+        return (f'<p>This box isn\'t on the internet yet, so ChatGPT and Claude on the web can\'t reach it. '
+                f'The person who runs the box can set that up with the steps in docs/REMOTE.md '
+                f'("Putting it on the internet").</p>'
+                f'<p class="muted">Apps on this home network can use this address now:</p>'
+                f'<div class="value">{esc(remote.resource_of(base_of(request)))}</div>')
+
+    def last_asked(person_id: str) -> dict:
+        """connection id -> time of the last question it asked, from the person's audit file."""
+        out: dict = {}
+        path = cfg.runtime / "audit" / f"{person_id}.jsonl"
+        try:
+            lines = path.read_text().splitlines()[-2000:]
+        except OSError:
+            return out
+        import json
+        for line in lines:
+            try:
+                e = json.loads(line)
+            except ValueError:
+                continue
+            if e.get("connection") and e.get("qid"):
+                out[e["connection"]] = e.get("time")
+        return out
 
     def assistants_page(request, sess, extra: str = "", status: int = 200):
         rows = []
+        asked = last_asked(sess.person.id)
         for c in store.connections(sess.person.id):
             kind = "Linked with a sign-in code" if c["kind"] == "oauth" else "API token"
             back = f' &middot; returns to {esc(c["returns_to"])}' if c["returns_to"] else ""
             rows.append(
                 f'<li><div class="name"><strong>{esc(c["name"])}</strong></div>'
                 f'<div class="muted">{kind}{back}<br>Linked {esc(_when(c["created"]))} &middot; '
-                f'last used {esc(_when(c["last_used"]))} &middot; id {esc(c["id"])}</div>'
+                f'last used {esc(_when(c["last_used"]))} &middot; last asked {esc(_when(asked.get(c["id"])))}'
+                f' &middot; id {esc(c["id"])}</div>'
                 f'<form method="post" action="/assistants/revoke">{ctx.csrf_field(sess.csrf)}'
                 f'<input type="hidden" name="id" value="{esc(c["id"])}">'
                 f'<button class="danger" type="submit">Revoke</button></form></li>')
@@ -232,8 +278,7 @@ def web_routes(ctx):
         body = (f'<h1>Connected assistants</h1>{extra}'
                 f'<p class="muted">These assistants can ask the family box questions as you. Revoking one stops it '
                 f'right away.</p><div class="card">{listing}</div>'
-                f'<div class="card"><h2>Add one</h2><p>In ChatGPT or Claude, add a custom connector with this '
-                f'address, then sign in with a code from the box:</p><div class="value">{esc(mcp_address(request))}</div>'
+                f'<div class="card"><h2>Add one</h2>{add_one(request)}'
                 f'<form method="post" action="/assistants/token">{ctx.csrf_field(sess.csrf)}'
                 f'<p class="muted">Some apps only take a token instead of a sign-in. Make one for them here. '
                 f'It is shown once.</p>'
@@ -289,7 +334,25 @@ def web_routes(ctx):
         return Response(status_code=200, headers={"cache-control": "no-store"})
 
     gateway = remote.McpGateway(cfg=cfg, store=store, base_for=base_of_scope, box=ctx.box)
-    auth_handler = AuthorizationHandler(provider)
+    sdk_authorize = AuthorizationHandler(provider)
+
+    async def authorize(request: Request):
+        """The SDK's /authorize, except it never sends the browser to an app's address by itself.
+
+        Anyone can register an app with any https address, so an error redirect (bad scope, bad
+        resource, too many requests) would make the box an open redirector for phishing links
+        (RFC 9700 section 4.11.2). Errors are shown on a box page instead."""
+        resp = await sdk_authorize.handle(request)
+        loc = resp.headers.get("location", "")
+        if 300 <= resp.status_code < 400 and not loc.startswith("/authorize/consent?"):
+            return consent_shell("Link didn't work", '<h1>This link didn\'t work</h1><p>Nothing was linked. '
+                                 'Go back to your assistant and try connecting the family box again. If it keeps '
+                                 'happening, the box may be busy, so wait a few minutes.</p>', 400)
+        if resp.status_code >= 400:
+            return consent_shell("Link didn't work", '<h1>This link didn\'t work</h1><p>Nothing was linked. '
+                                 'Go back to your assistant and try connecting the family box again.</p>',
+                                 resp.status_code)
+        return resp
     token_handler = TokenHandler(provider, authn)
     reg_handler = RegistrationHandler(provider, options=reg_opts)
 
@@ -302,7 +365,7 @@ def web_routes(ctx):
               methods=["GET", "OPTIONS"]),
         Route("/.well-known/oauth-protected-resource/mcp", cors_middleware(pr_metadata, ["GET", "OPTIONS"]),
               methods=["GET", "OPTIONS"]),
-        Route("/authorize", asgi(auth_handler.handle, ["GET", "POST"], cors=False), methods=["GET", "POST"]),
+        Route("/authorize", asgi(authorize, ["GET", "POST"], cors=False), methods=["GET", "POST"]),
         Route("/authorize/consent", consent_get, methods=["GET"]),
         Route("/authorize/consent", consent_post, methods=["POST"]),
         Route("/token", asgi(token_handler.handle, ["POST", "OPTIONS"], cors=True), methods=["POST", "OPTIONS"]),
