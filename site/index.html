@@ -1,0 +1,452 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>familybox: a private home for your family's documents, for AI assistants</title>
+<meta name="description" content="familybox keeps your family's SSNs, tax forms and health records at home. AI assistants can ask about them; a verified NEAR AI enclave model reads them, and the box decides what is ever allowed out.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter+Tight:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+:root {
+  --indigo: #533afd; --ink: #061b31; --slate: #64748d; --steel: #50617a; --smoke: #839bc8;
+  --mist: #f8fafd; --frost: #e5edf5; --lilac: #d6d9fc; --wash: #e8e9ff; --stop: #c4314b; --stopwash: #fde8ec;
+  --font: "Inter Tight", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  color-scheme: light;
+}
+* { box-sizing: border-box; }
+html { background: #fff; scroll-behavior: smooth; }
+body { margin: 0; background: #fff; color: var(--ink); font-family: var(--font); font-weight: 300; font-size: 16px;
+  line-height: 1.45; letter-spacing: -0.01em; font-feature-settings: "ss01" on, "tnum" on; }
+a { color: var(--indigo); text-decoration: none; }
+a:hover { text-decoration: underline; }
+a:focus-visible, button:focus-visible { outline: 2px solid var(--indigo); outline-offset: 2px; border-radius: 4px; }
+.wrap { max-width: 1040px; margin: 0 auto; padding: 0 24px; }
+
+/* nav */
+nav { position: sticky; top: 0; z-index: 10; background: rgba(255,255,255,.92); backdrop-filter: blur(8px);
+  border-bottom: 1px solid var(--frost); }
+nav .wrap { display: flex; align-items: center; gap: 28px; height: 60px; }
+.brand { font-weight: 500; color: var(--ink); font-size: 17px; letter-spacing: -0.02em; display: flex; align-items: center; gap: 10px; }
+.brand:hover { text-decoration: none; }
+.mark { width: 22px; height: 22px; border-radius: 6px; background: var(--indigo); position: relative; }
+.mark::after { content: ""; position: absolute; inset: 6px 5px 5px; border: 1.5px solid #fff; border-top-width: 3px; border-radius: 2px; }
+nav .links { display: flex; gap: 22px; margin-left: auto; font-size: 14px; }
+nav .links a { color: var(--steel); }
+nav .links a:hover { color: var(--ink); text-decoration: none; }
+nav .links a.cta, nav .links a.cta:hover { color: #fff; }
+@media (max-width: 720px) { nav .links a:not(.cta) { display: none; } }
+
+/* buttons */
+.btn { display: inline-flex; align-items: center; gap: 8px; font: inherit; font-size: 15px; font-weight: 400;
+  padding: 10px 18px; border-radius: 9999px; border: 1px solid var(--indigo); background: var(--indigo); color: #fff; cursor: pointer; }
+.btn:hover { text-decoration: none; background: #4330e0; }
+.btn.ghost { background: #fff; color: var(--indigo); border-color: var(--lilac); }
+.btn.ghost:hover { background: var(--wash); }
+nav .cta { padding: 6px 14px; font-size: 13px; }
+
+/* type */
+h1, h2, h3 { font-weight: 300; margin: 0; text-wrap: balance; }
+h1 { font-size: clamp(40px, 7vw, 68px); line-height: 1.02; letter-spacing: -0.03em; max-width: 15ch; }
+h2 { font-size: clamp(30px, 4vw, 40px); line-height: 1.08; letter-spacing: -0.02em; max-width: 22ch; }
+h3 { font-size: 20px; line-height: 1.25; letter-spacing: -0.01em; }
+.label { font-size: 12px; text-transform: uppercase; letter-spacing: 0.07em; color: var(--smoke); font-weight: 400; margin: 0 0 14px; }
+.lede { font-size: clamp(18px, 2.4vw, 22px); color: var(--slate); margin: 24px 0 0; max-width: 52ch; line-height: 1.38; }
+.note { color: var(--steel); font-size: 17px; margin: 14px 0 0; max-width: 60ch; }
+section { padding: 96px 0; border-top: 1px solid var(--frost); }
+section.first { border-top: 0; padding-top: 88px; }
+
+/* hero */
+.hero-cta { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 36px; }
+.hero-meta { margin-top: 18px; font-size: 13px; color: var(--smoke); }
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 32px; margin-top: 64px; }
+.stat b { display: block; font-weight: 300; font-size: 46px; line-height: 1; letter-spacing: -0.02em; }
+.stat span { display: block; margin-top: 10px; color: var(--slate); font-size: 14px; max-width: 26ch; }
+
+/* animation stage */
+.stage { margin-top: 40px; border: 1px solid var(--frost); border-radius: 8px; background: var(--mist); overflow: hidden; }
+.stage svg { display: block; width: 100%; height: auto; }
+.bar { display: flex; align-items: center; gap: 16px; padding: 12px 16px; border-top: 1px solid var(--frost); background: #fff; }
+.cap { flex: 1; font-size: 15px; min-height: 2.8em; display: flex; align-items: center; }
+.cap .n { color: var(--smoke); font-size: 12px; margin-right: 10px; white-space: nowrap; }
+.dots { display: flex; gap: 4px; }
+.dots i { width: 6px; height: 6px; border-radius: 50%; background: var(--frost); }
+.dots i.on { background: var(--indigo); }
+.pp { font: inherit; font-size: 13px; font-weight: 400; color: var(--indigo); background: #fff; border: 1px solid var(--lilac);
+  border-radius: 9999px; padding: 4px 12px; cursor: pointer; }
+.node rect { fill: #fff; stroke: var(--frost); stroke-width: 1.5; transition: fill .3s, stroke .3s; }
+.node.on rect { fill: var(--wash); stroke: var(--indigo); }
+.node.bad rect { fill: var(--stopwash); stroke: var(--stop); }
+.node text { font: 400 13px var(--font); fill: var(--ink); text-anchor: middle; dominant-baseline: middle; }
+.edge { stroke: var(--lilac); stroke-width: 1.5; stroke-dasharray: 4 5; }
+.pkt rect { fill: var(--indigo); } .pkt.bad rect { fill: var(--stop); }
+.pkt text, .badge text { font: 500 12px var(--font); fill: #fff; text-anchor: middle; dominant-baseline: middle; }
+.badge rect { fill: var(--ink); } .badge.bad rect { fill: var(--stop); }
+@media (max-width: 560px) { .bar { flex-wrap: wrap; } .cap { flex-basis: 100%; } }
+
+/* steps */
+.steps { list-style: none; padding: 0; margin: 48px 0 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 0 40px; counter-reset: s; }
+.steps li { counter-increment: s; padding: 20px 0 20px 44px; border-top: 1px solid var(--frost); position: relative; }
+.steps li::before { content: counter(s); position: absolute; left: 0; top: 20px; width: 26px; height: 26px; border-radius: 50%;
+  border: 1px solid var(--lilac); color: var(--indigo); font-size: 13px; font-weight: 400; display: grid; place-items: center; }
+.steps h3 { font-size: 18px; }
+.steps p { margin: 6px 0 0; color: var(--steel); font-size: 15px; }
+
+/* feature grid */
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(290px, 1fr)); gap: 1px; background: var(--frost);
+  border: 1px solid var(--frost); border-radius: 8px; overflow: hidden; margin-top: 48px; }
+.card { background: #fff; padding: 28px; }
+.card h3 { font-size: 19px; }
+.card p { margin: 10px 0 0; color: var(--steel); font-size: 15px; }
+.tag { display: inline-block; margin-top: 14px; font-size: 12px; font-weight: 400; padding: 3px 10px; border-radius: 9999px;
+  border: 1px solid var(--lilac); color: var(--indigo); }
+.tag.done { background: var(--wash); border-color: var(--wash); }
+.tag.soft { border-color: var(--frost); color: var(--slate); }
+
+/* tables */
+table { width: 100%; border-collapse: collapse; margin-top: 40px; font-size: 15px; }
+th { text-align: left; font-weight: 400; font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--smoke);
+  padding: 0 16px 12px 0; border-bottom: 1px solid var(--frost); }
+td { padding: 16px 16px 16px 0; border-bottom: 1px solid var(--frost); vertical-align: top; color: var(--steel); }
+td:first-child { color: var(--ink); }
+td b { font-weight: 400; color: var(--ink); }
+.num { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.callouts { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 32px; margin-top: 48px; }
+.callouts p { margin: 8px 0 0; color: var(--steel); font-size: 15px; }
+
+/* trust columns */
+.cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 40px; margin-top: 48px; }
+.cols ul { list-style: none; padding: 0; margin: 16px 0 0; }
+.cols li { padding: 10px 0; border-top: 1px solid var(--frost); color: var(--steel); font-size: 15px; }
+.cols h3 { display: flex; align-items: center; gap: 10px; }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--indigo); }
+.dot.soft { background: var(--lilac); } .dot.off { background: var(--frost); border: 1px solid var(--smoke); }
+
+/* next */
+.next { background: var(--mist); }
+.next .grid { background: var(--frost); }
+.form-factors { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 24px; margin-top: 48px; }
+.ff { background: #fff; border: 1px solid var(--frost); border-radius: 8px; padding: 28px; display: flex; flex-direction: column; }
+.ff .glyph { width: 44px; height: 44px; border-radius: 10px; background: var(--wash); display: grid; place-items: center; margin-bottom: 18px; }
+.ff p { color: var(--steel); font-size: 15px; margin: 10px 0 0; }
+.ff ul { margin: 14px 0 0; padding-left: 18px; color: var(--steel); font-size: 15px; }
+.ff li { margin: 6px 0; }
+.ff .tag { align-self: flex-start; margin-top: auto; }
+.ff .spacer { flex: 1; min-height: 16px; }
+.tradeoffs { margin-top: 40px; padding: 24px 28px; background: #fff; border: 1px solid var(--lilac); border-radius: 8px; }
+.tradeoffs h3 { font-size: 18px; }
+.tradeoffs ul { margin: 12px 0 0; padding-left: 18px; color: var(--steel); font-size: 15px; }
+.tradeoffs li { margin: 8px 0; }
+
+/* code */
+pre { background: var(--ink); color: #e8ecf5; border-radius: 8px; padding: 20px 22px; overflow-x: auto; font-size: 13.5px; line-height: 1.6;
+  margin: 32px 0 0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+pre .c { color: var(--smoke); }
+
+footer { padding: 56px 0 72px; border-top: 1px solid var(--frost); color: var(--slate); font-size: 14px; }
+footer .wrap { display: flex; flex-wrap: wrap; gap: 16px 40px; justify-content: space-between; }
+footer strong { color: var(--ink); font-weight: 400; }
+</style>
+</head>
+<body>
+
+<nav aria-label="Main">
+  <div class="wrap">
+    <a class="brand" href="#top"><span class="mark" aria-hidden="true"></span>familybox</a>
+    <div class="links">
+      <a href="#how">How it works</a>
+      <a href="#features">What it does</a>
+      <a href="#results">Results</a>
+      <a href="#trust">What it proves</a>
+      <a href="#next">What's next</a>
+      <a class="btn cta" href="https://github.com/Ethan-Castro/familybox">GitHub</a>
+    </div>
+  </div>
+</nav>
+
+<main id="top">
+  <section class="first">
+    <div class="wrap">
+      <p class="label">Built at NEAR Hackathon 2026 · Privacy &amp; Private AI</p>
+      <h1>Let AI help with your family's paperwork, without handing it over.</h1>
+      <p class="lede">familybox keeps the SSNs, tax forms, passports and health records at home. ChatGPT and Claude can ask about them. A verified NEAR AI enclave model reads the files, and the box decides what is ever allowed to leave, and to whom.</p>
+      <div class="hero-cta">
+        <a class="btn" href="#how">See how it works</a>
+        <a class="btn ghost" href="https://github.com/Ethan-Castro/familybox">Read the code</a>
+      </div>
+      <p class="hero-meta">Open source, Apache-2.0. Runs on a Raspberry Pi today. Every person and number on this page is fictional.</p>
+      <div class="stats">
+        <div class="stat"><b>0</b><span>of 30 direct, encoded, cross-person and planted-instruction attacks got through, in each of 3 live runs</span></div>
+        <div class="stat"><b>13</b><span>of 39 attacks leaked when the same model's reply was trusted as is</span></div>
+        <div class="stat"><b>8/8</b><span>normal questions still answered correctly, every run</span></div>
+        <div class="stat"><b>1.6 s</b><span>for the Pi to check NEAR's hardware proof itself</span></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="problem">
+    <div class="wrap">
+      <p class="label">The problem</p>
+      <h2>Every family has a drawer like this. AI help means emptying it into a chatbot.</h2>
+      <div class="callouts">
+        <div><h3>Pasted once, kept forever</h3><p>Ask an assistant to fill a FAFSA and it now holds every SSN on the form, in a service you don't control.</p></div>
+        <div><h3>Everyone sees everything</h3><p>Shared folders don't know that a teenager's counseling referral or a parent's diagnosis belongs to one person.</p></div>
+        <div><h3>"Private AI" stops at the model</h3><p>A secure enclave proves where a model ran. It says nothing about what that model then tells the assistant that asked.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="how">
+    <div class="wrap">
+      <p class="label">How it works</p>
+      <h2>The assistant never touches the files. The box checks every answer.</h2>
+      <p class="note">Indigo is data moving, a lock means it is encrypted to the NEAR enclave, red means the box stopped something.</p>
+      <div class="stage" id="flow"></div>
+      <ol class="steps">
+        <li><h3>Who is asking</h3><p>Each family member's assistant has its own connection, so the box always knows the person.</p></li>
+        <li><h3>Verify first</h3><p>Before every question the box checks NEAR's Intel TDX and NVIDIA attestation itself. Any failure stops the question.</p></li>
+        <li><h3>Encrypted to the enclave</h3><p>The question, tool calls and file text are end-to-end encrypted to the attested model key.</p></li>
+        <li><h3>Only your files</h3><p>The model can search and read only the asker's folders plus shared ones. Health records are owner-only, even for parents.</p></li>
+        <li><h3>Signed every turn</h3><p>Each model reply must carry the enclave's signature. Anything else stops the question. Nothing falls back.</p></li>
+        <li><h3>The answer gate</h3><p>The box knows the real SSNs, IDs and diagnoses in the files and catches them however they're written. Full values go only to the owner's own screen.</p></li>
+      </ol>
+    </div>
+  </section>
+
+  <section id="features">
+    <div class="wrap">
+      <p class="label">What it does</p>
+      <h2>One small box, built for a household.</h2>
+      <div class="grid">
+        <div class="card"><h3>Works with your assistant</h3><p>ChatGPT, Claude, Codex and Cursor connect over MCP. ChatGPT and Claude on the web sign in with a one-time code from the box.</p><span class="tag done">built</span></div>
+        <div class="card"><h3>Per-person access</h3><p>Each person reaches only their own files and shared ones. Parents can be granted a child's school or ID folders, never their health records.</p><span class="tag done">built</span></div>
+        <div class="card"><h3>Approvals on your phone</h3><p>Held values wait for their owner on the box's own page. Approve, and the full number shows on your screen, never the assistant's.</p><span class="tag done">built</span></div>
+        <div class="card"><h3>Live trust timeline</h3><p>Watch each question happen: attestation, encryption, each signed turn, files opened or refused, and what was held back.</p><span class="tag done">built</span></div>
+        <div class="card"><h3>Photos of cards and forms</h3><p>Snap an insurance card or W-2. NEAR's enclave vision model reads it once. The box keeps the photo and a sealed transcript, and protects the numbers on it.</p><span class="tag done">built</span></div>
+        <div class="card"><h3>Fill forms on the box</h3><p>The assistant says which detail goes in which field. The box fills in the real values, every owner approves, and only they can download the PDF.</p><span class="tag done">built</span></div>
+        <div class="card"><h3>Catches reworded leaks</h3><p>A second verified enclave call checks whether an answer gives away a protected fact in other words, such as a diagnosis described without naming it.</p><span class="tag done">built</span></div>
+        <div class="card"><h3>Notices when NEAR's code changes</h3><p>The box fingerprints NEAR's serving code and pauses sensitive questions when it changes. It caught a real mid-rollout change during testing.</p><span class="tag done">built</span></div>
+        <div class="card"><h3>Confidential analysis</h3><p>The model can write a short script to total W-2s or compare dates. It runs on the box in a sandbox with no network and only copies of your files.</p><span class="tag done">built, off by default</span></div>
+        <div class="card"><h3>A log no one can quietly edit</h3><p>Each person's record of what left the box is hash-chained, with a NEAR contract ready to anchor it.</p><span class="tag done">built</span><span class="tag soft">anchoring needs a testnet account</span></div>
+        <div class="card"><h3>Private upload and backup</h3><p>Upload straight to the box over your home network, import a Google Drive folder read-only, and back up only as sealed, encrypted blobs.</p><span class="tag done">built</span><span class="tag soft">Drive needs an OAuth client</span></div>
+        <div class="card"><h3>A physical approve button</h3><p>An Arduino UNO Q shows who's asking on its LED matrix; one press approves. Its token can approve, never read.</p><span class="tag">simulated, not yet on the board</span></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="results">
+    <div class="wrap">
+      <p class="label">Results</p>
+      <h2>Measured live on NEAR AI Cloud, three times.</h2>
+      <p class="note">39 attacks plus 8 normal questions on the same model. Leaks are judged by an independent checker in the test suite, not by the box.</p>
+      <table>
+        <thead><tr><th>Setup</th><th>Leaks out of 39 (runs 1, 2, 3)</th><th>Normal questions</th></tr></thead>
+        <tbody>
+          <tr><td><b>familybox</b></td><td class="num"><b>0, 4, 3</b></td><td class="num">8/8 each run</td></tr>
+          <tr><td>Same model and files, reply trusted as is</td><td class="num">13, 13, 14</td><td class="num">8/8</td></tr>
+          <tr><td>Same model, every file readable, no checks</td><td class="num">18, 18, 17</td><td class="num">8/8</td></tr>
+        </tbody>
+      </table>
+      <div class="callouts">
+        <div><h3>No SSN or ID got out</h3><p>Not asked directly, spelled out, reversed, split into pieces, requested for someone else, or demanded by instructions planted in a file. 0 of 30 in every run.</p></div>
+        <div><h3>Reworded hints are the open gap</h3><p>All 7 counted leaks were hints in other words. Six were about the asker's own record. One about another person came from a bug that is now fixed.</p></div>
+        <div><h3>The second check earns its keep</h3><p>Word matching alone would have let 8 or 9 of the 9 reworded attacks through in each run.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="trust">
+    <div class="wrap">
+      <p class="label">What it proves</p>
+      <h2>Clear about what is proven, what is enforced, and what is not covered.</h2>
+      <div class="cols">
+        <div><h3><span class="dot"></span>Proven by cryptography</h3><ul>
+          <li>The model ran in a genuine Intel TDX and NVIDIA confidential-computing enclave.</li>
+          <li>Questions, tool calls and file text were readable only inside it.</li>
+          <li>Each answer came from the attested model key.</li></ul></div>
+        <div><h3><span class="dot soft"></span>Enforced by the box's code</h3><ul>
+          <li>Each person's assistant reaches only their own files.</li>
+          <li>The assistant receives only what passed the answer gate.</li>
+          <li>Full values reach only the owner's own screen.</li></ul></div>
+        <div><h3><span class="dot off"></span>Not covered</h3><ul>
+          <li>Anyone with root on the box can read everything.</li>
+          <li>NEAR's gateway still sees metadata: sizes, timing, the API key.</li>
+          <li>A fact the box doesn't know is sensitive relies on the reworded-leak check.</li></ul></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="next" class="next">
+    <div class="wrap">
+      <p class="label">What's next</p>
+      <h2>The same box, without the Pi.</h2>
+      <p class="note">A Raspberry Pi is a good always-on home for the box. The next step is letting a family use a device they already own. Everything in this section is planned, not built.</p>
+      <div class="form-factors">
+        <div class="ff">
+          <div class="glyph" aria-hidden="true"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#533afd" stroke-width="1.6"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg></div>
+          <h3>familybox app</h3>
+          <p>Install the box on a family laptop or desktop you already trust.</p>
+          <ul>
+            <li>Same answer gate, approvals, trust timeline and NEAR verification.</li>
+            <li>Files encrypted at rest, unlocked when the app is open.</li>
+            <li>Approvals and alerts on a phone companion.</li>
+            <li>A Mac sandbox for the analysis workbench (today it needs Linux).</li>
+          </ul>
+          <div class="spacer"></div>
+          <span class="tag">planned</span>
+        </div>
+        <div class="ff">
+          <div class="glyph" aria-hidden="true"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#533afd" stroke-width="1.6"><rect x="7" y="2" width="10" height="8" rx="1"/><rect x="5" y="10" width="14" height="12" rx="2"/><path d="M10 5h1M13 5h1"/></svg></div>
+          <h3>familybox key</h3>
+          <p>The whole box on an encrypted flash drive. Plug it in, unlock it, ask; unplug it and nothing stays behind.</p>
+          <ul>
+            <li>Portable mode: runs from the drive on the computer it's plugged into.</li>
+            <li>Boot mode: starts the computer into a small Linux box system, so the host's own OS never sees the files.</li>
+            <li>Documents, keys and logs live only on the drive, encrypted.</li>
+            <li>The drive is the thing you lock in the drawer.</li>
+          </ul>
+          <div class="spacer"></div>
+          <span class="tag">planned</span>
+        </div>
+        <div class="ff">
+          <div class="glyph" aria-hidden="true"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#533afd" stroke-width="1.6"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h5"/></svg></div>
+          <h3>Raspberry Pi box</h3>
+          <p>What runs today: always on at home, so assistants can reach it any time and the analysis sandbox works out of the box.</p>
+          <ul>
+            <li>Installs with one script, no sudo.</li>
+            <li>693 tests; 691 pass on the Pi 5 itself.</li>
+            <li>Checks NEAR's proof on-device in 1.6 to 5 seconds.</li>
+          </ul>
+          <div class="spacer"></div>
+          <span class="tag done">available now</span>
+        </div>
+      </div>
+      <div class="tradeoffs">
+        <h3>What changes on a personal device</h3>
+        <ul>
+          <li><b>The box is only as private as the device it runs on.</b> A Pi does one job; a family laptop also runs a browser, email and everything else. Boot mode on the key avoids trusting the host OS.</li>
+          <li><b>It only answers while it's running.</b> An app or a key that's unplugged means assistants get "the box is offline", never a fallback.</li>
+          <li><b>Losing a key must not lose the data.</b> Encrypted backups (already built) and a recovery code come first.</li>
+        </ul>
+      </div>
+      <div class="grid">
+        <div class="card"><h3>Red-team page</h3><p>Anyone can try to get the fictional family's data out of the box, live, with a hard daily spending cap.</p><span class="tag">built, not hosted yet</span></div>
+        <div class="card"><h3>Logs anchored on NEAR</h3><p>A family can prove what left the box and when, against a record on NEAR that no one can quietly rewrite.</p><span class="tag">ready, needs a testnet account</span></div>
+        <div class="card"><h3>Approve button on hardware</h3><p>The UNO Q button on the real board, plus iPhone HEIC photos.</p><span class="tag">planned</span></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="try">
+    <div class="wrap">
+      <p class="label">Try it</p>
+      <h2>Two minutes, no API key.</h2>
+      <p class="note">Without a key the box replays recorded enclave conversations for the demo questions. Its real tools, access checks and answer gate still run.</p>
+<pre><span class="c"># Python 3.12+ and uv</span>
+git clone https://github.com/Ethan-Castro/familybox && cd familybox
+uv sync
+export FAMILYBOX_HOME=$PWD/demo        <span class="c"># a fictional family: Dana, Sam and Maya</span>
+
+uv run familybox ask --as maya "What medications am I on?"
+uv run familybox ask --as maya "What did the doctor say at Mom's last visit?"
+uv run familybox pending --as maya     <span class="c"># values held for Maya's approval</span>
+uv run pytest -q tests</pre>
+      <div class="hero-cta">
+        <a class="btn" href="https://github.com/Ethan-Castro/familybox">Get the code</a>
+        <a class="btn ghost" href="https://github.com/Ethan-Castro/familybox/blob/main/docs/THREAT_MODEL.md">Read the threat model</a>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <div><strong>familybox</strong> · Built at NEAR Hackathon 2026 · Apache-2.0</div>
+    <div>Uses NEAR AI Cloud and the nearai-inference-sdk. All people and records shown are fictional.</div>
+  </div>
+</footer>
+
+<script>
+(() => {
+  const W = 680, H = 230, NS = "http://www.w3.org/2000/svg";
+  const nodes = [
+    { id: "a", label: "Your assistant", x: 85, y: 115 },
+    { id: "b", label: "familybox\n(at home)", x: 290, y: 115 },
+    { id: "e", label: "NEAR enclave", x: 540, y: 55 },
+    { id: "f", label: "Family files", x: 540, y: 175 },
+  ];
+  const steps = [
+    { m: ["a","b"], p: "question", c: "Maya's assistant asks: what's my SSN for the FAFSA?" },
+    { n: "b", p: "attestation ✓", c: "The box checks NEAR's hardware proof before anything is sent." },
+    { m: ["b","e"], p: "question", lock: 1, c: "The question goes, encrypted, to the verified enclave model." },
+    { m: ["e","b"], p: "search_files", lock: 1, c: "The model asks the box to search. It never sees the files directly." },
+    { m: ["b","f"], p: "Maya's folders only", c: "The box searches only what Maya may read." },
+    { m: ["f","b"], p: "ssn_card.txt", c: "The matching text comes back to the box." },
+    { m: ["b","e"], p: "file text", lock: 1, c: "The box passes it, still encrypted, into the enclave." },
+    { m: ["e","b"], p: "signed draft", lock: 1, c: "The model drafts an answer. The box checks the enclave's signature." },
+    { n: "b", p: "answer gate", c: "The box checks the draft against the real SSNs and IDs it holds." },
+    { m: ["b","a"], p: "SSN ending 4322", c: "The assistant gets a safe answer. The full number waits for Maya's approval on her phone." },
+  ];
+  const host = document.getElementById("flow");
+  const el = (t, a = {}, p) => { const e = document.createElementNS(NS, t); for (const k in a) e.setAttribute(k, a[k]); if (p) p.appendChild(e); return e; };
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+  const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": "How a question flows through familybox" });
+  host.appendChild(svg);
+  host.insertAdjacentHTML("beforeend", '<div class="bar"><div class="cap" aria-live="polite"><span class="n"></span><span class="txt"></span></div><div class="dots"></div><button type="button" class="pp">Pause</button></div>');
+  const pos = Object.fromEntries(nodes.map(n => [n.id, n]));
+  const seen = new Set();
+  steps.forEach(s => s.m && seen.add([...s.m].sort().join("|")));
+  const eg = el("g", {}, svg);
+  seen.forEach(k => { const [a, b] = k.split("|"); el("line", { class: "edge", x1: pos[a].x, y1: pos[a].y, x2: pos[b].x, y2: pos[b].y }, eg); });
+  const ne = {};
+  nodes.forEach(n => {
+    const g = el("g", { class: "node", transform: `translate(${n.x},${n.y})` }, svg);
+    el("rect", { x: -66, y: -26, width: 132, height: 52, rx: 8 }, g);
+    const lines = n.label.split("\n");
+    lines.forEach((l, i) => { el("text", { y: (i - (lines.length - 1) / 2) * 16 }, g).textContent = l; });
+    ne[n.id] = g;
+  });
+  const top = el("g", {}, svg);
+  const cap = host.querySelector(".txt"), num = host.querySelector(".n"), dots = host.querySelector(".dots"), pp = host.querySelector(".pp");
+  steps.forEach(() => dots.appendChild(document.createElement("i")));
+  let paused = false, visible = false;
+  pp.onclick = () => { paused = !paused; pp.textContent = paused ? "Play" : "Pause"; };
+  new IntersectionObserver(es => es.forEach(x => visible = x.isIntersecting), { threshold: 0.25 }).observe(host);
+  const pill = (cls, text) => {
+    const g = el("g", { class: cls }, top), r = el("rect", { rx: 12, height: 24, y: -12 }, g), t = el("text", {}, g);
+    t.textContent = text; const w = Math.max(44, t.getComputedTextLength() + 22);
+    r.setAttribute("width", w); r.setAttribute("x", -w / 2); return g;
+  };
+  (async function loop() {
+    for (;;) {
+      top.replaceChildren(); Object.values(ne).forEach(g => g.classList.remove("on", "bad"));
+      for (let i = 0; i < steps.length; i++) {
+        while (paused || !visible) await sleep(150);
+        const s = steps[i];
+        num.textContent = `${i + 1} / ${steps.length}`; cap.textContent = s.c;
+        [...dots.children].forEach((d, j) => d.classList.toggle("on", j <= i));
+        top.replaceChildren(); Object.values(ne).forEach(g => g.classList.remove("on"));
+        if (s.m) {
+          const [a, b] = s.m.map(id => pos[id]);
+          ne[s.m[0]].classList.add("on");
+          const g = pill("pkt", (s.lock ? "\u{1F512} " : "") + s.p);
+          const anim = g.animate([{ transform: `translate(${a.x}px,${a.y}px)` }, { transform: `translate(${b.x}px,${b.y - 34}px)` }],
+            { duration: reduce ? 1 : 1300, easing: "cubic-bezier(.45,0,.25,1)", fill: "forwards" });
+          await anim.finished.catch(() => {});
+          ne[s.m[0]].classList.remove("on"); ne[s.m[1]].classList.add("on");
+        } else {
+          const n = pos[s.n]; ne[s.n].classList.add("on");
+          const g = pill("badge", s.p); g.setAttribute("transform", `translate(${n.x},${n.y - 42})`);
+          if (!reduce) g.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 350, fill: "forwards" });
+        }
+        await sleep(reduce ? 3200 : 1900);
+      }
+      await sleep(1800);
+    }
+  })();
+})();
+</script>
+</body>
+</html>
