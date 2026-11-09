@@ -18,6 +18,18 @@ from . import access
 from .config import Config, Person
 
 TEXT_SUFFIXES = {".txt", ".md", ".json", ".csv", ".pdf"}
+# Photos are never read as files. Their transcript (<photo>.transcript.txt, see vision.py) is read instead.
+IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif", ".gif", ".bmp", ".tif", ".tiff"}
+TRANSCRIPT_SUFFIX = ".transcript.txt"
+
+
+def photo_of(rel_path: str) -> str | None:
+    """The photo a transcript file belongs to, or None."""
+    if rel_path.endswith(TRANSCRIPT_SUFFIX):
+        photo = rel_path[: -len(TRANSCRIPT_SUFFIX)]
+        if Path(photo).suffix.lower() in IMAGE_SUFFIXES:
+            return photo
+    return None
 
 SSN_RE = re.compile(r"\b(\d{3})[- ](\d{2})[- ](\d{4})\b")
 # "Label: value" lines whose value is an identifier the gate should protect.
@@ -167,6 +179,9 @@ class Store:
             (fts,),
         ).fetchall()
         hits = [{"path": p, "context": s.replace("\n", " ")} for p, s in rows if access.can_read(person, p)]
+        for h in hits:
+            if photo := photo_of(h["path"]):
+                h["photo"] = photo      # this text was transcribed from that photo
         return hits[:limit]
 
     def read(self, person: Person, rel_path: str, max_chars: int = 12000) -> str | None:
@@ -176,6 +191,11 @@ class Store:
         target = (self.cfg.files / rel_path).resolve()
         if self.cfg.files.resolve() not in target.parents or not target.is_file():
             return None
+        if target.suffix.lower() in IMAGE_SUFFIXES:
+            # A photo's bytes never go to the model: give its transcript, or nothing if there is none.
+            target = target.with_name(target.name + TRANSCRIPT_SUFFIX)
+            if not target.is_file():
+                return None
         return extract_text(target)[:max_chars]
 
     def nonhealth_words(self) -> set[str]:

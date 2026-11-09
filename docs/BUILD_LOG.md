@@ -82,3 +82,23 @@ Installed through the fleet control plane's exec jobs, with no SSH (`scripts/fle
 - **Fail closed:** an error in a pre or post check stops the question, and nothing is answered.
 - **Enclave:** `ask_live` takes the tool list and an event callback. Replay mode sends the same events, marked as replayed.
 - **Tests:** 113 passed (97 before plus 16 new plugin tests). No live calls were made.
+
+## 2026-11-08: Photo transcription, both copies kept
+
+- **What:** `familybox add --as <person> photo.jpg [--folder ids]` and a Photos page on the box. Built as a plugin (`src/familybox/plugins/photos.py`) plus `src/familybox/vision.py`. Core edits: `store.py` (reading a photo returns its transcript, never the image bytes; search hits from a transcript name their photo) and two CSS rules in `web.py`.
+- **How a photo leaves the box:** Pillow checks the size, turns it upright and re-encodes it as a JPEG without EXIF, so location and camera data stay home. Then the SDK verifies attestation, the request is E2EE to the attested key, and the reply must carry a verified `provider_tee` signature. Any failure keeps the photo, writes no transcript and indexes nothing. It can be retried later.
+- **Both copies:** the original (0600, byte for byte) and `<photo>.transcript.txt` (0600). The transcript header holds model, signer, signature kind, time and the photo's SHA-256; the box page warns when the transcript no longer matches the photo. Model output is cleaned into labeled lines the store indexes (`SSN:`, `Member ID:`, `Passport number:`, ...). Ruler lines are dropped so the model cannot fake the header.
+- **Which model reads images under E2EE (live, one fictional SSN card each):**
+
+| Model | Result | Signature | Time (attestation + reply) | Tokens in/out |
+|---|---|---|---|---|
+| Qwen/Qwen3-VL-30B-A3B-Instruct | correct, word for word | provider_tee, verified | 2.9 s + 1.0 s | 662 / 80 |
+| z-ai/glm-5.3-flash | correct, word for word | provider_tee, verified | 1.5 s + 5.1 s | 819 / 167 |
+
+  Both work. Qwen3-VL is the default (faster reply, fewer tokens); `vision_model` in family.toml or `FAMILYBOX_VISION_MODEL` switches it. Image content parts are sent inside the encrypted message content (the SDK JSON-encodes list content before encrypting it), and both enclaves decoded them. Raw output: `spikes/vision_probe_results.json`.
+- **Live end to end (scratch copy of the demo household):**
+  - Maya added `insurance_card_maya.png` to her health folder. Qwen3-VL read it in about 4 s; the transcript has `Member ID: BPF-5530-2178` and `Group number: 77120`. The CLI printed only "Member Id ending 2178, Group Number ending 7120".
+  - Maya then asked for the full member ID (DeepSeek, 3 turns, all `provider_tee`). The model read the transcript and gave only "ends in 2178", so the gate passed it.
+  - Dana added `passport_page_dana.jpg`; the passport number was read correctly and indexed.
+  - The optional live test (`tests/test_vision_live.py`) passed once. Total spend for all live calls: under $0.02.
+- **Tests:** 158 passed, 1 skipped (the live test without a key). 45 new tests in `tests/test_vision.py` with the enclave mocked: fail-closed cases (no attestation, gateway signature, SDK errors, no key, empty reply), EXIF removal, size limits, label clean-up, header forgery, no-overwrite names, owner-only viewing, the gate holding and refusing numbers read from photos, CLI and web flows.

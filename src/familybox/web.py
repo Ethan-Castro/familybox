@@ -317,6 +317,8 @@ button.danger { background: transparent; color: var(--bad); border: 1px solid va
 .value { font: 600 22px/1.3 ui-monospace, Menlo, Consolas, monospace; word-break: break-all;
   padding: 12px; border: 2px dashed var(--accent); border-radius: 8px; margin: 8px 0; }
 ul.files { list-style: none; padding: 0; margin: 0; }
+main img { max-width: 100%; height: auto; display: block; }
+pre.value { white-space: pre-wrap; font-size: 16px; }
 ul.files li { padding: 10px 0; border-bottom: 1px solid var(--line); }
 ul.files li:last-child { border-bottom: 0; }
 .name { word-break: break-all; }

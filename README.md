@@ -52,6 +52,15 @@ uv run familybox serve                    # https://127.0.0.1:8443 (on the Pi: -
 
 The page lets each person upload into their own folders (or `shared/`), see their files, and approve or deny held values. Uploads never leave the box. The page loads no outside scripts, fonts or analytics. Google Drive import and encrypted backup are in [docs/CLOUD.md](docs/CLOUD.md).
 
+### Photos of cards and documents
+
+```bash
+uv run --env-file .env familybox add --as maya card.jpg --folder ids   # or the Photos page on the box
+uv run familybox photos --as maya                                      # which photos have been read
+```
+
+The box sends the photo once to a NEAR enclave vision model (`Qwen/Qwen3-VL-30B-A3B-Instruct`; attestation checked, E2EE on, `provider_tee` signature required). Location and camera data are removed first. It keeps both copies: the original photo (only its owner can look at it, on the box page) and `card.jpg.transcript.txt`, which starts with the model, signer, signature kind, time and the photo's SHA-256. The transcript is indexed like any file, so search and the gate cover the numbers printed on the card. Assistants never get the photo. JPG, PNG and WEBP; iPhone HEIC is not supported yet.
+
 ## How a question flows
 
 1. **Who is asking:** the MCP connection is bound to one person.
@@ -102,7 +111,7 @@ With E2EE on, a request whose history contains `assistant.tool_calls` plus `tool
 | Path | What |
 |---|---|
 | `src/familybox/` | `config`, `access`, `store` (SQLite FTS5 + protected-value index), `enclave`, `gate`, `approvals`, `box`, `cli`, `mcp_server`, `web`, `cloud/` |
-| `demo/` | The fictional household: `family.toml` and `files/` |
+| `demo/` | The fictional household: `family.toml`, `files/`, and `photos/` (made-up cards from `scripts/make_photo_fixtures.py`) |
 | `replays/` | Recorded enclave conversations for the no-key demo |
 | `eval/` | Attack suite, results and reports |
 | `spikes/` | The Day-1 experiments and probes behind the design |
