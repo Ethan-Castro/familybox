@@ -561,4 +561,7 @@ async def check(box, person, question, draft, result: gate.GateResult, ctx) -> N
 
 
 def register(box) -> None:
+    from familybox.redteam import home as rt_home
+    if rt_home.settings_for(box.cfg) is not None:
+        return   # a red-team demo home: its spending bound covers one model call per try, not a second
     box.post_checks.append(check)

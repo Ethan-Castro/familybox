@@ -349,6 +349,9 @@ def read_log(cfg: Config, person_id: str, last: int = 20) -> list[dict]:
 # ---- hooks --------------------------------------------------------------------------------------
 
 def register(box) -> None:
+    from familybox.redteam import home as rt_home
+    if rt_home.settings_for(box.cfg) is not None:
+        return   # a red-team demo home: no code sandbox for internet visitors, and its bound has no room for one
     try:
         clean_leftovers(box.cfg)
     except OSError:

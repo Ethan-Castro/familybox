@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>familybox: How Each Part Works</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter+Tight:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+:root {
+  --indigo: #533afd; --ink: #061b31; --slate: #64748d; --steel: #50617a; --smoke: #839bc8;
+  --mist: #f8fafd; --frost: #e5edf5; --lilac: #d6d9fc; --wash: #e8e9ff; --stop: #c4314b; --stopwash: #fde8ec;
+  --font: "Inter Tight", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  color-scheme: light;
+}
+* { box-sizing: border-box; }
+html, body { background: #fff; }
+body { margin: 0; color: var(--ink); font-family: var(--font); font-weight: 300; font-size: 16px; line-height: 1.4;
+  letter-spacing: -0.01em; font-feature-settings: "ss01" on, "tnum" on; }
+main { max-width: 960px; margin: 0 auto; padding: 72px 24px 96px; }
+h1, h2 { font-weight: 300; margin: 0; text-wrap: balance; }
+h1 { font-size: clamp(36px, 6vw, 56px); line-height: 1.03; letter-spacing: -0.025em; max-width: 16ch; }
+.lede { font-size: clamp(18px, 2.4vw, 22px); color: var(--slate); margin: 24px 0 0; max-width: 50ch; line-height: 1.35; }
+.label { font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--smoke); font-weight: 400; margin: 0 0 12px; }
+.group { margin: 72px 0 0; padding-top: 24px; border-top: 1px solid var(--frost); }
+.group h2 { font-size: 32px; letter-spacing: -0.02em; }
+.part { margin-top: 48px; }
+.part h3 { font-size: 22px; font-weight: 300; margin: 0; letter-spacing: -0.01em; }
+.part .note { color: var(--steel); margin: 6px 0 0; font-size: 15px; max-width: 62ch; }
+.stage { margin-top: 16px; border: 1px solid var(--frost); border-radius: 6px; background: var(--mist); }
+svg { display: block; width: 100%; height: auto; }
+.bar { display: flex; align-items: center; gap: 16px; padding: 12px 16px; border-top: 1px solid var(--frost); background: #fff; border-radius: 0 0 6px 6px; }
+.cap { flex: 1; font-size: 15px; color: var(--ink); min-height: 2.8em; display: flex; align-items: center; }
+.cap .n { color: var(--smoke); font-size: 12px; margin-right: 10px; white-space: nowrap; }
+.dots { display: flex; gap: 4px; }
+.dots i { width: 6px; height: 6px; border-radius: 50%; background: var(--frost); }
+.dots i.on { background: var(--indigo); }
+button { font: inherit; font-size: 13px; font-weight: 400; color: var(--indigo); background: #fff; border: 1px solid var(--lilac);
+  border-radius: 9999px; padding: 4px 12px; cursor: pointer; }
+button:hover { background: var(--wash); }
+button:focus-visible { outline: 2px solid var(--indigo); outline-offset: 2px; }
+.node rect { fill: #fff; stroke: var(--frost); stroke-width: 1.5; transition: fill .3s, stroke .3s; }
+.node.on rect { fill: var(--wash); stroke: var(--indigo); }
+.node.bad rect { fill: var(--stopwash); stroke: var(--stop); }
+.node text { font: 400 13px var(--font); fill: var(--ink); text-anchor: middle; dominant-baseline: middle; }
+.edge { stroke: var(--lilac); stroke-width: 1.5; stroke-dasharray: 4 5; }
+.pkt rect { fill: var(--indigo); }
+.pkt.bad rect { fill: var(--stop); }
+.pkt text { font: 500 12px var(--font); fill: #fff; text-anchor: middle; dominant-baseline: middle; }
+.badge rect { fill: var(--ink); }
+.badge.bad rect { fill: var(--stop); }
+.badge text { font: 500 11.5px var(--font); fill: #fff; text-anchor: middle; dominant-baseline: middle; }
+footer { margin-top: 72px; padding: 24px; background: var(--mist); border-radius: 4px; color: var(--slate); font-size: 14px; }
+footer strong { color: var(--ink); font-weight: 400; }
+@media (max-width: 560px) { .bar { flex-wrap: wrap; } .cap { flex-basis: 100%; } }
+</style>
+</head>
+<body>
+<main>
+  <p class="label">NEAR Hackathon 2026 · Privacy &amp; Private AI</p>
+  <h1>familybox, one part at a time</h1>
+  <p class="lede">Each animation follows one piece of the box. Indigo is data moving, a lock means it is encrypted to the NEAR enclave, and red means the box stopped something.</p>
+  <div id="parts"></div>
+  <footer><strong>Examples use the fictional Okafor family</strong> (Dana, Sam and Maya). No real data. Status as of Nov 8, 2026: the UNO Q button and the red-team page are built and merging; the button is not yet tried on the board.</footer>
+</main>
+<script>
+const W = 640, H = 230;
+const N = (id, label, x, y) => ({ id, label, x, y });
+
+const GROUPS = [
+ { title: "The core", parts: [
+  { t: "How a question is answered", note: "The assistant never touches the files. The NEAR model does the reading inside an enclave, and the box checks what comes out.",
+    nodes: [N("a","Assistant",80,115), N("b","Family box\n(Raspberry Pi)",270,115), N("e","NEAR enclave",500,55), N("f","Family files",500,175)],
+    steps: [
+     {m:["a","b"], p:"question", c:"Maya's assistant asks: what's my SSN for the FAFSA?"},
+     {m:["b","e"], p:"question", lock:1, c:"The box sends it, encrypted, to a verified NEAR enclave model."},
+     {m:["e","b"], p:"search_files", lock:1, c:"The model asks the box to search. It never sees the files directly."},
+     {m:["b","f"], p:"search", c:"The box searches only the folders Maya may read."},
+     {m:["f","b"], p:"ssn_card.txt", c:"The matching text comes back to the box."},
+     {m:["b","e"], p:"file text", lock:1, c:"The box passes the text, still encrypted, into the enclave."},
+     {m:["e","b"], p:"draft answer", lock:1, c:"The model writes a draft answer, signed by the enclave."},
+     {n:"b", p:"gate check", c:"The box checks the draft against the real stored SSNs and IDs."},
+     {m:["b","a"], p:"SSN ending 4321", c:"The assistant gets a safe answer. The full number waits for Maya's approval."} ] },
+  { t: "Verified, encrypted NEAR model", note: "The box trusts the model only after checking the hardware proof itself, and only while every reply stays enclave-signed.",
+    nodes: [N("b","Family box",90,115), N("g","NEAR gateway",320,115), N("e","Model enclave\n(TEE)",550,115)],
+    steps: [
+     {m:["b","g"], p:"prove it", c:"Before a question, the box asks NEAR to prove where the model runs."},
+     {m:["e","b"], p:"attestation", c:"The enclave returns a hardware-signed report of its code and key."},
+     {n:"b", p:"verified ✓", c:"The box checks the report itself. The Pi does this in about 1.6 s."},
+     {m:["b","e"], p:"question", lock:1, c:"The prompt is encrypted to the enclave's key, so the gateway can't read it."},
+     {m:["e","b"], p:"signed reply", lock:1, c:"Each reply carries the enclave's signature."},
+     {n:"b", p:"signature ✓", c:"The box checks the signature on every turn."},
+     {m:["g","b"], p:"gateway-signed", bad:1, c:"If a reply is signed by anything other than the enclave..."},
+     {n:"b", p:"stopped", bad:1, c:"...the question stops. Nothing falls back to an unverified path."} ] },
+  { t: "Per-person files and the answer gate", note: "Each person reaches only their own folders and the shared ones. Health folders are owner-only.",
+    nodes: [N("m","Maya",80,115), N("b","Family box",300,115), N("mf","Maya's files",530,55), N("df","Dana's health\nrecords",530,175)],
+    steps: [
+     {m:["m","b"], p:"question", c:"Maya asks what medication her mom takes."},
+     {m:["b","df"], p:"read?", c:"The box checks who owns the folder."},
+     {n:"df", p:"refused", bad:1, c:"Dana's health records are refused for Maya."},
+     {m:["b","mf"], p:"read", c:"Maya's own files are fine to read."},
+     {n:"b", p:"gate", c:"Every answer is checked against stored SSNs, IDs and diagnoses."},
+     {m:["b","m"], p:"ending 4321", c:"Her own SSN comes out masked. Someone else's would be refused outright."} ] },
+  { t: "Approvals on the owner's screen", note: "Full values never go back to the assistant that asked.",
+    nodes: [N("a","Assistant",90,60), N("b","Family box",320,115), N("o","Owner's phone\n(box page)",550,115)],
+    steps: [
+     {n:"b", p:"held: full SSN", c:"The gate holds the full value instead of sending it."},
+     {m:["b","a"], p:"ending 4321", c:"The assistant only gets the masked version."},
+     {m:["b","o"], p:"approve?", c:"The owner sees the request on the box's own page."},
+     {n:"o", p:"approved", c:"The owner approves."},
+     {m:["b","o"], p:"987-65-4321", c:"The full value shows on the owner's screen only."},
+     {n:"a", p:"never sent", c:"It is never sent to the assistant."} ] },
+  { t: "Private upload and Google Drive", note: "Files go straight to the box. The cloud only ever stores sealed backups.",
+    nodes: [N("p","Phone",90,60), N("b","Family box",320,115), N("d","Google Drive",550,115)],
+    steps: [
+     {m:["p","b"], p:"one-time code", c:"A family member signs in to the box's page with a one-time code."},
+     {m:["p","b"], p:"W-2.pdf", c:"They upload a file straight to the box over HTTPS on the home network."},
+     {n:"b", p:"indexed", c:"The box files it in their folder and starts protecting the numbers in it."},
+     {m:["d","b"], p:"import", c:"Or connect Google Drive once and import a folder, read-only."},
+     {m:["b","d"], p:"sealed backup", lock:1, c:"Backups leave the box encrypted. Google stores only a sealed blob."} ] },
+ ]},
+ { title: "The ten new features", parts: [
+  { t: "ChatGPT and Claude on the web", note: "The box runs its own sign-in, so each assistant is tied to one family member.",
+    nodes: [N("c","ChatGPT or\nClaude web",90,115), N("b","Family box",320,115), N("m","Maya's screen",550,115)],
+    steps: [
+     {m:["c","b"], p:"connect", c:"Maya adds the box as a connector in ChatGPT or Claude."},
+     {m:["b","m"], p:"consent page", c:"The box shows its own consent page."},
+     {m:["m","b"], p:"one-time code", c:"Maya enters a one-time code from the box to approve this assistant."},
+     {m:["b","c"], p:"token", c:"The assistant gets a token tied to Maya. It rotates and can be revoked."},
+     {m:["c","b"], p:"question", c:"From then on, that assistant can only ever ask as Maya."} ] },
+  { t: "Live trust panel", note: "Every question gets a timeline the family can watch while it runs.",
+    nodes: [N("b","Family box",90,115), N("e","NEAR enclave",320,55), N("act","Activity page",550,115)],
+    steps: [
+     {m:["b","e"], p:"question", lock:1, c:"A question goes to the enclave."},
+     {m:["b","act"], p:"attestation ✓", c:"Each step is written to the question's timeline as it happens."},
+     {m:["b","act"], p:"turn 1 signed", c:"Every signed turn shows up..."},
+     {m:["b","act"], p:"files read: 2", c:"...the files opened or refused..."},
+     {m:["b","act"], p:"gate: masked", c:"...and what the gate held back."},
+     {n:"act", p:"live", c:"Admins see that it happened, but never other people's answers or file names."} ] },
+  { t: "Photo transcription, both copies kept", note: "Snap a card or W-2 and the box can answer questions about it.",
+    nodes: [N("p","Photo of\ninsurance card",80,115), N("b","Family box",290,115), N("v","NEAR vision\nenclave",520,55), N("s","Box storage",520,175)],
+    steps: [
+     {m:["p","b"], p:"photo", c:"A family member uploads a photo of a card."},
+     {n:"b", p:"location removed", c:"The box strips location and camera data first."},
+     {m:["b","v"], p:"image", lock:1, c:"It goes once, encrypted, to NEAR's verified vision model."},
+     {m:["v","b"], p:"signed transcript", lock:1, c:"The enclave reads it and signs the transcript."},
+     {m:["b","s"], p:"photo + text", c:"The box keeps both: the original image and the transcript."},
+     {n:"s", p:"numbers protected", c:"The numbers on the card are now covered by the gate like any document."} ] },
+  { t: "Fill forms on the box", note: "The assistant drafts the form. The real values only ever exist on the box.",
+    nodes: [N("a","Assistant",90,115), N("b","Family box",320,115), N("o","Owner's screen",550,115)],
+    steps: [
+     {m:["a","b"], p:"maya.ssn → field 3", c:"The assistant says which detail goes in which field, never the value."},
+     {n:"b", p:"filled locally", c:"The box fills in the real values on the Pi."},
+     {m:["b","a"], p:"masked summary", c:"The assistant gets a summary with the values masked."},
+     {m:["b","o"], p:"approve form?", c:"Every owner whose data is on the form approves."},
+     {m:["b","o"], p:"FAFSA.pdf", c:"Then the filled PDF can be downloaded from the box's own page."} ] },
+  { t: "Alert when NEAR's code changes", note: "The box remembers exactly what code it trusted, and notices if it changes.",
+    nodes: [N("b","Family box",90,115), N("n","NEAR code\nfingerprint",320,115), N("o","Owner",550,115)],
+    steps: [
+     {m:["n","b"], p:"fingerprint", c:"The box records the fingerprint of NEAR's serving code."},
+     {n:"b", p:"matches pin ✓", c:"Each question checks it against the pinned value."},
+     {m:["n","b"], p:"new fingerprint", bad:1, c:"If NEAR's code changes..."},
+     {n:"b", p:"paused", bad:1, c:"...sensitive questions stop before any prompt is sent."},
+     {m:["b","o"], p:"review change", c:"The owner reviews the change and decides."},
+     {n:"b", p:"decision logged", c:"Every decision goes into a tamper-evident history."} ] },
+  { t: "Second check for reworded leaks", note: "Word matching can't catch a diagnosis described in other words. A second enclave call can.",
+    nodes: [N("d","Draft answer",80,115), N("g","Gate",270,115), N("j","NEAR enclave\njudge",470,55), N("a","Assistant",570,175)],
+    steps: [
+     {m:["d","g"], p:"“a breathing condition”", c:"A draft hints at Maya's asthma without saying the word."},
+     {n:"g", p:"no exact match", c:"The word check alone would let it through."},
+     {m:["g","j"], p:"reveals a fact?", lock:1, c:"A second verified enclave call asks whether it reveals a protected fact."},
+     {m:["j","g"], p:"yes: diagnosis", lock:1, c:"The judge says yes."},
+     {n:"g", p:"held", c:"The answer is masked and held for its owner. If the check itself fails, it's held too."},
+     {m:["g","a"], p:"safe answer", c:"Only the checked answer reaches the assistant."} ] },
+  { t: "Confidential analysis workbench", note: "The model can write code to analyze files, and that code runs on the Pi with no way out.",
+    nodes: [N("e","NEAR enclave",80,115), N("b","Family box",270,115), N("sb","Sandbox on Pi\n(no network)",490,55), N("f","Copies of\nSam's files",490,175)],
+    steps: [
+     {m:["e","b"], p:"python script", lock:1, c:"To total Sam's W-2s, the model writes a short Python script."},
+     {m:["b","sb"], p:"script", c:"The box runs it in a sealed sandbox: no network, no new processes."},
+     {m:["f","sb"], p:"read-only", c:"The script sees only copies of the asker's files."},
+     {n:"sb", p:"time + memory caps", c:"Time, memory and output size are capped."},
+     {m:["sb","b"], p:"output", c:"The output goes back to the box..."},
+     {m:["b","e"], p:"output", lock:1, c:"...and to the model, never straight to the assistant. Every script is logged."} ] },
+  { t: "Tamper-evident disclosure log", note: "Each person can check that nobody quietly rewrote what left the box.",
+    nodes: [N("q1","Entry 41",80,115), N("q2","Entry 42",240,115), N("q3","Entry 43",400,115), N("nn","NEAR testnet",565,115)],
+    steps: [
+     {n:"q1", p:"hash a91f", c:"Every time something leaves the box, it goes in that person's log."},
+     {m:["q1","q2"], p:"prev a91f", c:"Each entry includes the hash of the one before it."},
+     {m:["q2","q3"], p:"prev 7c20", c:"Changing an old entry would break every hash after it."},
+     {n:"q3", p:"verify ✓", c:"One command checks the whole chain."},
+     {m:["q3","nn"], p:"chain head", c:"The latest hash can be anchored on NEAR testnet. Dry run until there's an account."} ] },
+  { t: "Approve button on the UNO Q", note: "A physical button for approvals. Built and simulated; not yet tried on the board.",
+    nodes: [N("b","Family box",90,115), N("u","UNO Q\nLED matrix",320,115), N("o","Owner",550,115)],
+    steps: [
+     {m:["b","u"], p:"request", c:"A held value is waiting for its owner."},
+     {n:"u", p:"Maya: SSN?", c:"The LED matrix shows who is asking for what."},
+     {m:["o","u"], p:"press", c:"The owner presses the button."},
+     {m:["u","b"], p:"approve", c:"The board's token can only approve or deny. It never sees values."},
+     {n:"b", p:"on owner's screen", c:"The value then shows once on the owner's own screen."} ] },
+  { t: "Red-team page for judges", note: "Judges try to break a fictional family's box themselves. Local only until hosting is approved.",
+    nodes: [N("v","Judge",90,115), N("b","Fictional\nfamily box",320,115), N("k","Leak checker",550,115)],
+    steps: [
+     {m:["v","b"], p:"attack prompt", c:"A judge picks a family member and tries to get Maya's SSN out."},
+     {m:["b","v"], p:"assistant's view", c:"They see exactly what an assistant would receive, plus the trust timeline."},
+     {m:["b","k"], p:"answer", c:"The answer is scored by the same checker as the attack suite."},
+     {n:"k", p:"no leak", c:"The score shows whether anything got out."},
+     {n:"b", p:"spend cap", c:"A hard daily spending cap switches to recorded answers when it's reached."} ] },
+ ]},
+];
+
+const SVGNS = "http://www.w3.org/2000/svg";
+const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+const el = (tag, attrs = {}, parent) => { const e = document.createElementNS(SVGNS, tag);
+  for (const k in attrs) e.setAttribute(k, attrs[k]); if (parent) parent.appendChild(e); return e; };
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+function pill(parent, cls, text) {
+  const g = el("g", { class: cls }, parent);
+  const r = el("rect", { rx: 12, height: 24, y: -12 }, g);
+  const t = el("text", {}, g); t.textContent = text;
+  const w = Math.max(40, t.getComputedTextLength() + 22);
+  r.setAttribute("width", w); r.setAttribute("x", -w / 2);
+  return g;
+}
+
+function build(part, idx, host) {
+  const sec = document.createElement("section"); sec.className = "part";
+  sec.innerHTML = `<p class="label">Part ${String(idx).padStart(2, "0")}</p><h3></h3><p class="note"></p>
+    <div class="stage"><div class="svgwrap"></div><div class="bar"><div class="cap"><span class="n"></span><span class="txt"></span></div>
+    <div class="dots"></div><button type="button" class="pp">Pause</button><button type="button" class="rp">Replay</button></div></div>`;
+  sec.querySelector("h3").textContent = part.t;
+  sec.querySelector(".note").textContent = part.note;
+  host.appendChild(sec);
+  const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": part.t }, null);
+  sec.querySelector(".svgwrap").appendChild(svg);
+  const pos = Object.fromEntries(part.nodes.map(n => [n.id, n]));
+  const edges = new Set();
+  part.steps.forEach(s => s.m && edges.add([...s.m].sort().join("|")));
+  const eg = el("g", {}, svg);
+  edges.forEach(k => { const [a, b] = k.split("|");
+    el("line", { class: "edge", x1: pos[a].x, y1: pos[a].y, x2: pos[b].x, y2: pos[b].y }, eg); });
+  const nodeEls = {};
+  part.nodes.forEach(n => {
+    const g = el("g", { class: "node", transform: `translate(${n.x},${n.y})` }, svg);
+    const lines = n.label.split("\n");
+    el("rect", { x: -62, y: -26, width: 124, height: 52, rx: 8 }, g);
+    lines.forEach((l, i) => { const t = el("text", { y: (i - (lines.length - 1) / 2) * 16 }, g); t.textContent = l; });
+    nodeEls[n.id] = g;
+  });
+  const top = el("g", {}, svg);
+  const cap = sec.querySelector(".txt"), num = sec.querySelector(".n");
+  const dots = sec.querySelector(".dots");
+  part.steps.forEach(() => dots.appendChild(document.createElement("i")));
+  const state = { paused: false, visible: false, run: 0 };
+  sec.querySelector(".pp").onclick = e => { state.paused = !state.paused; e.target.textContent = state.paused ? "Play" : "Pause"; };
+  sec.querySelector(".rp").onclick = () => { state.run++; state.paused = false; sec.querySelector(".pp").textContent = "Pause"; loop(); };
+  new IntersectionObserver(es => es.forEach(x => state.visible = x.isIntersecting), { threshold: 0.3 }).observe(sec);
+
+  const ready = async run => { while ((state.paused || !state.visible) && run === state.run) await sleep(150); return run === state.run; };
+  const reset = () => { top.replaceChildren(); Object.values(nodeEls).forEach(g => g.classList.remove("on", "bad")); };
+
+  async function loop() {
+    const run = state.run;
+    while (run === state.run) {
+      reset();
+      for (let i = 0; i < part.steps.length; i++) {
+        if (!(await ready(run))) return;
+        const s = part.steps[i];
+        num.textContent = `${i + 1} / ${part.steps.length}`; cap.textContent = s.c;
+        [...dots.children].forEach((d, j) => d.classList.toggle("on", j <= i));
+        top.replaceChildren();
+        Object.values(nodeEls).forEach(g => g.classList.remove("on"));
+        if (s.m) {
+          const [a, b] = s.m.map(id => pos[id]);
+          nodeEls[s.m[0]].classList.add("on");
+          const g = pill(top, "pkt" + (s.bad ? " bad" : ""), (s.lock ? "\u{1F512} " : "") + s.p);
+          const dur = reduce ? 1 : 1300;
+          const anim = g.animate([{ transform: `translate(${a.x}px,${a.y}px)` }, { transform: `translate(${b.x}px,${b.y - 34}px)` }],
+            { duration: dur, easing: "cubic-bezier(.45,0,.25,1)", fill: "forwards" });
+          await anim.finished.catch(() => {});
+          nodeEls[s.m[0]].classList.remove("on");
+          nodeEls[s.m[1]].classList.add(s.bad ? "bad" : "on");
+        } else {
+          const n = pos[s.n];
+          nodeEls[s.n].classList.add(s.bad ? "bad" : "on");
+          const g = pill(top, "badge" + (s.bad ? " bad" : ""), s.p);
+          g.setAttribute("transform", `translate(${n.x},${n.y - 42})`);
+          if (!reduce) g.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 350, fill: "forwards" });
+        }
+        await sleep(reduce ? 3200 : 1900);
+      }
+      await sleep(1800);
+    }
+  }
+  loop();
+}
+
+const root = document.getElementById("parts");
+let k = 1;
+GROUPS.forEach(gr => {
+  const g = document.createElement("div"); g.className = "group";
+  g.innerHTML = `<h2></h2>`; g.querySelector("h2").textContent = gr.title;
+  root.appendChild(g);
+  gr.parts.forEach(p => build(p, k++, g));
+});
+</script>
+</body>
+</html>
