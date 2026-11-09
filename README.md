@@ -1,5 +1,7 @@
 # familybox: a household privacy box for AI assistants
 
+**TEE attestation proves where the model ran. The household box decides what that model is ever allowed to reveal, and to whom.**
+
 One small box at home (a Raspberry Pi) holds the family's SSNs, W-2s, passports and health records. Anyone in the family can ask ChatGPT, Claude, Codex or Cursor about them over MCP. The assistant never sees the documents.
 
 - A **NEAR AI Cloud enclave model** (Intel TDX + NVIDIA GPU TEE) does the reasoning. It calls the box's read-only tools and sees only the asking person's files.
@@ -115,11 +117,12 @@ With E2EE on, a request whose history contains `assistant.tool_calls` plus `tool
   - Also `mcp`, `starlette`, `uvicorn`, `httpx`, `pynacl` and `cryptography`.
 - **AI coding assistants** (Claude Code) were used throughout.
 - **Earlier projects by the author** inspired the design but are not part of this repo: Base Agent, a local MCP memory server and relay, and Muse Privacy, a privacy router for another hackathon.
-- **Similar products:**
-  - Privateer offers a `--private` hand-off to a NEAR or Tinfoil enclave model.
-  - Perplexity Hybrid Compute and Secure Minions split work between local and cloud models.
-  - PII redaction proxies (and NEAR's own `auto_redact`) redact data before a cloud call.
-  - familybox's difference: the data lives on a separate household box, the assistant is treated as untrusted, the answer is checked against the real protected values, access is per person, and the full value goes only to its owner's screen.
+- **How this compares** (details in [docs/research/landscape_2026-11-08.md](docs/research/landscape_2026-11-08.md)):
+  - **TEE inference for private data** is established: NEAR AI Cloud, Tinfoil, Privatemode, Apple PCC, Google Private AI Compute. familybox builds on it rather than claiming it.
+  - **Local PII redaction** is established: Perplexity Hybrid Compute, Latet, PrivAiTe, Presidio proxies, NEAR's `auto_redact`. These detect patterns in prompts. familybox instead checks the model's answer against the actual protected values in the family's files.
+  - **Privateer** hands file work to a verified NEAR or Tinfoil enclave model from the same machine. Its docs say "the reply is the channel", and its PII gate scans prompts to unverified models. familybox keeps the data on a separate box and treats the asking assistant as untrusted.
+  - **NEARpedia** (another hackathon entry) pairs MCP with verified NEAR AI inference over a public knowledge corpus. familybox applies the same verified path to private household data, adds per-person access, and adds a gate on every answer.
+  - **PlanTwin** (research) checks a cloud planner's steps against local data. familybox checks the final answer, and pairs that with attested TEE inference.
 
 ## License
 
