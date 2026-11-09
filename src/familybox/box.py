@@ -39,7 +39,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
-from . import access, enclave, gate
+from . import access, enclave, gate, ledger
 from .config import Config, Person
 from .store import Sensitive, Store
 
@@ -360,9 +360,9 @@ class Box:
         return ans
 
     def _audit(self, ans: Answer, plugin_extra: dict | None = None) -> None:
-        log_path = self.cfg.runtime / "audit" / f"{ans.person}.jsonl"
-        log_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-        os.chmod(log_path.parent, 0o700)
+        log_dir = self.cfg.runtime / "audit"
+        log_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+        os.chmod(log_dir, 0o700)
         entry = {
             "time": int(time.time()),
             "qid": ans.qid,
@@ -381,8 +381,7 @@ class Box:
             entry["files_visible"] = ans.files_visible
         if plugin_extra:  # plugins add audit details through ctx.data["audit"][<plugin name>]
             entry["plugins"] = plugin_extra
-        from .approvals import append_private
-        append_private(log_path, json.dumps(entry))
+        ledger.append(self.cfg.runtime, ans.person, entry)   # chained: seq, prev_hash, entry_hash; 0600
 
 
 def _held_summary(held: list[gate.Held]) -> list[dict]:

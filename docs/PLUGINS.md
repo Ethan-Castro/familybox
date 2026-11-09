@@ -80,3 +80,10 @@ Steps the core emits: `question`, `attestation`, `turn`, `tool`, `error`, `pre_c
 
 Tests can register a plugin at runtime with `monkeypatch.setattr(familybox.plugins, "EXTRA", [module])`.
 See `tests/test_plugins.py`.
+
+## Audit log entries
+
+Write audit entries only through `familybox.ledger.append(cfg.runtime, person_id, entry)`. It adds `seq`,
+`prev_hash` and `entry_hash` and keeps the chain whole when several programs write at once. Appending to
+`runtime/audit/<person>.jsonl` directly breaks the chain, and `familybox log verify` will report it.
+The `anchor` plugin (`plugins/anchor.py`) is an example: a CLI command, a web page and a nav link.

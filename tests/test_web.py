@@ -1,5 +1,6 @@
 """The box's private web page: code sign-in, uploads, files, approvals and the cloud page (no network)."""
 
+import json
 import re
 import shutil
 import stat
@@ -281,6 +282,22 @@ def test_deny_records_it(cfg):
     r = dana.post(f"/approvals/{item}/deny", data={"csrf": token})
     assert r.status_code == 200 and "987-65-4320" not in r.text
     assert Approvals(cfg)._load()[item]["status"] == "denied"
+    from familybox import ledger
+    rep = ledger.verify_all(cfg.runtime, "dana")
+    last = json.loads(ledger.log_path(cfg.runtime, "dana").read_text().splitlines()[-1])
+    assert rep.ok and last["event"] == "denied" and last["item_id"] == item
+    assert "987-65-4320" not in ledger.log_path(cfg.runtime, "dana").read_text()
+
+
+def test_web_approve_is_logged_without_the_value(cfg):
+    from familybox import ledger
+    item = held_item(cfg)
+    dana, token = sign_in(cfg, "dana")
+    assert dana.post(f"/approvals/{item}/approve", data={"csrf": token}).status_code == 200
+    rep = ledger.verify_all(cfg.runtime, "dana")
+    text = ledger.log_path(cfg.runtime, "dana").read_text()
+    assert rep.ok and json.loads(text.splitlines()[-1])["event"] == "approved"
+    assert "987-65-4320" not in text
 
 
 def test_approve_needs_csrf(cfg):

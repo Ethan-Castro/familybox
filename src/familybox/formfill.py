@@ -32,7 +32,7 @@ from pathlib import Path, PurePosixPath
 from pypdf import PdfReader, PdfWriter
 
 from . import access, gate
-from .approvals import Approvals, append_private
+from .approvals import Approvals
 from .config import Config, Person
 from .store import Store
 
@@ -331,7 +331,9 @@ def pdf_path(cfg: Config, form_id: str) -> Path:
 
 
 def _audit(cfg: Config, person_id: str, entry: dict) -> None:
-    append_private(cfg.runtime / "audit" / f"{person_id}.jsonl", json.dumps({"time": int(time.time())} | entry))
+    """One entry on the person's tamper-evident audit log (familybox.ledger: chained, locked, 0600)."""
+    from . import ledger
+    ledger.append(cfg.runtime, person_id, {"time": int(time.time())} | entry)
 
 
 # --- filling --------------------------------------------------------------------------------------

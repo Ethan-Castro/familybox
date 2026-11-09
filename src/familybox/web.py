@@ -84,8 +84,8 @@ def _write_private(path: Path, data: bytes) -> None:
 
 
 def _audit(cfg: Config, person_id: str, entry: dict) -> None:
-    from .approvals import append_private
-    append_private(cfg.runtime / "audit" / f"{person_id}.jsonl", json.dumps({"time": int(time.time())} | entry))
+    from . import ledger
+    ledger.append(cfg.runtime, person_id, {"time": int(time.time())} | entry)
 
 
 # --- sign-in codes and sessions ---------------------------------------------------------------

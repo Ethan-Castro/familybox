@@ -508,7 +508,9 @@ def append_private(path: Path, line: str) -> None:
 
 
 def _audit(cfg: Config, person_id: str, entry: dict) -> None:
-    append_private(cfg.runtime / "audit" / f"{person_id}.jsonl", json.dumps({"time": int(time.time())} | entry))
+    """One entry on the person's tamper-evident audit log (familybox.ledger: chained, locked, 0600)."""
+    from . import ledger
+    ledger.append(cfg.runtime, person_id, {"time": int(time.time())} | entry)
 
 
 class _Events:

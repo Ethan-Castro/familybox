@@ -72,7 +72,7 @@ The box sends the photo once to a NEAR enclave vision model (`Qwen/Qwen3-VL-30B-
 4. **Scoped tools:** the model may call `search_files` and `read_file`. They only reach that person's folders plus `shared/`. Health folders are owner-only, even for parents.
 5. **Enclave-signed:** every model turn must carry a `provider_tee` signature that verifies against the attested model key. A gateway-only signature is rejected.
 6. **Answer gate:** the box knows the actual protected values in the files and recognizes them however they are written (dashes, spaces, spelled-out digits, a 5-digit run of an SSN, word forms of a diagnosis). The result is one of: pass, mask, hold for the owner's approval, or refuse (tripwire markers, another person's data).
-7. **Audit:** each person has a log of what left the box for them, with the signer and the files read.
+7. **Audit:** each person has a log of what left the box for them, with the signer and the files read. Each entry is linked by hash to the one before it, so `familybox log verify --as <person>` catches edits, removals and reordering by anything that does not also rewrite the whole chain. Cutting entries off the end, or a full rewrite, only shows up against a NEAR anchor, so the newest link can be anchored on NEAR ([docs/ANCHOR.md](docs/ANCHOR.md)). Approving or denying a held value is logged too (never the value itself).
 
 ## Results (real runs, 2026-11-08)
 
@@ -131,12 +131,13 @@ box stops live questions instead of skipping it. Details: [docs/BUILD_LOG.md](do
 
 | Path | What |
 |---|---|
-| `src/familybox/` | `config`, `access`, `store` (SQLite FTS5 + protected-value index), `enclave`, `gate`, `approvals`, `box`, `cli`, `mcp_server`, `web`, `cloud/` |
-| `demo/` | The fictional household: `family.toml`, `files/`, and `photos/` (made-up cards from `scripts/make_photo_fixtures.py`) |
+| `src/familybox/` | `config`, `access`, `store` (SQLite FTS5 + protected-value index), `enclave`, `gate`, `approvals`, `box`, `ledger` (hash-chained logs), `near_anchor`, `cli`, `mcp_server`, `web`, `cloud/`, `plugins/` |
+| `demo/` | The fictional household: `family.toml`, `files/`, `forms/`, and `photos/` (made-up cards from `scripts/make_photo_fixtures.py`) |
 | `replays/` | Recorded enclave conversations for the no-key demo |
 | `eval/` | Attack suite, results and reports |
 | `spikes/` | The Day-1 experiments and probes behind the design |
 | `scripts/` | Pi installer and fleet exec helper (no SSH) |
+| `contracts/disclosure-anchor/` | NEAR contract that keeps each log's newest chain head (not compiled yet) |
 | `docs/` | Plan, build log, cloud setup, diagram, research |
 
 ## Prior work and disclosures

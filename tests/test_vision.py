@@ -830,3 +830,11 @@ def test_photo_read_refuses_locked_enclave_settings():
     import asyncio as aio
     with pytest.raises(enclave.EnclaveError, match="locked"):
         aio.run(vision.transcribe_live(None, api_key="x", model="m", client_options={"e2ee": False}))
+
+
+def test_photo_audit_entries_keep_the_tamper_evident_log_valid(cfg, pics, fake):
+    from familybox import ledger
+    fake()
+    assert add(cfg, "maya", "ids", "ssn.png", pics["ssn_card_jordan.png"]).ok
+    rep = ledger.verify(cfg.runtime, "maya")
+    assert rep.ok and rep.count >= 2 and not rep.problems, rep.problems

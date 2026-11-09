@@ -565,3 +565,17 @@ def test_concurrent_approval_writers_lose_nothing(cfg):
     for t in ts:
         t.join()
     assert len(appr._load()) == 20
+
+
+def test_form_audit_entries_keep_the_tamper_evident_log_valid(cfg):
+    """Forms write to the same per-person audit log as questions; they must chain onto it (feat/ledger)."""
+    from familybox import ledger
+    from familybox.box import Box
+    Box(cfg, mode="replay").ask("dana", "What medications am I on?")
+    formfill.fill(cfg, "dana", "student_aid_info", "maya", AID)
+    Box(cfg, mode="replay").ask("dana", "What medications am I on?")
+    rep = ledger.verify(cfg.runtime, "dana")
+    assert rep.ok and rep.count >= 3 and not rep.problems, rep.problems
+    log = cfg.runtime / "audit" / "dana.jsonl"
+    assert stat.S_IMODE(log.stat().st_mode) == 0o600
+    assert all("entry_hash" in json.loads(line) for line in log.read_text().splitlines())
