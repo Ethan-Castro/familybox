@@ -109,7 +109,7 @@ def test_dry_run_save_keeps_checkpoint_that_catches_truncation(cfg, no_network, 
     path.write_text("".join(x + "\n" for x in path.read_text().splitlines()[:2]))
     ledger._write_head(cfg.runtime, "maya", 1, json.loads(path.read_text().splitlines()[-1])["entry_hash"])
     assert cli.main(["log", "verify", "--as", "maya"]) == 1
-    assert "local checkpoint says entry 3" in capsys.readouterr().out
+    assert "a checkpoint saved on this box says entry 3" in capsys.readouterr().out
 
 
 def test_dry_run_refuses_a_broken_log(cfg, no_network, capsys):
@@ -221,25 +221,37 @@ class FakeNear:
                                               "method_names": ["anchor"]}}
         self.sent: list[dict] = []
         self.stored: dict = {}
+        self.boxes: dict = {}
+        self.nonce = 100        # stays put, like a node that has not caught up with what was just sent
+        self.finalities: list[str] = []
+        self.fail_for: set[str] = set()   # person hashes whose send_tx is refused
         self.block = na.b58encode(b"\x09" * 32)
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
         body = json.loads(request.content)
         m, p = body["method"], body["params"]
         if m == "query" and p["request_type"] == "view_access_key":
-            res = {"nonce": 100, "permission": self.perm, "block_hash": self.block}
+            self.finalities.append(p["finality"])
+            res = {"nonce": self.nonce, "permission": self.perm, "block_hash": self.block}
         elif m == "block":
             res = {"header": {"hash": self.block, "height": 1}}
         elif m == "send_tx":
             raw = base64.b64decode(p["signed_tx_base64"])
             tx = _parse_tx(raw)
             self.sent.append(tx | {"raw": raw})
+            if json.loads(tx["args"])["person_hash"] in self.fail_for:
+                return httpx.Response(200, json={"jsonrpc": "2.0", "id": body["id"],
+                                                 "error": {"cause": {"name": "InvalidNonce"}}})
             if self.failure:
                 res = {"status": {"Failure": self.failure}}
             else:
                 a = json.loads(tx["args"])
                 self.stored[(a["box_id"], a["person_hash"])] = {"head_hash": a["head_hash"], "count": a["count"]}
                 res = {"status": {"SuccessValue": ""}}
+        elif m == "query" and p["request_type"] == "call_function" and p["method_name"] == "get_box":
+            a = json.loads(base64.b64decode(p["args_base64"]))
+            val = self.boxes.get(a["box_id"])
+            res = {"result": list(json.dumps(val).encode())}
         elif m == "query" and p["request_type"] == "call_function":
             a = json.loads(base64.b64decode(p["args_base64"]))
             val = self.stored.get((a["box_id"], a["person_hash"]))
@@ -310,7 +322,10 @@ def test_check_nothing_anchored(cfg, live, capsys):
 
 @pytest.mark.parametrize("perm", ["FullAccess",
                                   {"FunctionCall": {"receiver_id": "other.testnet", "method_names": ["anchor"]}},
-                                  {"FunctionCall": {"receiver_id": "anchor.family.testnet", "method_names": ["x"]}}])
+                                  {"FunctionCall": {"receiver_id": "anchor.family.testnet", "method_names": ["x"]}},
+                                  {"FunctionCall": {"receiver_id": "anchor.family.testnet", "method_names": []}},
+                                  {"FunctionCall": {"receiver_id": "anchor.family.testnet",
+                                                    "method_names": ["anchor", "set_writer"]}}])
 def test_send_refuses_wrong_key(cfg, live, capsys, perm):
     fake, _ = live
     fake.perm = perm
@@ -360,7 +375,9 @@ def test_log_page(cfg):
     assert 'href="/log"' in home.text
     r = c.get("/log")
     assert r.status_code == 200
-    assert ledger.head(cfg.runtime, "maya")[1] in r.text and "checks out: 2 entries" in r.text
+    assert ledger.head(cfg.runtime, "maya")[1] in r.text and "linked correctly: 2 entries" in r.text
+    assert "not anchored on NEAR yet" in r.text and "rewrite the whole log" in r.text
+    assert "Nothing was changed" not in r.text
     assert ledger.head(cfg.runtime, "dana")[1] not in r.text and "Dana" not in r.text.split("</nav>", 1)[1]
     assert "\u2014" not in r.text
 
@@ -381,3 +398,93 @@ def test_log_page_shows_broken_chain(cfg):
 def test_log_page_needs_signin(cfg):
     c = TestClient(web.create_app(cfg), base_url="https://testserver")
     assert c.get("/log", follow_redirects=False).status_code == 303
+
+
+def test_log_page_labels_local_and_near_checkpoints(cfg, live):
+    fill(cfg, "maya", 2)
+    assert cli.main(["anchor", "--as", "maya", "--save"]) == 0
+    r = sign_in(cfg, "maya").get("/log")
+    assert "Saved on this box (not on NEAR): entry 2" in r.text and "Not anchored on NEAR yet" in r.text
+    assert cli.main(["anchor", "send", "--as", "maya"]) == 0
+    r = sign_in(cfg, "maya").get("/log")
+    tx = ledger.checkpoints(cfg.runtime, "maya")[-1]["tx_hash"]
+    assert "still matches what was anchored on NEAR" in r.text and tx in r.text
+    assert "\u2014" not in r.text
+
+
+# --- review fixes: nonces, per-person errors, damaged files, reference vector ------------------------------
+
+def test_send_everyone_uses_distinct_increasing_nonces(cfg, live, capsys):
+    fake, _ = live
+    for p in ("dana", "maya", "sam"):
+        fill(cfg, p, 2)
+    assert cli.main(["anchor", "send"]) == 0
+    nonces = [tx["nonce"] for tx in fake.sent]
+    assert len(nonces) >= 3 and nonces == sorted(set(nonces)) and nonces[0] == 101
+    assert set(fake.finalities) == {"optimistic"}
+    for p in ("dana", "maya", "sam"):
+        assert ledger.checkpoints(cfg.runtime, p)[-1].get("tx_hash")
+
+
+def test_send_uses_chain_nonce_when_it_is_ahead(cfg, live):
+    fake, _ = live
+    fill(cfg, "maya", 1)
+    s = na.settings(cfg.runtime)
+    ident = na.load_identity(cfg.runtime)
+    args = na.anchor_args(ident["box_id"], na.person_hash(ident, "maya"), ledger.head(cfg.runtime, "maya")[1], 1)
+    fake.nonce = 500
+    assert na.send_anchor(s, args, last_nonce=101)["nonce"] == 501
+    fake.nonce = 100
+    assert na.send_anchor(s, args, last_nonce=501)["nonce"] == 502
+
+
+def test_one_failed_send_does_not_skip_the_rest(cfg, live, capsys):
+    fake, _ = live
+    for p in ("dana", "maya", "sam"):
+        fill(cfg, p, 1)
+    ident = na.load_identity(cfg.runtime)
+    fake.fail_for = {na.person_hash(ident, "dana")}      # sorted first
+    assert cli.main(["anchor", "send"]) == 1
+    out = capsys.readouterr().out
+    assert "not anchored. error:" in out and "InvalidNonce" in out
+    assert not ledger.checkpoints(cfg.runtime, "dana")
+    assert ledger.checkpoints(cfg.runtime, "maya") and ledger.checkpoints(cfg.runtime, "sam")
+
+
+def test_check_reports_box_id_registered_to_someone_else(cfg, live, capsys):
+    fake, _ = live
+    ident = na.load_identity(cfg.runtime)
+    fake.boxes[ident["box_id"]] = {"writer": "squatter.testnet", "storage_balance": "0", "people": 0}
+    assert cli.main(["anchor", "check", "--as", "maya"]) == 1
+    assert "registered to another account (squatter.testnet)" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("which", ["anchor_id", "near_key"])
+def test_damaged_files_give_plain_errors(cfg, capsys, which):
+    fill(cfg, n=1)
+    na.load_identity(cfg.runtime)
+    na.keygen(cfg.runtime)
+    path = na.identity_path(cfg.runtime) if which == "anchor_id" else na.key_path(cfg.runtime)
+    path.write_text("{not json")
+    for argv in (["anchor", "--as", "maya"], ["anchor", "status"]):
+        assert cli.main(argv) == 1
+        out = capsys.readouterr().out
+        assert out.startswith("error:") and "Traceback" not in out
+
+
+def test_borsh_matches_near_api_js_reference_vector():
+    """REFERENCE FIXTURE, not produced by this code. The transfer transaction from near-api-js's own
+    transaction tests (test.near -> whatever.near, nonce 1, transfer of 1 yoctoNEAR) and its expected
+    Borsh bytes. Our encoder writes every part except the action itself, so this checks the signer,
+    public key, nonce, receiver, block hash and action count layout against an outside source. The
+    FunctionCall action (tag 2) is checked by test_borsh_and_signature above."""
+    expected = bytes.fromhex(
+        "09000000746573742e6e65617200917b3d268d4b58f7fec1b150bd68d69be3ee5d4cc39855e341538465bb77860d"
+        "01000000000000000d00000077686174657665722e6e6561720fa473fd26901df296be6adc4cc4df34d040efa2435"
+        "224b6986910e630c2fef6010000000301000000000000000000000000000000")
+    transfer_1 = bytes([3]) + (1).to_bytes(16, "little")         # Action::Transfer { deposit: 1 }
+    got = na.encode_transaction_actions(
+        signer_id="test.near", public_key=na.b58decode("Anu7LYDfpLtkP7E16LT9imXF694BdQaa9ufVkQiwTQxC"),
+        nonce=1, receiver_id="whatever.near", block_hash=na.b58decode("244ZQ9cgj3CQ6bWBdytfrJMuMQ1jdXLFGnr4HhvtCTnM"),
+        actions=[transfer_1])
+    assert got == expected

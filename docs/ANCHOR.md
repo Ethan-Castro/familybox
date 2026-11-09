@@ -35,16 +35,30 @@ anchor and their most recent entries. The admin also sees the chain head and sta
 Other details:
 - **Older logs** from before chaining are kept as they are. The first new entry is a `ledger_start` entry that
   records how many old lines there were and the sha256 of their exact bytes, so they cannot change later either.
-- **A damaged line** (for example a crash in the middle of a write) is sealed the same way by a `ledger_resume`
-  entry, so the box keeps working, but `log verify` keeps reporting it. The log is no longer whole, and the
-  box says so.
+- **A write cut off by a power cut** leaves a piece of a line at the very end of the file. The next entry
+  seals it with a `ledger_resume` entry marked `"reason": "torn_write"`, which records the sha256 of the
+  piece's exact bytes. `log verify` and the Log page show it as a note, not a failure, so the log still checks
+  out and can still be anchored. The entry that was being written is lost; nothing else is. The box only
+  treats it this way when there is exactly one piece of a line, at the end of the file, with no newline, that
+  is not a whole JSON object.
+- **Any other damaged line** (for example an entry with its chain fields stripped, or several bad lines) is
+  sealed the same way so the box keeps working, but `log verify` keeps reporting it as a failure, and the box
+  will not anchor that log again. There is no command to clear it: the log is no longer whole, and the box
+  says so.
+- **Approvals are logged.** Approving or denying a held value adds an `approved` or `denied` entry to the
+  owner's log with the item id, its label, its kind and who asked. The value itself is never written to the log.
 - **Several writers at once** (the web page, the CLI, the MCP servers) take a lock on the log first, so the
-  chain never forks.
+  chain never forks. `log verify` takes the same lock (shared) while it reads the log and the head file, so it
+  never reports a false failure while another process is writing.
 
 ### What the chain alone cannot catch
 
-Someone who can edit the box's files could cut the newest entries off the end and rewrite the head file to
-match. Nothing inside the box can tell that apart from a log that simply never had those entries. That is what
+The chain has no secret key. Someone who can edit the box's files could cut the newest entries off the end
+and rewrite the head file to match, or rebuild the whole log with new hashes, or delete the log and its head
+file together (verify then says "nothing has been logged yet"). Nothing inside the box can tell that apart
+from a log that really looked like that. Checkpoints saved on the box with `--save` can be edited the same way.
+A piece of a line cut off on purpose at the end looks like a power cut too, which is the same as cutting the
+last entry off. That is what
 anchors are for: once a head is anchored somewhere the box cannot change, a cut or a rewrite before that point
 shows up.
 
@@ -52,7 +66,7 @@ shows up.
 
 ```
 familybox anchor --as maya              dry run: print the exact NEAR call for maya's chain head
-familybox anchor --as maya --save       dry run, and keep this head as a local checkpoint
+familybox anchor --as maya --save       dry run, and keep this head as a checkpoint saved on this box
 familybox anchor                        dry run for everyone in the family
 familybox anchor keygen                 make the box's anchoring key and print its public key
 familybox anchor status                 box id, settings, and what is still missing to go live
@@ -61,7 +75,8 @@ familybox anchor check --as maya        read the head back from NEAR and check t
 ```
 
 - The box never anchors a log that does not check out.
-- A **dry run** touches no network and changes nothing. It prints the call exactly as it would be signed:
+- A **dry run** touches no network and changes nothing, except that the very first run (or `anchor status`)
+  makes the box's anchor id, `runtime/ledger/anchor_id.json`. It prints the call exactly as it would be signed:
   signer, public key, contract, method `anchor`, its JSON arguments and their base64, gas (30 Tgas) and a
   deposit of 0. The nonce and block hash are the only parts filled in at send time, from the network.
 - Every head the box sends (or saves with `--save`) is kept in `runtime/ledger/checkpoints/<person>.jsonl`.
@@ -103,7 +118,13 @@ Rules `anchor` enforces: only the box's writer may call it; hashes must be 64 lo
 count can never go down; the same count with a different head is refused (that would be a rewritten log); the
 same count and head again is a harmless no-op; new storage is paid from the box's own deposit, never from the
 contract's balance. `set_writer` and `withdraw` need 1 yoctoNEAR attached, which a function-call key cannot
-attach, so the key on the box can only ever call `anchor`.
+attach. The box also refuses to send unless its key's allowed methods are exactly `["anchor"]` (an empty list
+on NEAR means any method), so the key on the box can only ever call `anchor`.
+
+`register_box` lets the first account to register a box id become its writer. Box ids are random and stay
+private until you register, so this is unlikely, but if someone else registered your box id first,
+`familybox anchor check` says so ("this box id is registered to another account"). Make a new box id by moving
+`runtime/ledger/anchor_id.json` aside, then register the new one.
 
 Event, one per anchor:
 
@@ -162,7 +183,10 @@ near-cli-rs; check the exact flags with `near --help` for your version.
    `familybox anchor check --as maya`.
 
 The box refuses to send with a full-access key, or with a key meant for another contract or method. It checks
-the key's permission on-chain before signing. The function-call key's allowance (0.25 NEAR above) caps what
+the key's permission on-chain before signing. When `anchor send` runs for the whole family, the box uses the
+key's latest nonce from the network, but never less than one more than the nonce it used for the person before,
+so two transactions never share a nonce even if the network has not caught up yet. If one
+person's anchor fails, the box says so and carries on with the others (the exit code is then 1). The function-call key's allowance (0.25 NEAR above) caps what
 gas fees can ever cost; each anchor costs a small fraction of a cent of gas.
 
 ## 5. Security notes

@@ -60,7 +60,7 @@ The page lets each person upload into their own folders (or `shared/`), see thei
 4. **Scoped tools:** the model may call `search_files` and `read_file`. They only reach that person's folders plus `shared/`. Health folders are owner-only, even for parents.
 5. **Enclave-signed:** every model turn must carry a `provider_tee` signature that verifies against the attested model key. A gateway-only signature is rejected.
 6. **Answer gate:** the box knows the actual protected values in the files and recognizes them however they are written (dashes, spaces, spelled-out digits, a 5-digit run of an SSN, word forms of a diagnosis). The result is one of: pass, mask, hold for the owner's approval, or refuse (tripwire markers, another person's data).
-7. **Audit:** each person has a log of what left the box for them, with the signer and the files read. Each entry is linked by hash to the one before it, so `familybox log verify --as <person>` catches any change, removal or reordering, and the newest link can be anchored on NEAR ([docs/ANCHOR.md](docs/ANCHOR.md)).
+7. **Audit:** each person has a log of what left the box for them, with the signer and the files read. Each entry is linked by hash to the one before it, so `familybox log verify --as <person>` catches edits, removals and reordering by anything that does not also rewrite the whole chain. Cutting entries off the end, or a full rewrite, only shows up against a NEAR anchor, so the newest link can be anchored on NEAR ([docs/ANCHOR.md](docs/ANCHOR.md)). Approving or denying a held value is logged too (never the value itself).
 
 ## Results (real runs, 2026-11-08)
 

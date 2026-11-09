@@ -75,9 +75,14 @@ def load_identity(runtime: Path, *, create: bool = True) -> dict:
     """{"box_id", "salt"}. Made once per box (0600). Losing it only means new person hashes on-chain."""
     path = identity_path(runtime)
     if path.exists():
-        d = json.loads(path.read_text())
-        if not BOX_ID.match(d.get("box_id", "")) or len(bytes.fromhex(d.get("salt", ""))) < 16:
-            raise AnchorError(f"{path} is damaged")
+        try:
+            d = json.loads(path.read_text())
+            ok = (isinstance(d, dict) and isinstance(d.get("box_id"), str) and BOX_ID.match(d["box_id"])
+                  and isinstance(d.get("salt"), str) and len(bytes.fromhex(d["salt"])) >= 16)
+        except (OSError, ValueError) as e:
+            raise AnchorError(f"the box's anchor id file ({path}) cannot be read: {e}") from None
+        if not ok:
+            raise AnchorError(f"the box's anchor id file ({path}) is damaged")
         return d
     if not create:
         raise AnchorError("this box has no anchor id yet")
@@ -131,7 +136,7 @@ def settings(runtime: Path, env: dict | None = None) -> Settings:
         raise AnchorError("NEAR_NETWORK must be testnet or mainnet")
     key = env.get("NEAR_ANCHOR_PRIVATE_KEY") or None
     if not key and key_path(runtime).exists():
-        key = json.loads(key_path(runtime).read_text()).get("private_key")
+        key = _read_key_file(runtime)
     account = env.get("NEAR_ACCOUNT_ID") or None
     contract = env.get("NEAR_ANCHOR_CONTRACT") or None
     for label, v in (("NEAR_ACCOUNT_ID", account), ("NEAR_ANCHOR_CONTRACT", contract)):
@@ -141,6 +146,18 @@ def settings(runtime: Path, env: dict | None = None) -> Settings:
 
 
 # --- keys ----------------------------------------------------------------------------------------
+
+def _read_key_file(runtime: Path) -> str:
+    path = key_path(runtime)
+    try:
+        d = json.loads(path.read_text())
+        key = d["private_key"] if isinstance(d, dict) else None
+    except (OSError, ValueError, KeyError) as e:
+        raise AnchorError(f"the box's anchoring key file ({path}) cannot be read: {e}") from None
+    if not isinstance(key, str):
+        raise AnchorError(f"the box's anchoring key file ({path}) is damaged")
+    return key
+
 
 def _signing_key(private_key: str):
     from nacl.signing import SigningKey
@@ -164,7 +181,7 @@ def keygen(runtime: Path, *, force: bool = False) -> str:
     from nacl.signing import SigningKey
     path = key_path(runtime)
     if path.exists() and not force:
-        return public_key_of(json.loads(path.read_text())["private_key"])
+        return public_key_of(_read_key_file(runtime))
     sk = SigningKey.generate()
     secret = "ed25519:" + b58encode(bytes(sk) + bytes(sk.verify_key))
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -232,13 +249,24 @@ def _bytes(b: bytes) -> bytes:
     return _u32(len(b)) + b
 
 
-def encode_transaction(*, signer_id: str, public_key: bytes, nonce: int, receiver_id: str, block_hash: bytes,
-                       method_name: str, args: bytes, gas: int, deposit: int = 0) -> bytes:
+def function_call_action(method_name: str, args: bytes, gas: int, deposit: int = 0) -> bytes:
+    return bytes([2]) + _string(method_name) + _bytes(args) + _u64(gas) + _u128(deposit)  # 2 = FunctionCall
+
+
+def encode_transaction_actions(*, signer_id: str, public_key: bytes, nonce: int, receiver_id: str,
+                               block_hash: bytes, actions: list[bytes]) -> bytes:
+    """Transaction (V0): signer, ed25519 public key, nonce, receiver, block hash, Vec<Action>."""
     if len(public_key) != 32 or len(block_hash) != 32:
         raise AnchorError("public key and block hash must be 32 bytes")
-    action = bytes([2]) + _string(method_name) + _bytes(args) + _u64(gas) + _u128(deposit)  # 2 = FunctionCall
     return (_string(signer_id) + bytes([0]) + public_key + _u64(nonce) + _string(receiver_id) + block_hash
-            + _u32(1) + action)
+            + _u32(len(actions)) + b"".join(actions))
+
+
+def encode_transaction(*, signer_id: str, public_key: bytes, nonce: int, receiver_id: str, block_hash: bytes,
+                       method_name: str, args: bytes, gas: int, deposit: int = 0) -> bytes:
+    return encode_transaction_actions(signer_id=signer_id, public_key=public_key, nonce=nonce,
+                                      receiver_id=receiver_id, block_hash=block_hash,
+                                      actions=[function_call_action(method_name, args, gas, deposit)])
 
 
 def sign_transaction(tx: bytes, private_key: str) -> bytes:
@@ -259,9 +287,13 @@ class Rpc:
         self.http = http or httpx.Client(timeout=timeout)
 
     def call(self, method: str, params) -> dict:
-        r = self.http.post(self.url, json={"jsonrpc": "2.0", "id": "familybox", "method": method, "params": params})
-        r.raise_for_status()
-        body = r.json()
+        try:
+            r = self.http.post(self.url, json={"jsonrpc": "2.0", "id": "familybox", "method": method,
+                                               "params": params})
+            r.raise_for_status()
+            body = r.json()
+        except (httpx.HTTPError, ValueError) as e:
+            raise AnchorError(f"could not reach NEAR ({method}): {e}") from None
         if body.get("error"):
             err = body["error"]
             cause = (err.get("cause") or {}).get("name") if isinstance(err, dict) else None
@@ -277,23 +309,31 @@ def _check_key_permission(perm, contract: str) -> None:
     fc = perm["FunctionCall"]
     if fc.get("receiver_id") != contract:
         raise AnchorError("the box's key is for a different contract")
-    methods = fc.get("method_names") or []
-    if methods and "anchor" not in methods:
-        raise AnchorError("the box's key is not allowed to call anchor()")
+    # An empty list means "any method" on NEAR. The box's key must be limited to anchor() and nothing else.
+    if fc.get("method_names") != ["anchor"]:
+        raise AnchorError("the box's key must be limited to anchor() only (its allowed methods are "
+                          f"{fc.get('method_names') or 'any method'}). See docs/ANCHOR.md")
 
 
-def send_anchor(s: Settings, args: dict, *, rpc: Rpc | None = None, gas: int = DEFAULT_GAS) -> dict:
-    """Sign and send anchor(). Returns {"tx_hash", "status"}. Needs NEAR_ACCOUNT_ID, a key and the contract."""
+def send_anchor(s: Settings, args: dict, *, rpc: Rpc | None = None, gas: int = DEFAULT_GAS,
+                last_nonce: int | None = None) -> dict:
+    """Sign and send anchor(). Returns {"tx_hash", "status", "nonce"}. Needs NEAR_ACCOUNT_ID, a key and the
+    contract. When sending several in a row, pass the previous result's nonce as last_nonce: the chain's
+    view of the key can lag a block or two behind a transaction that was just sent, and reusing a nonce
+    gets the transaction refused."""
     if not s.live_ready:
         raise AnchorError("cannot send yet; missing " + ", ".join(s.missing()))
     rpc = rpc or Rpc(s.rpc_url)
     pub = public_key_of(s.private_key)
-    ak = rpc.call("query", {"request_type": "view_access_key", "finality": "final",
+    ak = rpc.call("query", {"request_type": "view_access_key", "finality": "optimistic",
                             "account_id": s.account_id, "public_key": pub})
     _check_key_permission(ak.get("permission"), s.contract)
+    nonce = int(ak["nonce"]) + 1
+    if last_nonce is not None:
+        nonce = max(nonce, int(last_nonce) + 1)
     block = rpc.call("block", {"finality": "final"})
     tx = encode_transaction(signer_id=s.account_id, public_key=b58decode(pub.split(":", 1)[1]),
-                            nonce=int(ak["nonce"]) + 1, receiver_id=s.contract,
+                            nonce=nonce, receiver_id=s.contract,
                             block_hash=b58decode(block["header"]["hash"]), method_name="anchor",
                             args=args_bytes(args), gas=gas, deposit=0)
     signed = sign_transaction(tx, s.private_key)
@@ -302,7 +342,18 @@ def send_anchor(s: Settings, args: dict, *, rpc: Rpc | None = None, gas: int = D
     status = (res or {}).get("status") or {}
     if isinstance(status, dict) and "Failure" in status:
         raise AnchorError(f"the anchor transaction failed on-chain: {json.dumps(status['Failure'])[:300]}")
-    return {"tx_hash": tx_hash(tx), "status": "sent"}
+    return {"tx_hash": tx_hash(tx), "status": "sent", "nonce": nonce}
+
+
+def view_box(s: Settings, box_id: str, *, rpc: Rpc | None = None) -> dict | None:
+    """The contract's get_box(box_id) view: {"writer", ...} or None if the box id is not registered."""
+    if not s.contract:
+        raise AnchorError("NEAR_ANCHOR_CONTRACT is not set")
+    rpc = rpc or Rpc(s.rpc_url)
+    args = base64.b64encode(args_bytes({"box_id": box_id})).decode()
+    res = rpc.call("query", {"request_type": "call_function", "finality": "final", "account_id": s.contract,
+                             "method_name": "get_box", "args_base64": args})
+    return json.loads(bytes(res["result"]).decode() or "null")
 
 
 def view_anchor(s: Settings, box_id: str, p_hash: str, *, rpc: Rpc | None = None) -> dict | None:

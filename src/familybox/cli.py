@@ -169,14 +169,17 @@ def _log_verify(cfg, args) -> int:
         print(f"{name}'s log does NOT check out. Something was changed, removed or reordered:")
         for p in rep.problems:
             print(f"  - {p}")
+    for w in rep.warnings:
+        print(f"  note: {w}")
     print(f"chain head: {rep.head or '(none)'}")
     if rep.unchained_lines:
         print(f"older entries from before linking: {rep.unchained_lines} (sealed, so they cannot change either)")
     if rep.checkpoints_checked:
         print(f"saved anchors checked: {rep.checkpoints_checked}")
     else:
-        print("no anchors saved yet. Until a head is anchored, someone who can edit the box's files could cut "
-              "the newest entries off the end without it showing (familybox anchor --as " + person.id + ").")
+        print("not anchored on NEAR yet. Until a head is anchored, someone who can edit the box's files could cut "
+              "the newest entries off the end, or rewrite the whole log, without it showing "
+              "(familybox anchor --as " + person.id + ").")
     return 0 if rep.ok else 1
 
 

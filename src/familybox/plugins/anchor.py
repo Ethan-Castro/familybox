@@ -1,7 +1,7 @@
 """Disclosure log plugin: a "Log" page with each person's chain head, and `familybox anchor`.
 
   familybox anchor --as maya              dry run: print the exact NEAR call for maya's chain head
-  familybox anchor --as maya --save       dry run, and keep this head as a local checkpoint
+  familybox anchor --as maya --save       dry run, and keep this head as a checkpoint saved on this box
   familybox anchor                        dry run for everyone in the family
   familybox anchor send --as maya         sign and send it (needs NEAR_ACCOUNT_ID, a key, NEAR_ANCHOR_CONTRACT)
   familybox anchor check --as maya        read the anchored head back from NEAR and check the log against it
@@ -30,7 +30,7 @@ def cli(subparsers) -> None:
     p = subparsers.add_parser(COMMAND, help="put each person's log chain head on NEAR (dry run by default)")
     p.add_argument("action", nargs="?", default="dry-run", choices=["dry-run", "send", "check", "keygen", "status"])
     p.add_argument("--as", dest="person", default=None, help="one person (default: everyone)")
-    p.add_argument("--save", action="store_true", help="dry run: also keep the head as a local checkpoint")
+    p.add_argument("--save", action="store_true", help="dry run: also keep the head as a checkpoint saved on this box (not on NEAR)")
     p.add_argument("--force", action="store_true", help="keygen: replace the existing key")
 
 
@@ -51,6 +51,9 @@ def run_cli(args, cfg) -> int | None:
         return _run(args, cfg)
     except (na.AnchorError, KeyError) as e:
         print(f"error: {e.args[0] if e.args else e}")
+        return 1
+    except (OSError, ValueError) as e:     # a damaged or unreadable file on the box: say so, no traceback
+        print(f"error: something the box keeps for anchoring could not be read ({e})")
         return 1
 
 
@@ -78,10 +81,19 @@ def _run(args, cfg) -> int:
                           "ready_to_send": s.live_ready, "missing": s.missing()}, indent=1))
         return 0
 
+    people = _people(cfg, args)
+    if args.action == "send" and not s.live_ready:
+        raise na.AnchorError("cannot send yet; missing " + ", ".join(s.missing()))
     rc = 0
-    for person in _people(cfg, args):
+    rpc = na.Rpc(s.rpc_url) if args.action in ("send", "check") else None
+    last_nonce = None      # one key signs every transaction in this run: never reuse a nonce
+    for person in people:
         if args.action == "check":
-            rc = max(rc, _check(cfg, s, person))
+            try:
+                rc = max(rc, _check(cfg, s, person, rpc))
+            except na.AnchorError as e:   # one failure does not skip the rest of the family
+                print(f"{person.display}: could not check against NEAR: {e.args[0] if e.args else e}")
+                rc = 1
             continue
         rep, a, tx = prepare(cfg, person.id, s)
         if not rep.ok:
@@ -97,12 +109,18 @@ def _run(args, cfg) -> int:
             print(f"{person.display}: dry run. Nothing was sent. This is the exact call the box would sign:")
             print(json.dumps(tx, indent=1))
             if args.save:
-                ledger.add_checkpoint(rt, person.id, rep.count, rep.head, "local checkpoint")
-                print("kept this head as a local checkpoint.")
+                ledger.add_checkpoint(rt, person.id, rep.count, rep.head, "a checkpoint saved on this box")
+                print("kept this head as a checkpoint saved on this box (not on NEAR).")
             if not s.live_ready:
                 print("to send it for real, the box still needs: " + ", ".join(s.missing()))
         elif args.action == "send":
-            res = na.send_anchor(s, a)
+            try:
+                res = na.send_anchor(s, a, rpc=rpc, last_nonce=last_nonce)
+            except na.AnchorError as e:   # one failure does not skip the rest of the family
+                print(f"{person.display}: not anchored. error: {e.args[0] if e.args else e}")
+                rc = 1
+                continue
+            last_nonce = res["nonce"]
             ledger.add_checkpoint(rt, person.id, rep.count, rep.head, f"NEAR anchor {res['tx_hash']}",
                                   tx_hash=res["tx_hash"], network=s.network, contract=s.contract)
             print(f"{person.display}: anchored {rep.count} entries on NEAR {s.network}. "
@@ -110,10 +128,17 @@ def _run(args, cfg) -> int:
     return rc
 
 
-def _check(cfg, s: na.Settings, person) -> int:
+def _check(cfg, s: na.Settings, person, rpc=None) -> int:
     ident = na.load_identity(cfg.runtime)
-    got = na.view_anchor(s, ident["box_id"], na.person_hash(ident, person.id))
+    got = na.view_anchor(s, ident["box_id"], na.person_hash(ident, person.id), rpc=rpc)
     if not got:
+        box = na.view_box(s, ident["box_id"], rpc=rpc)
+        writer = (box or {}).get("writer")
+        if writer and s.account_id and writer != s.account_id:
+            print(f"{person.display}: nothing anchored on NEAR yet. This box id is registered to another "
+                  f"account ({writer}), not {s.account_id}, so the box cannot anchor under it. Make a new "
+                  f"box id (move runtime/ledger/anchor_id.json aside) and register that one.")
+            return 1
         print(f"{person.display}: nothing anchored on NEAR yet.")
         return 0
     cp = {"count": got.get("count"), "head": got.get("head_hash"), "where": "the NEAR anchor"}
@@ -146,20 +171,33 @@ def _status_card(ctx, cfg, person, *, mine: bool) -> str:
     rep = ledger.verify_all(cfg.runtime, person.id)
     cps = [c for c in ledger.checkpoints(cfg.runtime, person.id) if c.get("head")]
     who = "Your" if mine else f"{esc(person.display)}'s"
+    near = [c for c in cps if c.get("tx_hash")]
     if rep.count == 0 and rep.ok:
         state = '<p class="muted">Nothing has been logged yet.</p>'
+    elif rep.ok and near:
+        state = (f'<p class="ok">{who} log checks out: {rep.count} entries, each linked to the one before, '
+                 f'and it still matches what was anchored on NEAR.</p>')
     elif rep.ok:
-        state = (f'<p class="ok">{who} log checks out: {rep.count} entries, each linked to the one before. '
-                 f'Nothing was changed, removed or reordered.</p>')
+        state = (f'<p class="ok">{who} log is linked correctly: {rep.count} entries, each linked to the one '
+                 f'before.</p><p class="muted">It is not anchored on NEAR yet, so someone who can edit the '
+                 f'box\'s files could still rewrite the whole log, or cut the newest entries off, without it '
+                 f'showing here.</p>')
     else:
         items = "".join(f"<li>{esc(p)}</li>" for p in rep.problems[:10])
         state = f'<p class="bad">{who} log does not check out.</p><ul>{items}</ul>'
+    notes = "".join(f'<p class="muted">Note: {esc(w)}</p>' for w in rep.warnings[:5])
     head = (f'<p>Chain head: <code>{esc(rep.head)}</code></p>' if rep.head else "")
-    last = cps[-1] if cps else None
-    anchored = (f'<p class="muted">Last anchor: entry {esc(last.get("count"))}, {esc(last.get("where", ""))}, '
-                f'{esc(_when(last.get("time")))}.</p>' if last
-                else '<p class="muted">Not anchored on NEAR yet.</p>')
-    return f'<div class="card"><h2>{who} log</h2>{state}{head}{anchored}</div>'
+    if near:
+        last = near[-1]
+        anchored = (f'<p class="muted">Last NEAR anchor: entry {esc(last.get("count"))}, '
+                    f'{esc(_when(last.get("time")))}, transaction <code>{esc(last.get("tx_hash"))}</code>.</p>')
+    else:
+        anchored = '<p class="muted">Not anchored on NEAR yet.</p>'
+    local = [c for c in cps if not c.get("tx_hash")]
+    if local:
+        anchored += (f'<p class="muted">Saved on this box (not on NEAR): entry {esc(local[-1].get("count"))}, '
+                     f'{esc(_when(local[-1].get("time")))}.</p>')
+    return f'<div class="card"><h2>{who} log</h2>{state}{notes}{head}{anchored}</div>'
 
 
 def _recent(ctx, cfg, person, n: int = 15) -> str:
@@ -190,7 +228,7 @@ def web_routes(ctx) -> list:
         body = ('<h1>Log</h1><p>Every question an assistant asks, and every upload or delete, is written to a log. '
                 'Each entry is linked to the one before it, so changing, removing or reordering any entry shows '
                 'up here. The newest link (the chain head) can be put on the NEAR blockchain, so even the box '
-                'cannot quietly rewrite its history.</p>')
+                'cannot quietly rewrite its history once it is anchored.</p>')
         body += _status_card(ctx, cfg, sess.person, mine=True)
         body += _recent(ctx, cfg, sess.person)
         if sess.person.admin:

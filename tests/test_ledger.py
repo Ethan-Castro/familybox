@@ -238,14 +238,49 @@ def test_removing_sealed_old_lines_detected(rt):
     assert not ledger.verify(rt, "maya").ok
 
 
-def test_torn_last_line_is_sealed_but_reported(rt):
+def test_torn_last_line_is_sealed_as_a_warning(rt):
     fill(rt, n=2)
     with ledger.log_path(rt, "maya").open("a") as f:
-        f.write('{"time": 9, "outcome": "pa')       # crash in the middle of a write
+        f.write('{"time": 9, "outcome": "pa')       # power cut in the middle of a write
+    before = ledger.verify(rt, "maya")              # not sealed yet: a note, and the head file still matches
+    assert before.ok and before.count == 2 and any("cut off" in w for w in before.warnings)
     e = ledger.append(rt, "maya", {"time": 10})
     assert e["seq"] == 3 and all(json.loads(x) for x in lines(rt)[-2:])   # our lines stay whole
+    assert json.loads(lines(rt)[-2])["reason"] == "torn_write"
+    rep = ledger.verify_all(rt, "maya")
+    assert rep.count == 4 and rep.ok and not rep.problems and any("power cut" in w for w in rep.warnings)
+    ledger.append(rt, "maya", {"time": 11})
+    assert ledger.verify_all(rt, "maya").ok       # and it stays that way
+
+
+def test_torn_line_bytes_still_pinned(rt):
+    fill(rt, n=2)
+    with ledger.log_path(rt, "maya").open("a") as f:
+        f.write('{"time": 9, "outcome": "pa')
+    ledger.append(rt, "maya", {"time": 10})
+    ls = lines(rt)
+    ls[2] = '{"time": 9, "outcome": "xx'          # the cut-off piece is edited afterwards
+    write_lines(rt, ls)
     rep = ledger.verify(rt, "maya")
-    assert rep.count == 4 and not rep.ok and any("damaged line" in p for p in rep.problems)
+    assert not rep.ok and any("changed" in p for p in rep.problems)
+
+
+def test_cutting_the_last_entry_short_is_not_a_power_cut(rt):
+    fill(rt, n=3)
+    data = ledger.log_path(rt, "maya").read_bytes()
+    ledger.log_path(rt, "maya").write_bytes(data[:-20])    # head file still says 3 entries
+    rep = ledger.verify(rt, "maya")
+    assert not rep.ok and any("the box last recorded 3" in p for p in rep.problems)
+
+
+def test_two_damaged_lines_are_still_a_failure(rt):
+    fill(rt, n=2)
+    with ledger.log_path(rt, "maya").open("a") as f:
+        f.write('garbage one\n{"time": 9, "outcome": "pa')
+    ledger.append(rt, "maya", {"time": 10})
+    assert "reason" not in json.loads(lines(rt)[-2])
+    rep = ledger.verify(rt, "maya")
+    assert not rep.ok and any("damaged line" in p for p in rep.problems)
 
 
 def test_stripping_chain_fields_from_last_entry_detected(rt):
@@ -272,6 +307,62 @@ def test_concurrent_appends_keep_one_chain(rt):
         t.join()
     rep = ledger.verify(rt, "maya")
     assert rep.ok and rep.count == 200
+
+
+def _append_forever(runtime: str, stop, started):
+    rt = Path(runtime)
+    started.set()
+    i = 0
+    while not stop.is_set():
+        ledger.append(rt, "maya", {"time": 1, "outcome": "pass", "i": i})
+        i += 1
+
+
+def _quick_fill(rt, person="maya", n=2000):
+    """A long chain written in one go (append() fsyncs every entry, which is slow for thousands)."""
+    prev, out = ledger.genesis_hash(person), []
+    for i in range(n):
+        e = {"time": 1700000000 + i, "outcome": "pass", "n": i, "seq": i, "prev_hash": prev}
+        e["entry_hash"] = prev = ledger.entry_hash(e)
+        out.append(json.dumps(e))
+    ledger.log_path(rt, person).parent.mkdir(parents=True, exist_ok=True)
+    write_lines(rt, out, person)
+    ledger._write_head(rt, person, n - 1, prev)
+
+
+def test_verify_never_fails_while_another_process_appends(rt):
+    # A long log makes each verify slow enough that, without the lock, the writer lands an entry between
+    # reading the log and reading the head file most of the time (the reviewer saw 610 of 797 fail).
+    import multiprocessing as mp
+    _quick_fill(rt)
+    assert ledger.verify_all(rt, "maya").ok
+    ctx = mp.get_context("spawn")
+    stop, started = ctx.Event(), ctx.Event()
+    proc = ctx.Process(target=_append_forever, args=(str(rt), stop, started))
+    proc.start()
+    try:
+        assert started.wait(30)
+        failures, runs, seen = [], 0, set()
+        import time as _t
+        deadline = _t.time() + 3
+        while _t.time() < deadline:
+            rep = ledger.verify_all(rt, "maya")
+            runs += 1
+            seen.add(rep.count)
+            if not rep.ok:
+                failures.append(rep.problems[:2])
+    finally:
+        stop.set()
+        proc.join(30)
+    assert proc.exitcode == 0
+    assert runs > 5 and len(seen) > 3, (runs, len(seen))    # the writer really ran during the checks
+    assert failures == []
+    assert ledger.verify_all(rt, "maya").ok
+
+
+def test_verify_of_nothing_creates_nothing(rt):
+    assert ledger.verify(rt, "maya").ok
+    assert not (rt / "audit").exists()
 
 
 def test_bad_inputs(rt):
@@ -315,3 +406,39 @@ def test_cli_log_show_still_works(cfg, capsys):
     fill(cfg.runtime, n=1)
     assert cli.main(["log", "--as", "maya"]) == 0
     assert '"entry_hash"' in capsys.readouterr().out
+
+
+# --- approvals are in the chain ---------------------------------------------------------------------
+
+def _held(cfg):
+    from familybox.approvals import Approvals
+    from familybox.gate import Held
+    return Approvals(cfg).add("sam", "What is Dana's SSN?",
+                              [Held("h1", "ssn", "SSN", "987-65-4321", "dana", "people/dana/ids/ssn_card_dana.txt"),
+                               Held("h2", "ssn", "SSN", "987-65-4322", "dana", "people/dana/ids/ssn_card_dana.txt")])
+
+
+@pytest.mark.parametrize("cmd,event", [("approve", "approved"), ("deny", "denied")])
+def test_cli_approve_and_deny_are_logged_without_the_value(cfg, capsys, cmd, event):
+    a, b = _held(cfg)
+    before = ledger.verify_all(cfg.runtime, "dana").count
+    assert cli.main([cmd, "--as", "dana", a]) == 0
+    capsys.readouterr()
+    rep = ledger.verify_all(cfg.runtime, "dana")
+    assert rep.ok and rep.count == before + 1
+    last = json.loads(lines(cfg.runtime, "dana")[-1])
+    assert last["event"] == event and last["item_id"] == a and last["asker"] == "sam" and last["label"] == "SSN"
+    assert last["seq"] == before
+    text = ledger.log_path(cfg.runtime, "dana").read_text()
+    assert "987-65-4321" not in text and "987-65-4322" not in text
+
+
+def test_approve_then_deny_both_chained(cfg):
+    from familybox.approvals import Approvals
+    a, b = _held(cfg)
+    Approvals(cfg).decide("dana", a, True)
+    Approvals(cfg).decide("dana", b, False)
+    rep = ledger.verify_all(cfg.runtime, "dana")
+    assert rep.ok and [json.loads(x)["event"] for x in lines(cfg.runtime, "dana")[-2:]] == ["approved", "denied"]
+    assert not ledger.log_path(cfg.runtime, "sam").exists() or "987-65-432" not in \
+        ledger.log_path(cfg.runtime, "sam").read_text()

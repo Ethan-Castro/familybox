@@ -18,7 +18,13 @@ Logs written before chaining existed are kept as they are. The first chained ent
 those lines cannot change afterwards either.
 
 Writers take an exclusive lock on <person>.jsonl.lock, so the CLI, the web page and the MCP servers can
-append to the same log at the same time without forking the chain.
+append to the same log at the same time without forking the chain. verify() takes the same lock shared
+while it reads the log and the head file, so it never sees one without the other.
+
+A write cut off by a power cut leaves a piece of a line at the end of the file. The next append seals it
+with a ledger_resume entry marked reason "torn_write"; verify() lists that as a warning, not a failure,
+because the piece's exact bytes are pinned by the seal. Anything else unchained after a chained entry (for
+example an entry with its chain fields stripped) is still a failure.
 """
 
 from __future__ import annotations
@@ -74,13 +80,14 @@ def _safe_id(person_id: str) -> str:
 
 
 @contextlib.contextmanager
-def _locked(path: Path):
+def _locked(path: Path, *, shared: bool = False):
+    """The per-person lock. Writers hold it exclusively; verify() holds it shared while it reads."""
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     lock = path.with_name(path.name + ".lock")
     fd = os.open(lock, os.O_RDWR | os.O_CREAT, 0o600)
     try:
         if fcntl is not None:
-            fcntl.flock(fd, fcntl.LOCK_EX)
+            fcntl.flock(fd, fcntl.LOCK_SH if shared else fcntl.LOCK_EX)
         yield
     finally:
         if fcntl is not None:
@@ -153,12 +160,16 @@ def append(runtime: Path, person_id: str, entry: dict) -> dict:
                 # Old unchained lines, or a damaged last line. Chain from the last good entry and record
                 # what came after it, so nothing already in the file can change unnoticed.
                 prev, seq, start, tail = _resume_point(path, person_id)
+                torn = seq > 0 and _is_torn_tail(tail)
                 if tail and not tail.endswith(b"\n"):
                     tail += b"\n"   # the newline written below, before our first line
-                lines.append({"event": "ledger_start" if seq == 0 else "ledger_resume", "time": int(time.time()),
-                              "unchained_lines": sum(1 for x in tail.splitlines() if x.strip()),
-                              "unchained_from_byte": start,
-                              "unchained_sha256": hashlib.sha256(tail).hexdigest()})
+                mark = {"event": "ledger_start" if seq == 0 else "ledger_resume", "time": int(time.time()),
+                        "unchained_lines": sum(1 for x in tail.splitlines() if x.strip()),
+                        "unchained_from_byte": start,
+                        "unchained_sha256": hashlib.sha256(tail).hexdigest()}
+                if torn:
+                    mark["reason"] = "torn_write"
+                lines.append(mark)
         lines.append(dict(entry))
         out = b""
         for e in lines:
@@ -177,6 +188,16 @@ def append(runtime: Path, person_id: str, entry: dict) -> dict:
             os.close(fd)
         _write_head(runtime, person_id, seq - 1, prev)
         return lines[-1]
+
+
+def _is_torn_tail(tail: bytes) -> bool:
+    """True when the bytes after the last chained entry look like one write that was cut off (for example
+    by a power cut): a single piece of a line, at the very end of the file, with no newline, that is not
+    a whole JSON object. An entry whose chain fields were stripped still parses, so it never counts."""
+    if not tail or tail.endswith(b"\n"):
+        return False
+    parts = [x for x in tail.splitlines() if x.strip()]
+    return len(parts) == 1 and _parse(parts[0].strip()) is None
 
 
 def _ends_without_newline(path: Path) -> bool:
@@ -206,12 +227,32 @@ class Report:
     head: str = ""                 # entry_hash of the last chained entry ("" if none)
     unchained_lines: int = 0       # old lines sealed by ledger_start
     problems: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)   # worth knowing, but the log still checks out
     checkpoints_checked: int = 0
 
     def to_dict(self) -> dict:
         return {"person": self.person, "ok": self.ok, "count": self.count, "head": self.head,
                 "unchained_lines": self.unchained_lines, "problems": self.problems,
-                "checkpoints_checked": self.checkpoints_checked}
+                "warnings": self.warnings, "checkpoints_checked": self.checkpoints_checked}
+
+
+def _snapshot(runtime: Path, person_id: str) -> tuple[bytes | None, str | None]:
+    """(log bytes, head file text) read together under the shared lock, so a writer in another process
+    cannot slip an entry in between the two reads. None for a file that does not exist."""
+    path, hp = log_path(runtime, person_id), head_path(runtime, person_id)
+
+    def read():
+        data = path.read_bytes() if path.exists() else None
+        try:
+            hd = hp.read_text()
+        except FileNotFoundError:
+            hd = None
+        return data, hd
+
+    if not path.parent.exists():
+        return None, None          # nothing was ever written; do not create the folder just to look
+    with _locked(path, shared=True):
+        return read()
 
 
 def verify(runtime: Path, person_id: str, *, checkpoints: list[dict] | None = None,
@@ -219,15 +260,13 @@ def verify(runtime: Path, person_id: str, *, checkpoints: list[dict] | None = No
     """Walk the whole chain. checkpoints are {"count": n, "head": hash} pairs that must still be in it."""
     _safe_id(person_id)
     rep = Report(person_id, ok=True)
-    path = log_path(runtime, person_id)
-    if not path.exists():
-        hp = head_path(runtime, person_id)
-        if hp.exists() or checkpoints:
+    data, head_text = _snapshot(runtime, person_id)
+    if data is None:
+        if head_text is not None or checkpoints:
             rep.problems.append("the log file is missing but the box has a record of it")
         rep.ok = not rep.problems
         return rep
 
-    data = path.read_bytes()
     raw_lines = data.splitlines(keepends=True)
     prev, expect_seq = genesis_hash(person_id), 0
     heads: dict[int, str] = {}      # count -> head after that many entries
@@ -259,6 +298,13 @@ def verify(runtime: Path, person_id: str, *, checkpoints: list[dict] | None = No
                   or obj.get("unchained_from_byte") != after_chained
                   or obj.get("unchained_lines") != len(unchained)):
                 bad(f"line {n}: the older lines before it were changed")
+            elif (obj.get("event") == "ledger_resume" and obj.get("reason") == "torn_write"
+                  and len(unchained) == 1 and _parse(unchained[0][1].strip()) is None):
+                # One write that was cut off (a power cut or crash). Its bytes are pinned by the seal's
+                # sha256, so they cannot change later; the entry it was meant to be is lost.
+                rep.warnings.append(f"line {unchained[0][0]}: one entry was cut off while it was being "
+                                    f"written (for example by a power cut). It is kept as it was and sealed "
+                                    f"by the next entry, so it cannot be changed later.")
             elif obj.get("event") == "ledger_resume":
                 # Lines without chain fields after a chained entry: a damaged write, or an entry whose
                 # chain fields were stripped. Either way the log is no longer whole.
@@ -289,14 +335,18 @@ def verify(runtime: Path, person_id: str, *, checkpoints: list[dict] | None = No
     if unchained:
         if rep.count == 0:
             rep.unchained_lines = len(unchained)   # an old log that was never chained: nothing to check yet
+        elif _is_torn_tail(data[after_chained:]):
+            # A write that was cut off and not sealed yet. The head file was never moved past the last
+            # whole entry, so a real cut-off write still matches it; an entry cut short on purpose does not.
+            rep.warnings.append(f"line {unchained[0][0]}: the last entry was cut off while it was being "
+                                f"written (for example by a power cut). The next entry will seal it.")
         else:
             bad(f"line {unchained[0][0]}: {len(unchained)} line(s) at the end without chain fields")
 
     if check_head_file:
-        hp = head_path(runtime, person_id)
-        if hp.exists():
+        if head_text is not None:
             try:
-                hd = json.loads(hp.read_text())
+                hd = json.loads(head_text)
                 hc, hh = int(hd["count"]), str(hd["head"])
             except (ValueError, KeyError, TypeError):
                 bad("the saved chain head is unreadable")

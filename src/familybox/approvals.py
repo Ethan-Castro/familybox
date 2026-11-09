@@ -1,5 +1,8 @@
 """Held values wait here for their owner. Approving shows the full value on the owner's own screen
-(the box's local page or CLI); it is never sent back to the assistant that asked."""
+(the box's local page or CLI); it is never sent back to the assistant that asked.
+
+Every decision is written to the owner's tamper-evident log (familybox.ledger): what was approved or
+denied, for whom, and when. Never the value itself."""
 
 from __future__ import annotations
 
@@ -7,12 +10,14 @@ import json
 import time
 from pathlib import Path
 
+from . import ledger
 from .config import Config
 from .gate import Held
 
 
 class Approvals:
     def __init__(self, cfg: Config):
+        self.runtime: Path = cfg.runtime
         self.path: Path = cfg.runtime / "approvals.json"
 
     def _load(self) -> dict:
@@ -42,6 +47,10 @@ class Approvals:
             raise KeyError("no such item for this owner")
         item["status"] = "approved" if approve else "denied"
         item["decided"] = int(time.time())
+        # Log the decision first: if the log cannot be written, the value is not released.
+        ledger.append(self.runtime, owner, {"time": item["decided"], "event": item["status"], "item_id": item_id,
+                                            "kind": item.get("kind"), "label": item["label"],
+                                            "asker": item["asker"], "source": "approvals"})
         self._save(data)
         # The value is returned to the owner's own screen only.
         return {"id": item_id, "label": item["label"], "value": item["value"] if approve else None,
