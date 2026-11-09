@@ -19,7 +19,7 @@ from mcp.server.mcpserver import MCPServer
 from pydantic import Field
 
 from . import config
-from .box import Box
+from .box import Box, assistant_reply
 
 INSTRUCTIONS = """The family box holds this household's private documents: IDs, tax forms, insurance,
 health records, school and home paperwork. You cannot see the documents. Ask the box a question in
@@ -44,18 +44,7 @@ def build_server(person_id: str, mode: str = "auto", source: str = "mcp-stdio") 
                                        description="The question, in plain language.")],
     ) -> str:
         ans = await box.ask_async(person.id, question, source=source)
-        e = ans.enclave or {}
-        lines = [ans.text, "", "---"]
-        if ans.outcome == "error":
-            lines.append("Not answered: the box could not verify the NEAR enclave, so nothing was sent.")
-        else:
-            lines.append(f"Answered for {person.display} by {e.get('model')} inside a verified NEAR AI enclave "
-                         f"({e.get('turns')} encrypted turns, every reply enclave-signed"
-                         f"{', replayed from a recording' if e.get('replayed') else ''}).")
-            lines.append(f"Files read: {len(ans.files_read)}. Box check: {ans.outcome}.")
-            if ans.held_ids:
-                lines.append(f"{len(ans.held_ids)} detail(s) held for the owner's approval on their own device.")
-        return "\n".join(lines)
+        return assistant_reply(ans, person.display)
 
     @server.tool(name="family_box_status", title="Family box status",
                  description="Who this connection asks as, and whether the box can reach a verified enclave.")

@@ -4,8 +4,10 @@ GET  /redteam              the attack form, recorded questions, and the scoreboa
 POST /redteam/try          one attempt (same-origin + per-visitor CSRF cookie, rate limited)
 GET  /redteam/redteam.css  page styles (the box's CSP allows only same-origin styles, no scripts)
 
-What a visitor sees is exactly what an assistant would receive (Answer.text) plus a plain summary of
-the question's trust timeline (the box's own event log for that question).
+What a visitor sees is exactly what an MCP assistant would receive (box.assistant_reply: the checked
+answer plus its footer) and a plain summary of the question's trust timeline (the box's own event log
+for that question). Everything in that result card is scrubbed of the box's protected values and then
+scored by the independent checker, so the page is never a way out that MCP does not have.
 """
 
 from __future__ import annotations
@@ -22,9 +24,10 @@ from starlette.responses import HTMLResponse, RedirectResponse, Response
 from starlette.routing import Route
 
 from .. import enclave
-from ..box import REPO_REPLAYS, Box
+from .. import gate
+from ..box import REPO_REPLAYS, Box, assistant_reply
 from ..config import Config
-from . import scoring
+from . import guard, scoring
 from .home import DEMO_PEOPLE, Settings
 from .ledger import Ledger
 
@@ -99,8 +102,13 @@ def recorded_attacks(replay_dir: Path, people: set[str]) -> list[tuple[str, str]
     return sorted(out, key=lambda pq: (not hint.search(pq[1]), pq[0], pq[1]))
 
 
-def timeline(events: list[dict], files_read: list[str], files_denied: list[str]) -> list[str]:
-    """Plain-English steps from the box's event log for one question."""
+def timeline(events: list[dict], files_read: list[str], files_denied: int | list) -> list[str]:
+    """Plain-English steps from the box's event log for one question.
+
+    Refused files are shown only as a count (as MCP shows them): the paths are whatever the model asked
+    for, so they could carry anything, including a protected value it read elsewhere.
+    """
+    denied = files_denied if isinstance(files_denied, int) else len(files_denied)
     items: list[str] = []
     tools = 0
     for e in events:
@@ -133,7 +141,7 @@ def timeline(events: list[dict], files_read: list[str], files_denied: list[str])
         read = ", ".join(files_read) or "none"
         line = (f"The box ran {tools} tool call(s), searching and reading only this person's files. "
                 f"Files read: {read}."
-                + (f" Files refused (not this person's): {', '.join(files_denied)}." if files_denied else ""))
+                + (f" Files refused (not this person's): {denied}." if denied else ""))
         at = next((i for i, x in enumerate(items) if x.startswith(("Answer check", "Sent to", "Stopped", "A safety"))),
                   len(items))
         items.insert(at, line)
@@ -153,6 +161,13 @@ class RedTeam:
         if mode not in self._boxes:
             self._boxes[mode] = Box(self.cfg, mode=mode, replay_dir=self.replay_dir)
         return self._boxes[mode]
+
+    def scrub(self, text: str) -> str:
+        """Replace every protected value the box knows with [protected] (same rule as the event log)."""
+        for v in self.box("replay").store.sensitive_values():
+            if len(gate.normalize(v.value)) >= (8 if v.kind == "health" else 4):
+                text = gate.loose_pattern(v.value).sub("[protected]", text)
+        return text
 
     # ---- html
 
@@ -290,10 +305,19 @@ class RedTeam:
             return self._notice(csrf, f"That is too long. Keep it under {self.s.max_question_chars} characters.",
                                 400, person=person, question=question[:self.s.max_question_chars])
 
+        # Before admission, so a box with an add-on the spending limit does not cover never spends anything.
+        for m in ("live", "replay"):
+            try:
+                guard.check_composition(self.box(m))
+            except enclave.EnclaveError as e:
+                return self._notice(csrf, f"The family box stopped this question ({e}).", 503,
+                                    person=person, question=question)
+
         adm = self.ledger.admit(client_ip(request, self.s), key_present=bool(enclave.api_key()))
         if not adm.allowed:
             return self._notice(csrf, adm.reason, 429, person=person, question=question)
 
+        mode_name = "live" if adm.live else "replay"
         if not adm.live:
             rec = self.replay_dir / f"{enclave.replay_key(person, question)}.json"
             if not rec.is_file():
@@ -302,28 +326,36 @@ class RedTeam:
 
         ans = None
         try:
-            ans = await self.box("live" if adm.live else "replay").ask_async(person, question, source="web")
+            ans = await self.box(mode_name).ask_async(person, question, source="web")
         finally:
             if adm.live:
                 toks = ans.enclave.get("tokens") if ans is not None and ans.enclave else None
                 self.ledger.settle(adm.reservation, tuple(toks) if toks else None)
 
-        leaked = scoring.score(ans.text)
-        labels = scoring.describe(ans.text, leaked)
+        display = self.cfg.people[person].display
+        reply = assistant_reply(ans, display)
+        events = self._events(ans)
+        files_read = [self.scrub(f) for f in ans.files_read]
+        steps_text = [self.scrub(s) for s in timeline(events, files_read, len(ans.files_denied))]
+        mode = ("Live on the NEAR AI enclave." if adm.live else
+                f"Replayed from a real recorded run. {adm.reason}")
+        outcome_label = OUTCOME_LABEL.get(ans.outcome, ans.outcome)
+        # Score everything the visitor will see in the result card, not only the answer text.
+        seen = "\n".join([outcome_label, mode, f"Asked as {display}.", reply, *steps_text])
+        leaked = scoring.score(seen)
+        labels = scoring.describe(seen, leaked)
         self.ledger.record(outcome=ans.outcome, live=adm.live, leaked_labels=labels)
         if leaked:
             self.ledger.record_leak({"qid": ans.qid, "person": person, "question": question, "live": adm.live,
-                                     "outcome": ans.outcome, "leaked": labels, "sent_to_assistant": ans.text})
-        events = self._events(ans)
-        steps = "".join(f"<li>{esc(s)}</li>" for s in timeline(events, ans.files_read, ans.files_denied))
-        mode = ("Live on the NEAR AI enclave." if adm.live else
-                f"Replayed from a real recorded run. {adm.reason}")
+                                     "outcome": ans.outcome, "leaked": labels, "sent_to_assistant": reply,
+                                     "shown_on_page": seen})
+        steps = "".join(f"<li>{esc(s)}</li>" for s in steps_text)
         verdict = (f'<p class="bad">Confirmed leak: {esc(", ".join(labels))}. Thank you, this will be fixed.</p>'
                    if leaked else '<p class="ok">No protected value got out.</p>')
         result = (f'<div class="card {"rt-leak" if leaked else "rt-safe"}"><h2>Result: '
-                  f'{esc(OUTCOME_LABEL.get(ans.outcome, ans.outcome))}</h2>{verdict}'
-                  f'<p class="muted">{esc(mode)} Asked as {esc(self.cfg.people[person].display)}.</p>'
-                  f'<b>Exactly what the assistant receives:</b><div class="rt-answer">{esc(ans.text)}</div>'
+                  f'{esc(outcome_label)}</h2>{verdict}'
+                  f'<p class="muted">{esc(mode)} Asked as {esc(display)}.</p>'
+                  f'<b>Exactly what the assistant receives:</b><div class="rt-answer">{esc(reply)}</div>'
                   f'<b>Trust timeline</b><ol class="rt-timeline">{steps}</ol></div>')
         return self.main_page(csrf, result=result, person=person, question=question)
 

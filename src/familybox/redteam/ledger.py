@@ -19,7 +19,7 @@ Order of checks for one attempt (admit):
      max_tokens_per_day and daily_budget_usd.
 A live attempt reserves its worst case (guard.worst_case_tokens) before the call. settle() swaps the
 reservation for the real token count, or keeps the whole reservation as spent when the real count is
-unknown (an error). Reservations older than RESERVATION_TTL_S are counted as spent.
+unknown (an error, or a usage count that is missing or zero). Reservations older than RESERVATION_TTL_S are counted as spent.
 """
 
 from __future__ import annotations
@@ -29,7 +29,9 @@ import datetime as dt
 import fcntl
 import hashlib
 import hmac
+import ipaddress
 import json
+import logging
 import os
 import secrets
 import time
@@ -41,6 +43,8 @@ from ..web import _write_private
 from . import guard
 from .home import Settings
 
+log = logging.getLogger("familybox.redteam")
+
 HOUR = 3600
 RESERVATION_TTL_S = 15 * 60
 SCORE_KEYS = ("attempts", "live", "replayed", "answered", "masked", "held", "blocked", "stopped", "leaks")
@@ -49,6 +53,23 @@ OUTCOME_KEY = {"pass": "answered", "masked": "masked", "held": "held", "refused"
 
 def _today(now: float) -> str:
     return dt.datetime.fromtimestamp(now, dt.timezone.utc).strftime("%Y-%m-%d")
+
+
+def visitor_bucket(ip: str) -> str:
+    """The part of an address that identifies one visitor: the whole IPv4 address, or an IPv6 /64.
+
+    One home or phone usually gets a whole IPv6 /64 and can pick any address in it, so per-visitor
+    limits count the /64. IPv4 addresses inside IPv6 (::ffff:a.b.c.d) count as the IPv4 address.
+    """
+    try:
+        a = ipaddress.ip_address((ip or "").strip())
+    except ValueError:
+        return ip or "unknown"
+    if isinstance(a, ipaddress.IPv6Address):
+        if a.ipv4_mapped:
+            return str(a.ipv4_mapped)
+        return str(ipaddress.IPv6Network((a, 64), strict=False))
+    return str(a)
 
 
 def _empty_score() -> dict:
@@ -94,8 +115,17 @@ class Ledger:
         p = self.dir / "state.json"
         try:
             st = json.loads(p.read_text()) if p.exists() else {}
+            if not isinstance(st, dict):
+                raise ValueError("state.json is not an object")
         except ValueError:
-            st = {}
+            # Never start the budget again from zero. Keep the broken file for the owner and switch live
+            # tries off for the rest of the UTC day (replays still work).
+            bad = self.dir / f"state.json.unreadable-{int(time.time())}"
+            with contextlib.suppress(OSError):
+                os.replace(p, bad)
+            log.error("red-team spending record %s could not be read; live tries are off for today "
+                      "(kept as %s)", p, bad.name)
+            st = {"live_locked_day": _today(time.time())}
         st.setdefault("day", "")
         st.setdefault("spent_usd", 0.0)
         st.setdefault("tokens", 0)
@@ -130,7 +160,7 @@ class Ledger:
     def visitor(self, ip: str, now: float | None = None) -> str:
         """Daily-rotating keyed hash of the visitor's address. The address itself is never stored."""
         day_key = hmac.new(self._secret(), f"day:{_today(now or time.time())}".encode(), hashlib.sha256).digest()
-        return hmac.new(day_key, (ip or "unknown").encode(), hashlib.sha256).hexdigest()[:20]
+        return hmac.new(day_key, visitor_bucket(ip).encode(), hashlib.sha256).hexdigest()[:20]
 
     def csrf_for(self, cookie: str) -> str:
         return hmac.new(self._secret(), f"csrf:{cookie}".encode(), hashlib.sha256).hexdigest()[:32]
@@ -164,6 +194,8 @@ class Ledger:
                 why = "Live mode is off on this box (no NEAR AI key is set)."
             elif s.replay_only:
                 why = "This box is set to replay only."
+            elif st.get("live_locked_day") == st["day"]:
+                why = "The box could not read its spending record, so live tries are off for today."
             elif len(st["reservations"]) >= s.max_live_in_flight:
                 why = "Other live tries are running right now."
             elif len(mine["live"]) >= s.live_per_visitor_per_hour:
@@ -184,10 +216,16 @@ class Ledger:
 
     def settle(self, reservation: str | None, tokens: tuple[int, int] | None,
                now: float | None = None) -> float:
-        """Replace the reservation with the real cost. Unknown tokens keep the whole reservation."""
+        """Replace the reservation with the real cost. Unknown tokens keep the whole reservation.
+
+        A live try always sends a prompt, so a count of 0 input tokens means the usage was missing
+        (the SDK or gateway left it out). That counts as unknown too, so the budget never undercounts.
+        """
         now = now or time.time()
         with self._locked(now) as st:
             r = st["reservations"].pop(reservation, None) if reservation else None
+            if tokens is not None and (len(tokens) != 2 or int(tokens[0]) <= 0):
+                tokens = None
             if tokens is None:
                 usd, tok = (r["usd"], r["tokens"]) if r else (self.worst_usd, self.worst_in + self.worst_out)
             else:

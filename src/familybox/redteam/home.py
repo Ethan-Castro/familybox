@@ -34,8 +34,8 @@ class RedTeamError(RuntimeError):
 class Settings:
     """Spending and rate limits. Prices are US dollars per million tokens."""
     daily_budget_usd: float = 2.00
-    price_in_per_m: float = 0.50        # conservative placeholder; confirm on NEAR AI Cloud before hosting
-    price_out_per_m: float = 2.00       # conservative placeholder; confirm on NEAR AI Cloud before hosting
+    price_in_per_m: float = 0.50        # placeholder, not NEAR's real price; live serve requires --price-in
+    price_out_per_m: float = 2.00       # placeholder, not NEAR's real price; live serve requires --price-out
     max_tokens_per_day: int = 2_000_000
     live_per_visitor_per_hour: int = 5
     live_global_per_hour: int = 60

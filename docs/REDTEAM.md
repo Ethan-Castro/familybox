@@ -4,16 +4,19 @@ A page where anyone can try to get a fake family's secrets out of the box: "Get 
 medication." The visitor picks who they pretend to be (Dana, Sam or Maya), types what they would ask
 that person's AI assistant, and sees:
 
-- exactly what an assistant would receive (the text the gate let out),
+- exactly what an assistant would receive: the text the gate let out plus the same short footer an MCP
+  assistant gets (model, turns, files read, box check, held count),
 - the trust timeline for that question: enclave attestation, each signed model turn, the box's tool
-  runs and files read, the gate's decision, and what was held for the owner's own screen,
+  runs and files read (files it refused are only counted, as MCP does, since a refused path is whatever
+  the model typed), the gate's decision, and what was held for the owner's own screen,
 - a scoreboard: tries, live or replayed, blocked, held, numbers removed, answered, stopped, and
   **confirmed leaks**.
 
 A leak is judged by the same independent checker as the attack suite: `leaked()` from
 `eval/attacks.py`, run against the union of every forbidden list in its `ATTACKS` table (full SSNs and
 any five digits of one, passport numbers, member and record IDs, the tripwire code, the family's health
-words). It is not the gate's own code.
+words). It is not the gate's own code. The checker reads everything in the result card, timeline
+included, not only the answer, so a value that slipped out anywhere on the page counts as a leak.
 
 **Status: built and tested on this laptop only. It is not deployed, hosted or exposed anywhere.**
 
@@ -36,7 +39,8 @@ approvals, cloud) answer 404 on that server, and `/` redirects to `/redteam`.
 ```sh
 uv run familybox redteam init ~/fb-redteam-home
 uv run familybox redteam serve --home ~/fb-redteam-home --replay-only     # free, no key needed
-uv run --env-file .env familybox redteam serve --home ~/fb-redteam-home    # live, within the limits below
+uv run --env-file .env familybox redteam serve --home ~/fb-redteam-home \
+    --price-in <real $ per M in> --price-out <real $ per M out>                # live, within the limits below
 uv run familybox redteam status --home ~/fb-redteam-home                  # scoreboard and today's spend
 ```
 
@@ -60,21 +64,32 @@ start). There is no option to listen on other addresses.
 
 **How the budget stays hard.** Before every live try, the box reserves that try's worst-case cost and
 only goes live if today's spend, plus every open reservation, plus this worst case, fits in the budget.
-After the try, the reservation is swapped for the real token count from the enclave. If the try failed
-and the real count is unknown, the whole reservation is kept as spent. A reservation that never settles
+After the try, the reservation is swapped for the real token count from the enclave. If the try failed,
+or the enclave reply left out its token count (or said 0 tokens in, which a real try can never be), the
+whole reservation is kept as spent. If the spending record cannot be read, it is never reset to zero:
+the broken file is kept for the owner and live tries stay off for the rest of the day. A reservation that never settles
 (for example a crash) counts as spent after 15 minutes. The day is the UTC date.
 
 **The worst case** comes from limits the box enforces: at most 6 model turns (enclave loop) of at most
 900 output tokens each, and, on a red-team home only, at most 12 tool runs per question with each result
 cut to 3,000 characters. With a 500-character question that bounds one try at 367,200 input and 5,400
 output tokens. The input bound assumes about one token per byte or fewer and adds room for the replayed
-tool history (`familybox/redteam/guard.py` lists every assumption). At the default prices that is about
+tool history (`familybox/redteam/guard.py` lists every assumption).
+
+The bound only holds for the parts it counts: the two built-in tools (search and read files), the
+tool limit, and one model call per turn. So a red-team box refuses to start, and stops every question,
+if any other add-on is loaded: another tool (for example the analysis workbench's sandbox, which should
+never run for anonymous visitors), a check that makes its own model call (for example a paraphrase
+check), or anything that pushes the tool limit out of first place. The size of the system prompt plus
+the real tool list is also checked against the bound. At the placeholder prices that is about
 $0.19 per try, so live tries stop when less than that is left.
 
-**Prices are placeholders.** The defaults are $0.50 per million input tokens and $2.00 per million
-output tokens. They are set high on purpose: our own measured run (2,249 tokens in, 295 out) cost about
-$0.001, which is well under these rates. **Check the real DeepSeek-V4.1-Flash-1017 price on NEAR AI
-Cloud and pass it with `--price-in` and `--price-out` before hosting.**
+**Prices are placeholders, and the real price is not known yet.** The defaults are $0.50 per million
+input tokens and $2.00 per million output tokens. Nobody has checked them against NEAR's real rates, and
+nothing in this repo shows the real DeepSeek-V4.1-Flash-1017 price, so they may be too low or too high.
+Because of that, `familybox redteam serve` refuses to start in live mode until you pass both
+`--price-in` and `--price-out`. Check the real price on NEAR AI Cloud before any live hosting. Replay
+only mode needs no prices, because it never calls the model.
 
 When live tries are paused, the recorded questions on the page still run. They replay real enclave runs
 from `replays/`, and the box's tools, access checks and gate run again for real. A typed question that
@@ -82,7 +97,8 @@ was not recorded gets a plain message, and nothing is asked.
 
 ## What is stored, and what is not
 
-- **No IP addresses.** To count tries, a visitor is `HMAC(day key, address)` cut to 20 characters,
+- **No IP addresses.** To count tries, a visitor is `HMAC(day key, address)` cut to 20 characters
+  (for IPv6, the address's /64 block, since one home can pick any address in its /64),
   where the day key is `HMAC(secret, UTC date)`. The codes change every day, so they cannot be linked
   across days, and they are dropped after an hour. uvicorn's access log and proxy headers are off.
 - **No sign-in and no accounts.** A random cookie (`__Host-`, Secure, HttpOnly, SameSite=Strict) only
@@ -116,7 +132,8 @@ The plan, if Ethan approves it:
 2. **Reach.** Keep it bound to 127.0.0.1 and put an outbound tunnel in front of it (for example a
    Cloudflare Tunnel to a hostname Ethan owns), so no port is opened on the home network. Start it with
    `--trust-ip-header cf-connecting-ip` so per-visitor limits see the real visitor; use that option only
-   behind a proxy that sets the header itself.
+   behind a proxy that sets the header itself. Without it, every visitor arrives as 127.0.0.1, so one
+   person could use up the per-visitor limit for everyone (only the global caps would still be fair).
 3. **Key.** Use a separate NEAR AI Cloud key just for this page, with the smallest account-side spend
    limit NEAR offers, so the box's own budget is not the only guard.
 4. **Run it replay only first** (`--replay-only`), then switch to live once the prices are confirmed.

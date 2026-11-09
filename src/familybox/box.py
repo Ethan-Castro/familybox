@@ -285,5 +285,21 @@ class Box:
             f.write(json.dumps(entry) + "\n")
 
 
+def assistant_reply(ans: Answer, display: str) -> str:
+    """The exact text an MCP assistant receives for one answer: the checked answer plus a short footer."""
+    e = ans.enclave or {}
+    lines = [ans.text, "", "---"]
+    if ans.outcome == "error":
+        lines.append("Not answered: the box could not verify the NEAR enclave, so nothing was sent.")
+    else:
+        lines.append(f"Answered for {display} by {e.get('model')} inside a verified NEAR AI enclave "
+                     f"({e.get('turns')} encrypted turns, every reply enclave-signed"
+                     f"{', replayed from a recording' if e.get('replayed') else ''}).")
+        lines.append(f"Files read: {len(ans.files_read)}. Box check: {ans.outcome}.")
+        if ans.held_ids:
+            lines.append(f"{len(ans.held_ids)} detail(s) held for the owner's approval on their own device.")
+    return "\n".join(lines)
+
+
 def _held_summary(held: list[gate.Held]) -> list[dict]:
     return [{"kind": h.kind, "label": h.label, "owner": h.owner, "path": h.path} for h in held]

@@ -26,6 +26,10 @@ CUT_NOTE = " [cut: tool results are limited on the red-team box]"
 BASE_OVERHEAD = 2000
 PER_TURN_HISTORY = 8000
 RESULT_WRAPPER = 100            # {"tool": ..., "arguments": ..., "result": ...} around each result
+TEMPLATE_ROOM = 400             # chat template tokens and the person's name, inside BASE_OVERHEAD
+
+NOT_COVERED = ("this red-team box has an extra add-on (a tool, or a check that can call a model) that its "
+               "spending limit does not cover, so it will not answer")
 
 
 def worst_case_tokens(max_question_chars: int) -> tuple[int, int]:
@@ -57,6 +61,40 @@ def cut(text: str, limit: int = MAX_RESULT_JSON) -> str:
     while s and len(json.dumps(s)) > budget:
         s = s[: max(0, min(len(s) - 1, int(len(s) * 0.9)))]
     return s + CUT_NOTE
+
+
+def base_bytes(box) -> int:
+    """Bytes of the system prompt plus every tool schema the model is offered on this box."""
+    people = list(box.cfg.people.values())
+    tools = max((len(json.dumps(box.tools_for(p)).encode()) for p in people), default=0)
+    return len(enclave.SYSTEM_PROMPT.encode()) + tools
+
+
+def check_composition(box) -> None:
+    """Raise enclave.EnclaveError unless the box has only the parts the worst-case bound covers.
+
+    That is: ToolLimit first, then the built-in FileTools, no other tool provider, no post-check, and no
+    pre-check except this module's own. Anything else (a plugin with more tools, a second model call, a
+    code sandbox) would break worst_case_tokens(), so a red-team box refuses to run with it.
+    """
+    from ..box import FileTools
+    tp = box.tool_providers
+    ok = (len(tp) == 2 and type(tp[0]) is ToolLimit and tp[0].box is box and type(tp[1]) is FileTools
+          and not box.post_checks and len(box.pre_checks) == 1 and box.pre_checks[0] is composition_pre_check
+          and base_bytes(box) <= BASE_OVERHEAD - TEMPLATE_ROOM)
+    if not ok:
+        raise enclave.EnclaveError(NOT_COVERED)
+
+
+async def composition_pre_check(box, person, question, ctx) -> None:
+    """Pre-check on a red-team box: stop the question unless check_composition() passes."""
+    check_composition(box)
+
+
+def install(box) -> None:
+    """Called from the plugin's register(): the tool limit goes first, and the composition check runs."""
+    box.tool_providers.insert(0, ToolLimit(box))
+    box.pre_checks.insert(0, composition_pre_check)
 
 
 class ToolLimit:

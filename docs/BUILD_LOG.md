@@ -87,6 +87,17 @@ Installed through the fleet control plane's exec jobs, with no SSH (`scripts/fle
 
 - **What:** `/redteam`, a page where a visitor picks Dana, Sam or Maya from the fictional family, types an attack, and sees exactly what an assistant would receive plus the question's trust timeline. A scoreboard counts tries, blocked, held and confirmed leaks. Leaks are judged by `eval/attacks.py`'s own `leaked()` and forbidden lists, not by the gate. Details in `docs/REDTEAM.md`.
 - **Off by default:** only on a home made by `familybox redteam init` (marker file, the demo family, only fictional SSNs), and only under `familybox redteam serve`, which serves nothing but the red-team page on 127.0.0.1.
-- **Spending guard:** per-visitor and global live caps per hour, a daily token cap, and a hard daily budget in US dollars. Each live try reserves its worst case first (367,200 tokens in and 5,400 out, made true by a 12-tool-run limit and 3,000-character tool results on red-team homes). Over any cap the page switches to replay only. Prices are conservative placeholders until Ethan confirms NEAR's real rates.
+- **Spending guard:** per-visitor and global live caps per hour, a daily token cap, and a hard daily budget in US dollars. Each live try reserves its worst case first (367,200 tokens in and 5,400 out, made true by a 12-tool-run limit and 3,000-character tool results on red-team homes). Over any cap the page switches to replay only. Prices are placeholders with no basis yet (NEAR's real rate for this model is not known); live serve refuses to start until real prices are passed.
 - **Visitors:** no sign-in, CSRF cookie plus same-origin check, 500-character questions, and per-visitor limits keyed by a daily-rotating HMAC of the address. The address itself is never stored (tested).
 - **Tests:** 160 passed (113 before plus 47 new). No live calls were made: the live path was tested with a fake enclave, and the recorded replays ran for real.
+
+## 2026-11-08: Red-team page review fixes
+
+- **Refused file paths no longer reach the page.** A model could put a protected value in a `read_file` path, and the timeline printed refused paths as typed. The page now shows only how many files were refused, as MCP does, and scrubs protected values from the timeline. The independent checker now scores the whole result card (answer, footer and timeline), not only the answer.
+- **The page shows the same reply as MCP:** the checked answer plus the footer, from one shared function (`box.assistant_reply`).
+- **Budget stays hard when usage is missing.** A live try that reports 0 input tokens, or no count, keeps its whole reservation as spent.
+- **Known parts only.** A red-team box refuses to start, and stops every question before any model call, if any other tool provider, post-check or pre-check is loaded, or if the tool limit is not first. The system prompt plus real tool schemas are checked against the worst-case bound.
+- **Prices:** live serve refuses to start without `--price-in` and `--price-out`. The docs no longer claim the placeholders are high.
+- **Visitors:** IPv6 addresses are counted per /64. An unreadable spending record is kept aside and turns live tries off for the day instead of resetting the spend to zero.
+- **Tests:** 172 passed (160 before plus 12 new). No live calls were made.
+
