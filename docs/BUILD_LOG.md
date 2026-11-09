@@ -82,3 +82,13 @@ Installed through the fleet control plane's exec jobs, with no SSH (`scripts/fle
 - **Fail closed:** an error in a pre or post check stops the question, and nothing is answered.
 - **Enclave:** `ask_live` takes the tool list and an event callback. Replay mode sends the same events, marked as replayed.
 - **Tests:** 113 passed (97 before plus 16 new plugin tests). No live calls were made.
+
+## 2026-11-08: Confidential analysis workbench (run_analysis)
+
+- **What:** a tool provider plugin (`src/familybox/plugins/workbench.py`) that lets the enclave model run a short stdlib Python script over the asker's files. The sandbox (`src/familybox/sandbox.py`, `sandbox_launcher.py`) is built from unprivileged Linux namespaces with `unshare`: a new root from an allowlist via `pivot_root`, no network, no capabilities, a seccomp filter (threads yes, new processes no), rlimits, a wall clock and an output cap. Details in `docs/WORKBENCH.md`.
+- **Off by default.** The owner turns it on with `[workbench] enabled = true` in `family.toml` (optionally only for some people). It is offered only where the sandbox works. On this Mac it is not offered, and `familybox workbench status` says why.
+- **Logged for the person:** code, output and limits hit go to the question's events, the audit entry (new `plugins` field, a small core change in `box.py`) and `runtime/workbench/<person>.jsonl`, scrubbed. Each person sees their own scripts on the web page under Analysis.
+- **Gate:** every file the script could see counts as read, so those owners' never-share rules apply. Script output reaches the model only, and the final answer still goes through the gate.
+- **fleet_exec.py:** the board folder is now `FAMILYBOX_PI_DIR` (default `~/familybox`), with its own upload folder. There is a new `test` command.
+- **Pi (decision-tree, kernel 6.18, Debian 13, util-linux 2.41.5, Python 3.13.5), as `offlinebase`, no sudo:** the branch was installed into `~/familybox-wb`, and the main `~/familybox` was not touched. Full suite **143 passed, 1 skipped** (the Mac-only check); `tests/test_workbench.py` **30 passed, 1 skipped** in 9.3 s. Real sandbox results: a fork bomb was refused at the first fork, new threads stopped below the limit of 16, a memory bomb raised MemoryError near 500 MB, an endless loop was stopped by SIGXCPU at 2.0 s of CPU (test limit), and an output flood was stopped after about 4 MB. A nested `unshare`, `ptrace`, `bpf`, `keyctl` and `io_uring` were refused, and `/proc` was empty. On this Mac: 130 passed, 14 skipped (the real sandbox tests).
+- **Not done:** no live NEAR question used the tool yet (replay and fake-model tests only). The x86_64 seccomp table is written from the kernel numbering but has not run on an x86_64 box.

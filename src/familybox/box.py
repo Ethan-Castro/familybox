@@ -262,10 +262,10 @@ class Box:
         ans.files_read, ans.files_denied = ctx.files_read, ctx.files_denied
         ctx.emit("answer", outcome=ans.outcome, held=len(ans.held_ids), files_read=len(ans.files_read),
                  files_denied=len(ans.files_denied), seconds=round(time.time() - ctx.started, 2))
-        self._audit(ans)
+        self._audit(ans, ctx.data.get("audit"))
         return ans
 
-    def _audit(self, ans: Answer) -> None:
+    def _audit(self, ans: Answer, plugin_extra: dict | None = None) -> None:
         log_path = self.cfg.runtime / "audit" / f"{ans.person}.jsonl"
         log_path.parent.mkdir(parents=True, exist_ok=True)
         entry = {
@@ -281,6 +281,8 @@ class Box:
             "held_ids": ans.held_ids,
             "enclave": ans.enclave,
         }
+        if plugin_extra:  # plugins add audit details through ctx.data["audit"][<plugin name>]
+            entry["plugins"] = plugin_extra
         with log_path.open("a") as f:
             f.write(json.dumps(entry) + "\n")
 

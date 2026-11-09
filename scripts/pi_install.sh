@@ -28,6 +28,9 @@ timed uv sync --python "$PY" -q
 echo "== tests"
 uv run pytest -q tests 2>&1 | tail -3
 
+echo "== analysis sandbox (namespaces, no sudo)"
+FAMILYBOX_HOME="$PWD/demo" FAMILYBOX_WORKBENCH=on uv run familybox workbench status || true
+
 echo "== replay demo (no API key needed)"
 export FAMILYBOX_HOME="$PWD/demo"
 timed uv run familybox ask --mode replay --as maya "What medications am I on?"

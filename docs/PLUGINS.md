@@ -40,6 +40,10 @@ the text, the box replaces the text with the standard blocked message.
 and `ctx.emit(step, **data)`, which appends one JSON line to `<runtime>/events/<person>/<qid>.jsonl`.
 Never pass file text or answer text to emit. Known protected values are scrubbed from every event anyway.
 
+A plugin can add details to the question's audit entry: put them in `ctx.data["audit"][<plugin name>]`
+and the entry gets a `plugins` field with that dict (scrub protected values first, for example with
+`ctx._scrub_value`).
+
 Steps the core emits: `question`, `attestation`, `turn`, `tool`, `error`, `pre_check_stopped`, `gate`,
 `post_checks`, `post_check_stopped`, `answer`. Attestation and turn events carry `replayed`.
 
