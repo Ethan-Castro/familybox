@@ -36,7 +36,7 @@ SSN_RE = re.compile(r"\b(\d{3})[- ](\d{2})[- ](\d{4})\b")
 ID_LABEL_RE = re.compile(
     r"^\s*(?P<label>passport (?:number|no\.?)|member id|policy (?:number|no\.?)|account (?:number|no\.?)|"
     r"routing (?:number|no\.?)|group (?:number|no\.?)|driver'?s license (?:number|no\.?)|license number|"
-    r"medical record number|mrn|ein)\s*:\s*(?P<value>[A-Za-z0-9-]{4,})",
+    r"medical record number|mrn|ein|id (?:number|no\.?))\s*:\s*(?P<value>[A-Za-z0-9-]{4,})",
     re.IGNORECASE | re.MULTILINE,
 )
 # Lines in health records whose content is a health detail (diagnosis, medication, notes).

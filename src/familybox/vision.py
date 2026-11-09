@@ -2,9 +2,13 @@
 
 What the box keeps, side by side in the same folder (both 0600):
   card.png                    the original photo, exactly as uploaded. Never sent to any assistant.
-                              Its owner can look at it on the box's web page.
-  card.png.transcript.txt     a header (model, signer, signature kind, time, photo SHA-256), a line of
-                              dashes, then the model's transcription as labeled lines ("SSN: ...").
+                              Its owner can look at it on the box's web page (anyone in the family, for
+                              a photo in shared/).
+  card.png.transcript.txt     a header (model, signer, signature kind, time, photo SHA-256, and the box's
+                              seal), a line of dashes, then the model's transcription as labeled lines
+                              ("SSN: ..."). Only this module writes these files: uploads can't use the name.
+                              The seal is an HMAC with a key kept in runtime/, so the box page only says
+                              "checked" for text this box itself got back from the enclave.
 
 The transcript is an ordinary .txt file, so the store indexes it: search, the protected-value index and
 the answer gate all cover numbers printed on the card. The store treats a read of the photo as a read
@@ -26,6 +30,7 @@ import base64
 import contextlib
 import datetime as dt
 import hashlib
+import hmac
 import io
 import json
 import os
@@ -222,7 +227,8 @@ async def transcribe_live(prep: Prepared, *, api_key: str, model: str, emit: Emi
         raise
     except Exception as e:  # noqa: BLE001 - any SDK or transport failure fails closed
         sdk = get_sdk_error(e)
-        err = EnclaveError(sdk.failure.code if sdk else f"{type(e).__name__}: {str(e)[:200]}")
+        # Only the SDK's failure code or the exception's type: an error message could echo request or reply text.
+        err = EnclaveError(sdk.failure.code if sdk else type(e).__name__)
         emit("error", message=str(err), replayed=False)
         raise err from e
 
@@ -241,39 +247,57 @@ def _transcriber() -> Transcriber:
 # Label spellings a model (or a card) uses, mapped to the labels store.py indexes.
 _LABELS: list[tuple[re.Pattern, str]] = [(re.compile(p, re.IGNORECASE), label) for p, label in [
     (r"social security(?: number| no\.?| #)?|ssn|ss #|ss no\.?", "SSN"),
-    (r"member ?id(?: number| no\.?| #)?|member (?:number|no\.?|#)|subscriber (?:id|number|no\.?|#)|"
-     r"id (?:number|no\.?|#)|identification number", "Member ID"),
+    (r"member ?id(?: number| no\.?| #)?|member (?:number|no\.?|#)|subscriber (?:id|number|no\.?|#)",
+     "Member ID"),
     (r"group(?: number| no\.?| #| id)?", "Group number"),
     (r"policy(?: number| no\.?| #| id)?", "Policy number"),
     (r"passport(?: number| no\.?| #)?|passport card(?: number| no\.?)?", "Passport number"),
     (r"driver'?s? licen[cs]e(?: number| no\.?| #)?|dl(?: number| no\.?| #)?|licen[cs]e (?:number|no\.?|#)",
      "Driver's license number"),
-    (r"account(?: number| no\.?| #)|acct(?: number| no\.?| #)?", "Account number"),
+    (r"account(?: number| no\.?| #)?|acct\.?(?: number| no\.?| #)?", "Account number"),
     (r"routing(?: number| no\.?| #)?|aba(?: number)?", "Routing number"),
     (r"medical record(?: number| no\.?| #)?|mrn", "Medical record number"),
     (r"ein|employer id(?:entification)? number", "EIN"),
+    (r"id(?: ?#| number| no\.?)?|identification number", "ID"),      # bare "ID": Member ID on an insurance card, otherwise a generic ID number
 ]]
+_INSURANCE_RE = re.compile(r"insurance|health plan|medicaid|medicare|dental|vision plan|member|subscriber|"
+                           r"group|copay|\brx\b|payer", re.IGNORECASE)
+_TRAILING_NOTE_RE = re.compile(r"\s*\([^()]*\)\s*$")
+_ID_TOKEN_RE = re.compile(r"[A-Za-z0-9-]+")
+
+
+def _id_token(t: str) -> bool:
+    """A piece of an ID: has a digit, is a dash, or is short or capitals ("BPF"). Not a word like "Plan"."""
+    return bool(_ID_TOKEN_RE.fullmatch(t)) and (any(c.isdigit() for c in t) or t.isupper() or len(t) <= 3)
 _LINE_RE = re.compile(r"^(?P<label>[A-Za-z][A-Za-z' .#/]{0,40}?)\s*:\s*(?P<value>\S.*)$")
-_SPACED_ID_RE = re.compile(r"^[A-Za-z0-9]+(?:[ ][A-Za-z0-9]+){1,5}$")
 _LABELS_ONLY_ID = {"Member ID", "Group number", "Policy number", "Passport number", "Driver's license number",
-                   "Account number", "Routing number", "Medical record number", "EIN"}
+                   "Account number", "Routing number", "Medical record number", "EIN", "ID number"}
 
 
 def _canon_value(label: str, value: str) -> str:
     value = value.strip().strip("*`\"'").strip()
     if label == "SSN":
-        d = re.sub(r"\D", "", value)
-        if len(d) == 9 and re.fullmatch(r"[\d \-.]{9,13}", value):
+        bare = _TRAILING_NOTE_RE.sub("", value)
+        d = re.sub(r"\D", "", bare)
+        if len(d) == 9 and re.fullmatch(r"[\d \-.]{9,13}", bare):
             return f"{d[:3]}-{d[3:5]}-{d[5:]}"
         return value
-    if label in _LABELS_ONLY_ID and _SPACED_ID_RE.match(value) and sum(c.isdigit() for c in value) >= 4:
-        return value.replace(" ", "")          # "BPF 5530 2178" -> "BPF55302178", so the store's regex sees all of it
+    if label in _LABELS_ONLY_ID:
+        bare = _TRAILING_NOTE_RE.sub("", value).strip()      # "X3098 1455 (US)" -> "X3098 1455"
+        tokens = bare.split()
+        if (len(tokens) > 1 and all(_id_token(t) for t in tokens)
+                and sum(c.isdigit() for c in bare) >= 4):
+            # "BPF 5530 2178" or "BPF-5530 2178" -> one token, so the store's regex sees all of it
+            return "".join(tokens)
+        if tokens and bare != value and _ID_TOKEN_RE.fullmatch(bare):
+            return bare
     return value
 
 
 def canonical(text: str) -> str:
     """Clean the model's output and rewrite known labels to the spellings store.py indexes."""
     text = re.sub(r"```[a-zA-Z]*", "", text or "").replace("\r\n", "\n")
+    bare_id = "Member ID" if _INSURANCE_RE.search(text) else "ID number"
     out = []
     for raw in text.split("\n"):
         line = re.sub(r"^\s*(?:[-*•]|\d+[.)])\s+", "", raw)       # list bullets
@@ -285,6 +309,7 @@ def canonical(text: str) -> str:
             label = m["label"].strip()
             for pat, canon in _LABELS:
                 if pat.fullmatch(label):
+                    canon = bare_id if canon == "ID" else canon
                     line = f"{canon}: {_canon_value(canon, m['value'])}"
                     break
         out.append(line)
@@ -297,8 +322,45 @@ def transcript_path(photo: Path) -> Path:
     return photo.with_name(photo.name + TRANSCRIPT_SUFFIX)
 
 
-def render(photo_name: str, sha256: str, t: Transcription, prep: Prepared, when: float | None = None) -> str:
+SEALED_FIELDS = ("Photo", "Model", "Signer", "Signature kind", "Transcribed at", "Image SHA-256")
+
+
+def seal_key(cfg: Config) -> bytes:
+    """The box's own key for sealing transcripts. Kept in runtime/, outside files/, so no upload can reach it."""
+    path = cfg.runtime / "photo_seal.key"
+    try:
+        return bytes.fromhex(path.read_text().strip())
+    except (OSError, ValueError):
+        pass
+    path.parent.mkdir(parents=True, exist_ok=True)
+    key = secrets.token_hex(32)
+    try:
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError:
+        return bytes.fromhex(path.read_text().strip())
+    with os.fdopen(fd, "w") as f:
+        f.write(key + "\n")
+    return bytes.fromhex(key)
+
+
+def _seal(key: bytes, fields: dict[str, str], body: str) -> str:
+    msg = json.dumps([fields.get(k, "") for k in SEALED_FIELDS] + [body], ensure_ascii=False)
+    return hmac.new(key, msg.encode(), hashlib.sha256).hexdigest()
+
+
+def sealed_by_box(key: bytes, text: str) -> bool:
+    """True only if this box wrote this transcript: its seal covers the header fields and the text."""
+    fields, body = parse(text)
+    seal = fields.get("Box seal", "")
+    return bool(seal) and hmac.compare_digest(seal, _seal(key, fields, body))
+
+
+def render(photo_name: str, sha256: str, t: Transcription, prep: Prepared, when: float | None = None,
+           key: bytes | None = None) -> str:
     stamp = dt.datetime.fromtimestamp(time.time() if when is None else when, dt.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    body = canonical(t.text) + "\n"
+    fields = {"Photo": photo_name, "Model": t.model, "Signer": t.signer, "Signature kind": t.signature_kind,
+              "Transcribed at": stamp, "Image SHA-256": sha256}
     header = [
         HEADER_TITLE,
         f"Photo: {photo_name}",
@@ -308,9 +370,10 @@ def render(photo_name: str, sha256: str, t: Transcription, prep: Prepared, when:
         f"Transcribed at: {stamp}",
         f"Image SHA-256: {sha256}",
         f"Sent to the model: {prep.width}x{prep.height} JPEG, location and camera data removed",
-        HEADER_END,
     ]
-    return "\n".join(header) + "\n" + canonical(t.text) + "\n"
+    if key is not None:
+        header.append(f"Box seal: {_seal(key, fields, body)}")
+    return "\n".join([*header, HEADER_END]) + "\n" + body
 
 
 def parse(text: str) -> tuple[dict[str, str], str]:
@@ -396,28 +459,44 @@ def vision_model(cfg: Config) -> str:
     return str(box.get("vision_model") or DEFAULT_VISION_MODEL)
 
 
+def append_private(path: Path, line: str) -> None:
+    """Append one line to a log only its owner (the box's user) can read (0600, folder 0700)."""
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+    with os.fdopen(fd, "a") as f:
+        f.write(line + "\n")
+
+
 def _audit(cfg: Config, person_id: str, entry: dict) -> None:
-    log = cfg.runtime / "audit" / f"{person_id}.jsonl"
-    log.parent.mkdir(parents=True, exist_ok=True)
-    with log.open("a") as f:
-        f.write(json.dumps({"time": int(time.time())} | entry) + "\n")
+    append_private(cfg.runtime / "audit" / f"{person_id}.jsonl", json.dumps({"time": int(time.time())} | entry))
 
 
 class _Events:
     """Same file layout and step names as box.Question.emit, so a verification panel can show photos too."""
 
     def __init__(self, cfg: Config, person_id: str):
+        self.cfg = cfg
         self.qid = secrets.token_hex(6)
         self.started = time.time()
         self.path = cfg.runtime / "events" / person_id / f"{self.qid}.jsonl"
         self.events: list[dict] = []
+        self._scrub = None
+        self.extra: list = []          # values just read from this photo, not indexed yet
 
     def emit(self, step: str, **data) -> dict:
-        event = {"qid": self.qid, "t": round(time.time() - self.started, 3), "step": step, **data}
+        """Protected values are scrubbed, the same way as box.Question.emit."""
+        from .box import scrub_list, scrub_value
+        if self._scrub is None:
+            from .store import Store
+            store = Store(self.cfg)
+            try:
+                self._scrub = scrub_list(store.sensitive_values())
+            finally:
+                store.db.close()
+        event = {"qid": self.qid, "t": round(time.time() - self.started, 3), "step": step,
+                 **scrub_value(data, self._scrub + self.extra)}
         self.events.append(event)
-        self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-        with self.path.open("a") as f:
-            f.write(json.dumps(event, default=str) + "\n")
+        append_private(self.path, json.dumps(event, default=str))
         return event
 
 
@@ -436,15 +515,38 @@ class PhotoResult:
     qid: str = ""
 
 
+DISPLAY_LABELS = {
+    "ssn": "SSN", "member id": "Member ID", "group number": "Group number", "group no": "Group number",
+    "policy number": "Policy number", "policy no": "Policy number", "passport number": "Passport number",
+    "passport no": "Passport number", "driver's license number": "Driver's license number",
+    "drivers license number": "Driver's license number", "driver's license no": "Driver's license number",
+    "drivers license no": "Driver's license number", "license number": "Driver's license number",
+    "account number": "Account number", "account no": "Account number", "routing number": "Routing number",
+    "routing no": "Routing number", "medical record number": "Medical record number",
+    "mrn": "Medical record number", "ein": "EIN", "id number": "ID number", "id no": "ID number",
+}
+
+
+def display_label(label: str) -> str:
+    """A tidy label for people ("Member ID", not "Member Id")."""
+    key = re.sub(r"\s+", " ", label.strip().lower()).rstrip(".")
+    return DISPLAY_LABELS.get(key) or (label[:1].upper() + label[1:].lower())
+
+
 def labeled_fields(transcript_body: str) -> list[tuple[str, str]]:
     from .store import find_sensitive
     hits = find_sensitive(transcript_body, "x")
-    return list(dict.fromkeys((s.label, s.value) for s in hits if s.kind in ("ssn", "id")))
+    return list(dict.fromkeys((display_label(s.label), s.value) for s in hits if s.kind in ("ssn", "id")))
 
 
 def masked(value: str) -> str:
+    """What a person sees of a value: the last 4 only for long values, so a short one is not given away."""
     v = re.sub(r"[^A-Za-z0-9]", "", value)
-    return f"ending {v[-4:]}" if len(v) > 4 else "(short)"
+    if len(v) >= 8:
+        return f"ending {v[-4:]}"
+    if len(v) >= 5:
+        return f"ending {v[-2:]}"
+    return "(hidden)"
 
 
 def save_photo(cfg: Config, person: Person, folder_choice: str, filename: str, data: bytes) -> str:
@@ -476,6 +578,21 @@ def can_view(person: Person, rel_path: str) -> bool:
     return access.owner_of(rel_path) == person.id or p.parts[0] == "shared"
 
 
+def is_shared(rel_path: str) -> bool:
+    return PurePosixPath(rel_path.strip().lstrip("/")).parts[:1] == ("shared",)
+
+
+def who_sees(rel_path: str) -> str:
+    """Plain words for who can look at this photo on the box page."""
+    return "Everyone in the family can see this photo." if is_shared(rel_path) else "Only you can see this photo."
+
+
+def can_reread(person: Person, rel_path: str) -> bool:
+    """Reading a photo again replaces its text, so it takes the same rights as removing it."""
+    from .web import can_delete
+    return can_delete(person, rel_path)
+
+
 def resolve_photo(cfg: Config, rel_path: str) -> Path | None:
     rel_path = rel_path.strip().lstrip("/")
     root = cfg.files.resolve()
@@ -493,12 +610,15 @@ async def transcribe_photo(cfg: Config, person: Person, rel_photo: str, *, sourc
     target = resolve_photo(cfg, rel_photo)
     if target is None:
         raise PhotoError("That photo isn't on the box.")
+    retry = transcript_path(target).exists()
+    if retry and not can_reread(person, rel_photo):
+        raise PhotoError("This photo has already been read. Only the family admin can read a shared photo again.")
     data = target.read_bytes()
     sha = hashlib.sha256(data).hexdigest()
     ev = _Events(cfg, person.id)
     res = PhotoResult(rel_photo, None, False, qid=ev.qid)
     model = vision_model(cfg)
-    ev.emit("photo", source=source, model=model, bytes=len(data))
+    ev.emit("photo", source=source, model=model, bytes=len(data), again=retry)
     key = api_key()
     try:
         prep = prepare(data)
@@ -518,16 +638,20 @@ async def transcribe_photo(cfg: Config, person: Person, rel_photo: str, *, sourc
     if res.error:
         ev.emit("transcript", ok=False, message=res.error)
         _audit(cfg, person.id, {"event": "photo_transcribe", "qid": ev.qid, "source": source, "ok": False,
-                                "photo_sha256": sha, "model": model, "error": res.error})
+                                "again": retry, "by": person.id, "photo_sha256": sha, "model": model,
+                                "error": ev.events[-1]["message"]})
         return res
     sidecar = transcript_path(target)
-    _replace_private(sidecar, render(target.name, sha, t, prep).encode())
+    _replace_private(sidecar, render(target.name, sha, t, prep, key=seal_key(cfg)).encode())
     res.ok, res.transcript = True, sidecar.relative_to(cfg.files.resolve()).as_posix()
     res.model, res.signer, res.signature_kind = t.model, t.signer, t.signature_kind
     res.fields = labeled_fields(body)
+    from .store import Sensitive
+    ev.extra = [Sensitive(v, "id", k, rel_photo, None) for k, v in res.fields]
     ev.emit("transcript", ok=True, lines=body.count("\n") + 1, fields=[k for k, _ in res.fields],
             tokens=[t.tokens_in, t.tokens_out])
     _audit(cfg, person.id, {"event": "photo_transcribe", "qid": ev.qid, "source": source, "ok": True,
+                            "again": retry, "by": person.id,
                             "photo_sha256": sha, "model": t.model, "signer": short_signer(t.signer),
                             "signature_kind": t.signature_kind, "fields": [k for k, _ in res.fields],
                             "tokens": [t.tokens_in, t.tokens_out]})
@@ -559,6 +683,26 @@ class PhotoInfo:
     transcript: str | None
     header: dict[str, str]
     matches: bool         # the transcript's SHA-256 matches the photo on disk
+    sealed: bool = False  # this box wrote the transcript (its seal checks out)
+
+    @property
+    def checked(self) -> bool:
+        """The box made this text from this exact photo."""
+        return self.matches and self.sealed
+
+
+_HASHES: dict[tuple, str] = {}
+
+
+def photo_sha256(path: Path) -> str:
+    """SHA-256 of a photo, remembered until the file changes (so the Photos page does not rehash every load)."""
+    st = path.stat()
+    k = (str(path), st.st_ino, st.st_size, st.st_mtime_ns)
+    if k not in _HASHES:
+        if len(_HASHES) > 4096:
+            _HASHES.clear()
+        _HASHES[k] = hashlib.sha256(path.read_bytes()).hexdigest()
+    return _HASHES[k]
 
 
 def photos_for(cfg: Config, person: Person) -> list[PhotoInfo]:
@@ -580,13 +724,15 @@ def info(cfg: Config, rel_photo: str) -> PhotoInfo | None:
         return None
     side = transcript_path(target)
     header: dict[str, str] = {}
-    matches = False
+    matches = sealed = False
     rel_t = None
     if side.is_file():
         rel_t = side.relative_to(cfg.files.resolve()).as_posix()
-        header, _ = parse(side.read_text(errors="replace"))
-        matches = header.get("Image SHA-256") == hashlib.sha256(target.read_bytes()).hexdigest()
-    return PhotoInfo(rel_photo, target.stat().st_size, rel_t, header, matches)
+        text = side.read_text(errors="replace")
+        header, _ = parse(text)
+        matches = header.get("Image SHA-256") == photo_sha256(target)
+        sealed = sealed_by_box(seal_key(cfg), text)
+    return PhotoInfo(rel_photo, target.stat().st_size, rel_t, header, matches, sealed)
 
 
 def remove_photo(cfg: Config, person: Person, rel_photo: str) -> None:

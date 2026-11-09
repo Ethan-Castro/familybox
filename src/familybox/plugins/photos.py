@@ -7,8 +7,8 @@ CLI:
 
 Web: a "Photos" page to upload, look at your own originals and their transcripts, retry, and remove.
 
-The original is never sent to an assistant. Only its owner (or anyone, for the shared folder) can look
-at it on the box page. Assistants only ever get answers built from the transcript, through the gate.
+The original is never sent to an assistant. Only its owner can look at it on the box page, except in the
+shared folder, where everyone in the family can. Assistants only ever get answers built from the transcript, through the gate.
 """
 
 from __future__ import annotations
@@ -54,6 +54,16 @@ def _print_result(res: vision.PhotoResult) -> None:
         print(f"try again later: familybox transcribe --as <you> {res.photo}")
 
 
+def _status(it: vision.PhotoInfo) -> str:
+    if not it.transcript:
+        return "not read yet"
+    if it.checked:
+        return "read"
+    if not it.sealed:
+        return "text not made by the box, read it again"
+    return "transcript does not match this photo"
+
+
 def run_cli(args, cfg) -> int | None:
     if args.cmd not in ("add", "photos", "transcribe"):
         return None
@@ -81,7 +91,8 @@ def run_cli(args, cfg) -> int | None:
                 print(f"added {rel}")
                 return 0
             res = asyncio.run(vision.add_photo(cfg, person, args.folder, src.name, data, source="cli"))
-            print(f"saved the original: {res.photo} (only you can see it)")
+            seen = ("everyone in the family can see it" if vision.is_shared(res.photo) else "only you can see it")
+            print(f"saved the original: {res.photo} ({seen})")
             _print_result(res)
             return 0 if res.ok else 1
         if args.cmd == "photos":
@@ -89,8 +100,7 @@ def run_cli(args, cfg) -> int | None:
             if not items:
                 print("no photos yet")
             for it in items:
-                status = ("read" if it.matches else "transcript does not match this photo") if it.transcript \
-                    else "not read yet"
+                status = _status(it)
                 print(f"{it.photo}  [{status}]")
             return 0
         res = asyncio.run(vision.transcribe_photo(cfg, person, args.photo.strip(), source="cli"))
@@ -113,7 +123,7 @@ def web_routes(ctx):
     from starlette.responses import Response
     from starlette.routing import Route
 
-    from familybox.web import FOLDER_LABELS, PERSON_FOLDERS
+    from familybox.web import FOLDER_LABELS, PERSON_FOLDERS, can_delete
 
     esc, cfg = ctx.esc, ctx.cfg
 
@@ -126,12 +136,8 @@ def web_routes(ctx):
         opts += f'<option value="shared">{FOLDER_LABELS["shared"]}</option>'
         rows = []
         for it in vision.photos_for(cfg, sess.person):
-            if it.transcript and it.matches:
-                state = '<span class="ok">Read</span>'
-            elif it.transcript:
-                state = '<span class="bad">Transcript does not match this photo</span>'
-            else:
-                state = '<span class="bad">Not read yet</span>'
+            text = _status(it)
+            state = f'<span class="{"ok" if text == "read" else "bad"}">{esc(text[:1].upper() + text[1:])}</span>'
             rows.append(f'<li><div class="name"><a href="{esc(link(it.photo))}">{esc(it.photo)}</a></div>'
                         f'<div class="row muted">{state}</div></li>')
         listing = f'<ul class="files">{"".join(rows)}</ul>' if rows else '<p class="muted">No photos yet.</p>'
@@ -200,10 +206,17 @@ def web_routes(ctx):
         if it.transcript:
             target = vision.resolve_photo(cfg, it.photo)
             header, body_text = vision.parse(vision.transcript_path(target).read_text(errors="replace"))
-            check = ('<p class="ok">This text was made from this exact photo.</p>' if it.matches else
-                     '<p class="bad">This text was not made from this photo. Read it again.</p>')
+            if it.checked:
+                check = ('<p class="ok">Checked: the box made this text from this exact photo, '
+                         'using the model below.</p>')
+            elif not it.sealed:
+                check = ('<p class="bad">The box did not make this text, so the details below are not checked. '
+                         'Read the photo again.</p>')
+            else:
+                check = '<p class="bad">This text was not made from this photo. Read it again.</p>'
+            claimed = "" if it.sealed else " (not checked)"
             text = (f'<div class="card"><h2>What the box read</h2>{check}'
-                    f'<p class="muted">Model: {esc(header.get("Model", "unknown"))}<br>'
+                    f'<p class="muted">Model{claimed}: {esc(header.get("Model", "unknown"))}<br>'
                     f'Signature: {esc(header.get("Signature kind", "unknown"))}, signer '
                     f'{esc(header.get("Signer", "")[:10])}...<br>'
                     f'Read at: {esc(header.get("Transcribed at", "unknown"))}</p>'
@@ -211,14 +224,17 @@ def web_routes(ctx):
         else:
             text = '<div class="card"><p class="bad">The box hasn\'t read this photo yet.</p></div>'
         img = f'/photos/image?path={quote(it.photo, safe="")}'
+        retry = remove = ""
+        if not it.transcript or vision.can_reread(sess.person, it.photo):
+            retry = (f'<form method="post" action="/photos/retry">{c}{hidden}'
+                     f'<button class="main quiet" type="submit">Read it again</button></form>')
+        if can_delete(sess.person, it.photo):
+            remove = (f'<form method="post" action="/photos/remove">{c}{hidden}'
+                      f'<button class="danger" type="submit">Remove photo and text</button></form>')
         body = (f'<h1>{esc(Path(it.photo).name)}</h1>'
-                f'<p class="muted">{esc(it.photo)}. Only you can see this page.</p>'
-                f'<div class="card"><img src="{esc(img)}" alt="Your photo">'
-                f'</div>{text}<div class="row">'
-                f'<form method="post" action="/photos/retry">{c}{hidden}'
-                f'<button class="main quiet" type="submit">Read it again</button></form>'
-                f'<form method="post" action="/photos/remove">{c}{hidden}'
-                f'<button class="danger" type="submit">Remove photo and text</button></form></div>'
+                f'<p class="muted">{esc(it.photo)}. {esc(vision.who_sees(it.photo))}</p>'
+                f'<div class="card"><img src="{esc(img)}" alt="The photo">'
+                f'</div>{text}<div class="row">{retry}{remove}</div>'
                 f'<p><a href="/photos">Back to photos</a></p>')
         return ctx.page(sess, "Photo", body, "/photos")
 

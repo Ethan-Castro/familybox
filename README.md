@@ -59,7 +59,7 @@ uv run --env-file .env familybox add --as maya card.jpg --folder ids   # or the 
 uv run familybox photos --as maya                                      # which photos have been read
 ```
 
-The box sends the photo once to a NEAR enclave vision model (`Qwen/Qwen3-VL-30B-A3B-Instruct`; attestation checked, E2EE on, `provider_tee` signature required). Location and camera data are removed first. It keeps both copies: the original photo (only its owner can look at it, on the box page) and `card.jpg.transcript.txt`, which starts with the model, signer, signature kind, time and the photo's SHA-256. The transcript is indexed like any file, so search and the gate cover the numbers printed on the card. Assistants never get the photo. JPG, PNG and WEBP; iPhone HEIC is not supported yet.
+The box sends the photo once to a NEAR enclave vision model (`Qwen/Qwen3-VL-30B-A3B-Instruct`; attestation checked, E2EE on, `provider_tee` signature required). Location and camera data are removed first. It keeps both copies: the original photo (on the box page, only its owner can look at it; a photo in the shared folder can be seen by everyone in the family) and `card.jpg.transcript.txt`, which starts with the model, signer, signature kind, time, the photo's SHA-256 and a seal made with a key only the box holds. The box page says "checked" only when that seal and the photo both match, and uploads can't use the `.transcript.txt` name. The transcript is indexed like any file, so search and the gate cover the numbers printed on the card. Assistants never get the photo. JPG, PNG and WEBP; iPhone HEIC is not supported yet.
 
 ## How a question flows
 

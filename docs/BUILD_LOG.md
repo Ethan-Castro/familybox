@@ -102,3 +102,16 @@ Installed through the fleet control plane's exec jobs, with no SSH (`scripts/fle
   - Dana added `passport_page_dana.jpg`; the passport number was read correctly and indexed.
   - The optional live test (`tests/test_vision_live.py`) passed once. Total spend for all live calls: under $0.02.
 - **Tests:** 158 passed, 1 skipped (the live test without a key). 45 new tests in `tests/test_vision.py` with the enclave mocked: fail-closed cases (no attestation, gateway signature, SDK errors, no key, empty reply), EXIF removal, size limits, label clean-up, header forgery, no-overwrite names, owner-only viewing, the gate holding and refusing numbers read from photos, CLI and web flows.
+- **Evidence note:** the `fields` column in `spikes/vision_probe_results.json` came from an earlier build. It lists `SSN 987654329` twice; the committed `labeled_fields` removes repeats and gives it once for the same text. The model output in that file (`raw_text`) is unchanged by this. The DeepSeek end to end run and the one live test pass above were not saved as files, so they are reported here only, without a saved artifact.
+
+### Review fixes (photo transcription)
+
+- **Fake transcripts:** uploads (web page and `familybox add`) now refuse any name ending in `.transcript.txt`, so only the box writes a photo's text. Each transcript the box writes also carries a "Box seal": an HMAC over the photo name, model, signer, signature kind, time, photo SHA-256 and the text, made with a key in `runtime/photo_seal.key` (0600, outside `files/`). The Photos page says "Checked" only when the seal and the photo both match. Text without a valid seal is shown as "not made by the box", and its model and signature lines are marked "not checked".
+- **Who can see a photo:** the view page and the CLI now say "Everyone in the family can see this photo" for the shared folder and "Only you" for your own folders. README fixed to match.
+- **Photo events:** they are scrubbed the same way as question events (shared `box.scrub_value`), and values just read from the photo are scrubbed before they are indexed. A non-SDK error is recorded as its type name only. Event and audit files are created 0600.
+- **IDs with mixed separators:** "BPF-5530 2178" becomes "BPF-55302178" and "X3098 1455 (US)" becomes "X30981455", so the whole number is protected. Words like "PPO Plan" are not glued on.
+- **More card labels:** "Account", "Acct" and a bare "ID" / "ID #" are now recognized. A bare ID is a Member ID on an insurance card, otherwise an "ID number", which the store now protects too.
+- **Reading again:** once a photo has text, only someone who could remove it (its owner, or the admin for shared photos) can read it again. The audit line records who did it.
+- **Files page:** a photo's text is labeled "Text read from the photo X" and can only be removed with its photo, on the Photos page.
+- **Speed and display:** photo hashes are remembered until the file changes. Labels shown to people are tidy ("Member ID"), and a short value like a 5 digit group number shows only its last 2 characters.
+- **Tests:** 182 passed, 1 skipped (`uv run pytest -q tests`). No live calls were made for these fixes.

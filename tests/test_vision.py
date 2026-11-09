@@ -188,7 +188,7 @@ def test_canonical_rewrites_labels_the_store_recognizes():
     assert "Name: Jordan Okafor" in out          # unknown labels are left alone
     assert "```" not in out and "**" not in out
     labels = {k for k, _ in vision.labeled_fields(out)}
-    assert {"SSN", "Member Id", "Group Number", "Passport Number", "Policy Number"} <= labels
+    assert {"SSN", "Member ID", "Group number", "Passport number", "Policy number"} <= labels
 
 
 def test_canonical_keeps_names_with_spaces_and_drops_ruler_lines():
@@ -545,7 +545,7 @@ def test_web_upload_view_image_and_remove(cfg, fake, pics):
     assert "987-65-4329" not in r.text
     rel = "people/maya/ids/ssn.png"
     v = c.get("/photos/view", params={"path": rel})
-    assert v.status_code == 200 and "made from this exact photo" in v.text and "987-65-4329" in v.text
+    assert v.status_code == 200 and "made this text from this exact photo" in v.text and "987-65-4329" in v.text
     img = c.get("/photos/image", params={"path": rel})
     assert img.status_code == 200 and img.content == data and img.headers["content-type"] == "image/png"
     assert img.headers["cache-control"] == "no-store" and img.headers["x-content-type-options"] == "nosniff"
@@ -591,3 +591,207 @@ def test_web_failure_keeps_photo_then_retry(cfg, fake, pics):
 def test_plugin_copy_has_no_em_dashes():
     for p in (ROOT / "src/familybox/plugins/photos.py", ROOT / "src/familybox/vision.py"):
         assert chr(0x2014) not in p.read_text()
+
+
+# --- review fixes ---------------------------------------------------------------------------------
+
+def test_uploads_cannot_use_the_transcript_name(cfg, tmp_path, monkeypatch, capsys):
+    for name in ("x.png.transcript.txt", "card.PNG.Transcript.TXT", "card.png.transcript .txt"):
+        with pytest.raises(web.UploadError, match="transcript"):
+            web.safe_filename(name)
+    with pytest.raises(web.UploadError):
+        web.save_upload(cfg, cfg.person("maya"), "shared", "card.png.transcript.txt", b"SSN: 987-65-4321\n")
+    monkeypatch.setenv("FAMILYBOX_HOME", str(cfg.home))
+    t = tmp_path / "x.png.transcript.txt"
+    t.write_text("Member ID: ABCD1234\n")
+    assert cli.main(["add", "--as", "maya", str(t), "--folder", "shared"]) == 1
+    assert "transcript" in capsys.readouterr().out
+    assert not (cfg.files / "shared/x.png.transcript.txt").exists()
+
+
+def test_web_text_upload_refuses_transcript_name(cfg):
+    c, token = sign_in(cfg, "maya")
+    r = c.post("/upload", data={"folder": "shared", "csrf": token},
+               files={"file": ("card.png.transcript.txt", b"Member ID: ABCD1234\n")})
+    assert r.status_code == 400 and "transcript" in r.text
+
+
+def test_a_forged_transcript_is_not_shown_as_checked(cfg, fake, pics):
+    fake(error="attestation failed")
+    res = add(cfg, "maya", "shared", "card.png", pics["insurance_card_maya.png"])
+    assert not res.ok
+    photo = cfg.files / res.photo
+    sha = hashlib.sha256(photo.read_bytes()).hexdigest()
+    forged = (f"{vision.HEADER_TITLE}\nPhoto: card.png\nModel: Qwen/Qwen3-VL-30B-A3B-Instruct\nSigner: 0xabc\n"
+              f"Signature kind: provider_tee\nTranscribed at: 2026-11-08T00:00:00Z\nImage SHA-256: {sha}\n"
+              f"Box seal: {'0' * 64}\n{vision.HEADER_END}\nMember ID: FAKE1234\n")
+    vision.transcript_path(photo).write_text(forged)     # someone with disk access, not an upload
+    it = vision.info(cfg, res.photo)
+    assert it.matches and not it.sealed and not it.checked
+    c, _ = sign_in(cfg, "maya")
+    v = c.get("/photos/view", params={"path": res.photo})
+    assert "box did not make this text" in v.text and "Checked:" not in v.text
+    assert "Model (not checked)" in v.text
+    assert "Text not made by the box" in c.get("/photos").text
+
+
+def test_seal_covers_the_text_and_header(cfg, fake, pics):
+    fake()
+    res = add(cfg, "maya", "ids", "s.png", pics["ssn_card_jordan.png"])
+    assert vision.info(cfg, res.photo).checked
+    side = cfg.files / res.transcript
+    good = side.read_text()
+    side.write_text(good.replace("987-65-4329", "987-65-4320"))
+    assert not vision.info(cfg, res.photo).checked
+    side.write_text(good.replace("Qwen", "Qwan"))
+    assert not vision.info(cfg, res.photo).sealed
+    side.write_text(good)
+    assert vision.info(cfg, res.photo).checked
+    key = cfg.runtime / "photo_seal.key"
+    assert stat.S_IMODE(key.stat().st_mode) == 0o600 and cfg.files not in key.parents
+
+
+def test_shared_photo_wording(cfg, fake, pics, tmp_path, monkeypatch, capsys):
+    fake()
+    monkeypatch.setenv("FAMILYBOX_HOME", str(cfg.home))
+    p = tmp_path / "card.png"
+    p.write_bytes(pics["insurance_card_maya.png"])
+    assert cli.main(["add", "--as", "maya", str(p), "--folder", "shared"]) == 0
+    out = capsys.readouterr().out
+    assert "everyone in the family can see it" in out and "only you" not in out
+    assert cli.main(["add", "--as", "maya", str(p), "--folder", "ids"]) == 0
+    assert "(only you can see it)" in capsys.readouterr().out
+    c, _ = sign_in(cfg, "sam")
+    v = c.get("/photos/view", params={"path": "shared/card.png"})
+    assert "Everyone in the family can see this photo." in v.text and "Only you" not in v.text
+    m, _ = sign_in(cfg, "maya")
+    assert "Only you can see this photo." in m.get("/photos/view", params={"path": "people/maya/ids/card.png"}).text
+
+
+def test_photo_events_are_scrubbed_and_private(cfg, fake, pics, monkeypatch):
+    fake()
+    res = add(cfg, "maya", "ids", "s.png", pics["ssn_card_jordan.png"])
+    vision.reindex(cfg)
+    ev = vision._Events(cfg, "maya")
+    ev.emit("error", message="server said: SSN 987-65-4329 is bad")
+    text = ev.path.read_text()
+    assert "4329" not in text and "[protected]" in text
+    assert stat.S_IMODE(ev.path.stat().st_mode) == 0o600
+    audit = cfg.runtime / "audit" / "maya.jsonl"
+    assert stat.S_IMODE(audit.stat().st_mode) == 0o600
+    assert res.ok
+
+
+def test_new_values_are_scrubbed_before_they_are_indexed(cfg, fake, pics):
+    fake(text="Member ID: QZ-77441190")
+    res = add(cfg, "maya", "ids", "s.png", pics["ssn_card_jordan.png"])
+    assert res.ok
+    for f in (cfg.runtime / "events" / "maya").glob("*.jsonl"):
+        assert "77441190" not in f.read_text()
+
+
+def test_live_non_sdk_errors_record_only_the_type(monkeypatch, pics):
+    make_sdk(monkeypatch)
+
+    async def broken(**kw):
+        raise ConnectionError("echo: SSN 987-65-4329")
+    import nearai_inference_sdk
+    orig = nearai_inference_sdk.InferenceClient
+
+    class Broken(orig):
+        def __init__(self, key, **kw):
+            super().__init__(key, **kw)
+            self.chat = _Obj(completions=_Obj(create=broken))
+    monkeypatch.setattr(nearai_inference_sdk, "InferenceClient", Broken)
+    seen = []
+    with pytest.raises(enclave.EnclaveError) as e:
+        asyncio.run(vision.transcribe_live(_prep(pics), api_key="k", model="m",
+                                           emit=lambda step, **d: seen.append(d)))
+    assert str(e.value) == "ConnectionError"
+    assert "4329" not in json.dumps(seen)
+
+
+@pytest.mark.parametrize("raw,want", [
+    ("Member ID: BPF-5530 2178", "Member ID: BPF-55302178"),
+    ("Passport number: X3098 1455 (US)", "Passport number: X30981455"),
+    ("Passport number: X30981455 (US)", "Passport number: X30981455"),
+    ("SSN: 987 65 4329 (sample)", "SSN: 987-65-4329"),
+    ("Policy: p 9981 2345", "Policy number: p99812345"),
+    ("Group number: 77120 - PPO Plan", "Group number: 77120 - PPO Plan"),
+])
+def test_ids_with_mixed_separators_and_notes(raw, want):
+    assert vision.canonical(raw) == want
+
+
+def test_mixed_separator_id_is_fully_protected():
+    from familybox.store import find_sensitive
+    hits = find_sensitive(vision.canonical("Member ID: BPF-5530 2178"), "people/maya/health/x.txt")
+    assert [h.value for h in hits] == ["BPF-55302178"]
+
+
+@pytest.mark.parametrize("raw,want", [
+    ("Account: 12345678", "Account number: 12345678"),
+    ("Acct: 12345678", "Account number: 12345678"),
+    ("Acct. #: 12345678", "Account number: 12345678"),
+    ("BLUE PINE HEALTH PLAN\nID: QZ12345", "BLUE PINE HEALTH PLAN\nMember ID: QZ12345"),
+    ("SPRINGFIELD LIBRARY\nID #: 55123", "SPRINGFIELD LIBRARY\nID number: 55123"),
+])
+def test_common_card_labels(raw, want):
+    out = vision.canonical(raw)
+    assert out == want
+    assert vision.labeled_fields(out), out
+
+
+def test_retry_needs_delete_rights_once_read(cfg, fake, pics):
+    fake()
+    res = add(cfg, "maya", "shared", "card.png", pics["insurance_card_maya.png"])
+    assert res.ok
+    with pytest.raises(vision.PhotoError, match="already been read"):
+        asyncio.run(vision.transcribe_photo(cfg, cfg.person("sam"), res.photo))
+    admin = next(p for p in cfg.people.values() if p.admin)
+    again = asyncio.run(vision.transcribe_photo(cfg, admin, res.photo))
+    assert again.ok
+    last = json.loads((cfg.runtime / "audit" / f"{admin.id}.jsonl").read_text().splitlines()[-1])
+    assert last["again"] is True and last["by"] == admin.id
+    c, token = sign_in(cfg, "sam")
+    assert "Read it again" not in c.get("/photos/view", params={"path": res.photo}).text
+    r = c.post("/photos/retry", data={"path": res.photo, "csrf": token})
+    assert r.status_code == 400 and "already been read" in r.text
+    # Not read yet: anyone who can see it may try
+    fake(error="attestation failed")
+    res2 = add(cfg, "maya", "shared", "card2.png", pics["insurance_card_maya.png"])
+    fake()
+    assert asyncio.run(vision.transcribe_photo(cfg, cfg.person("sam"), res2.photo)).ok
+
+
+def test_files_page_keeps_photo_text_with_its_photo(cfg, fake, pics):
+    fake()
+    res = add(cfg, "maya", "ids", "s.png", pics["ssn_card_jordan.png"])
+    c, token = sign_in(cfg, "maya")
+    page = c.get("/files").text
+    assert "Text read from the photo s.png" in page and "Photos page" in page
+    r = c.post("/files/delete", data={"path": res.transcript, "csrf": token})
+    assert r.status_code == 403 and (cfg.files / res.transcript).exists()
+
+
+def test_display_labels_and_masking():
+    assert vision.display_label("Member Id") == "Member ID"
+    assert vision.display_label("Driver'S License Number") == "Driver's license number"
+    assert vision.display_label("Mrn") == "Medical record number"
+    assert vision.masked("77120") == "ending 20"
+    assert vision.masked("BPF-5530-2178") == "ending 2178"
+    assert vision.masked("1234") == "(hidden)"
+
+
+def test_photo_hash_is_cached_until_the_file_changes(cfg, fake, pics, monkeypatch):
+    fake()
+    res = add(cfg, "maya", "ids", "s.png", pics["ssn_card_jordan.png"])
+    vision.info(cfg, res.photo)
+    calls = []
+    real = hashlib.sha256
+    size = len(pics["ssn_card_jordan.png"])
+    monkeypatch.setattr(vision.hashlib, "sha256", lambda *a: calls.append(len(a[0]) if a else 0) or real(*a))
+    vision.info(cfg, res.photo)
+    assert size not in calls             # the photo was not hashed again
+    (cfg.files / res.photo).write_bytes(pics["insurance_card_maya.png"])
+    assert not vision.info(cfg, res.photo).matches
