@@ -105,3 +105,27 @@ Installed through the fleet control plane's exec jobs, with no SSH (`scripts/fle
 - **Audit:** remote questions record the connection id. The Assistants page shows "last asked". The standalone `familybox-mcp --http` now logs `mcp-http-local`.
 - **Finding:** the MCP SDK's error types (`TokenError`, `AuthorizeError`, `RegistrationError`) are frozen dataclasses. Raised inside a `@contextmanager` block, contextlib fails trying to set `__traceback__` and turns a 400 into a 500. `RemoteStore.edit` is now a plain class.
 - **Tests:** 154 passed (143 before plus 11 new). Also ran `familybox serve --port 18543 --remote-port 18544` once on 127.0.0.1 with demo data: 404 for `/approvals` and `/signin` on 18544, the home page on 18543, clean shutdown on Ctrl-C. No live NEAR calls. Still not exposed to the internet.
+
+## 2026-11-08: Live trust panel (Activity page)
+
+- **What:** an Activity page on the box's web page (plugin `src/familybox/plugins/activity.py`, rendering in `src/familybox/activity.py`). It lists questions (time, who, connection, result). Each question has a timeline: which connection asked, the enclave attestation (model, reports, time checked, seconds), end-to-end encryption, every model step with its signature ("signed inside the enclave" for provider_tee) and short signer, the tool calls and their arguments, files opened and refused, workbench runs (code folded away), the gate decision with reasons and held items (never values), and exactly what was sent.
+- **Ask box:** a family member can ask from the browser (source "web"). The page loads at once and its own script (served by the box, so the strict CSP still holds) polls `/activity/<id>/live` every second until the answer is in. Limits: one question at a time per person, 20 an hour, 1000 characters, CSRF and same-origin checks.
+- **Who sees what:** everyone sees their own questions in full, except that a file's name is only shown to someone who could open that file. The admin sees everyone's trust steps (enclave check, signatures, which tools ran, how many files were opened or refused, the gate's decision), but not other people's search words, answer text, workbench code or output, or the names of files the admin could not read. When the gate holds or blocks something from a health file, anyone other than its owner only sees "a private detail from one of Maya's files". The admin can still see that a held or blocked detail came up and when, just not what kind. Tripwire codes and never-share words are never repeated in reasons.
+- **No new data on disk:** the page reads the existing event and audit files. The question text of a web question is kept in memory only, for the person who asked.
+- **Core change:** `Box.ask` and `Box.ask_async` take an optional `qid` (12 lowercase hex characters, checked) so the page can link to a question before it finishes.
+- **Tests:** 140 passed (113 before plus 27 new in `tests/test_activity.py`), all in replay mode. No live calls were made.
+- **Replay timing:** in replay mode (the demo default when no key is set) recorded turns play back instantly, so the whole question is usually done before the page's first poll. The timeline filling in step by step only shows with real enclave calls (live mode). That has not been run or filmed yet.
+
+### Review fixes (same day)
+
+- A person's own page no longer names another person's files they cannot open (for example "people/maya/health/..." on Sam's page). Paths are shown only when the viewer could open the file.
+- A refused file read is marked refused in its own event (`denied: true`), so it shows as "Refused to open" while the question is still running, not as "Opened" until the end.
+- Health details are no longer described to the admin: held items and gate reasons from someone else's health file read "a private detail from one of Maya's files", with no label like Condition or Medication.
+- A crash after a question has started now writes a `crashed` step to its events file, and the page shows "Did not finish" right away (and after a restart), instead of "Working..." for 10 minutes.
+- Workbench steps now read the fields `plugins/workbench.py` actually records (error, limits hit, signal, files copied in, exit code). A script that exits with an error is shown in red. The script's output is shown only to the asker, folded away.
+- Fixed wording ("someone else's a health detail", "one of their's private files").
+- The live poller retries with backoff on server errors, and says "Live updates stopped. Reload the page." when signed out or the question is gone.
+- Times show the box's time zone name, and the page's script rewrites them into the reader's own time zone.
+- Merge note: this branch and feat/remote both change the `Box.ask_async` area of box.py. Whichever merges second should be rebased on the other, then the full suite rerun.
+- **Tests:** 147 passed (140 before plus 7 new), all in replay mode. No live calls were made.
+

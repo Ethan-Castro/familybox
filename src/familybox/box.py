@@ -14,6 +14,7 @@ Extension points (filled by plugins in familybox/plugins/ through register(box))
 ctx is a Question: qid, person, question, source, started, files_read, files_denied, data (a scratch
 dict for plugins), events, and emit(step, **data) which appends one JSON line to
 <runtime>/events/<person>/<qid>.jsonl. Known protected values are scrubbed from every event.
+A tool run that adds to ctx.files_denied is recorded as a refused step (ok false, denied true).
 """
 
 from __future__ import annotations
@@ -23,6 +24,7 @@ import hashlib
 import inspect
 import json
 import logging
+import re
 import secrets
 import time
 from dataclasses import asdict, dataclass, field
@@ -54,6 +56,9 @@ class Answer:
 
     def to_dict(self) -> dict:
         return asdict(self)
+
+
+QID_RE = re.compile(r"[0-9a-f]{12}")
 
 
 def new_qid() -> str:
@@ -164,6 +169,7 @@ class Box:
             ctx.emit("tool", name=name, arguments=args, ok=False, why="not offered")
             return json.dumps({"error": f"unknown tool {name}"})
         for p in self.tool_providers:
+            denied_before = len(ctx.files_denied)
             try:
                 out = p.run(person, name, args, ctx)
             except Exception as e:  # noqa: BLE001 - a broken tool gives the model an error, not a crash
@@ -171,20 +177,28 @@ class Box:
                 ctx.emit("tool", name=name, arguments=args, ok=False, why=type(e).__name__)
                 return json.dumps({"error": f"the {name} tool failed"})
             if out is not None:
-                ctx.emit("tool", name=name, arguments=args, ok=True, provider=type(p).__name__)
+                if len(ctx.files_denied) > denied_before:   # a refused read: say so in the event itself
+                    ctx.emit("tool", name=name, arguments=args, ok=False, denied=True, why="not yours",
+                             provider=type(p).__name__)
+                else:
+                    ctx.emit("tool", name=name, arguments=args, ok=True, provider=type(p).__name__)
                 return out
         ctx.emit("tool", name=name, arguments=args, ok=False, why="no provider")
         return json.dumps({"error": f"unknown tool {name}"})
 
     # ---- asking
 
-    def ask(self, person_id: str, question: str, *, source: str = "cli") -> Answer:
-        return asyncio.run(self.ask_async(person_id, question, source=source))
+    def ask(self, person_id: str, question: str, *, source: str = "cli", qid: str | None = None) -> Answer:
+        return asyncio.run(self.ask_async(person_id, question, source=source, qid=qid))
 
     async def ask_async(self, person_id: str, question: str, *, source: str = "cli",
-                        connection: str = "") -> Answer:
+                        connection: str = "", qid: str | None = None) -> Answer:
+        """qid: optional id chosen by the caller (12 lowercase hex characters), so a web page can
+        point at the question's events before it finishes."""
+        if qid is not None and not QID_RE.fullmatch(qid):
+            raise ValueError("qid must be 12 lowercase hex characters")
         person = self.cfg.person(person_id)
-        ctx = Question(self, person, question, source)
+        ctx = Question(self, person, question, source, qid)
         ctx.connection = connection
         key = enclave.api_key()
         mode = self.mode if self.mode != "auto" else ("live" if key else "replay")
