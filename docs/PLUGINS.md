@@ -65,6 +65,10 @@ and the script exited with 0 and no signal. `code`, `output` and `error` are sho
 folded away. A refused `read_file` is recorded in its own `tool` step as `ok: false, denied: true`, so the
 timeline is right while the question is still running.
 
+A plugin can add details to the question's audit entry: put them in `ctx.data["audit"][<plugin name>]`
+and the entry gets a `plugins` field with that dict (scrub protected values first, for example with
+`ctx._scrub_value`).
+
 Steps the core emits: `question`, `attestation`, `turn`, `tool`, `error`, `pre_check_stopped`, `gate`,
 `post_checks`, `post_check_stopped`, `answer`. Attestation and turn events carry `replayed`.
 

@@ -11,6 +11,7 @@ import re
 import shutil
 import sqlite3
 import subprocess
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -129,11 +130,41 @@ def find_sensitive(text: str, rel_path: str) -> list[Sensitive]:
     return found
 
 
+class _Rows(list):
+    def fetchall(self) -> list:
+        return list(self)
+
+
+class _LockedDB:
+    """One SQLite connection shared by the event loop and the worker threads tools run in.
+    Every statement runs under a lock and its rows are fetched before the lock is released."""
+
+    def __init__(self, path: Path):
+        self._conn = sqlite3.connect(path, check_same_thread=False)
+        self._lock = threading.RLock()
+
+    def execute(self, sql: str, params: tuple = ()) -> _Rows:
+        with self._lock:
+            return _Rows(self._conn.execute(sql, params).fetchall())
+
+    def executescript(self, sql: str) -> None:
+        with self._lock:
+            self._conn.executescript(sql)
+
+    def commit(self) -> None:
+        with self._lock:
+            self._conn.commit()
+
+    def close(self) -> None:
+        with self._lock:
+            self._conn.close()
+
+
 class Store:
     def __init__(self, cfg: Config):
         self.cfg = cfg
         cfg.runtime.mkdir(parents=True, exist_ok=True)
-        self.db = sqlite3.connect(cfg.runtime / "index.sqlite3")
+        self.db = _LockedDB(cfg.runtime / "index.sqlite3")
         self.db.executescript(
             """
             CREATE VIRTUAL TABLE IF NOT EXISTS docs USING fts5(path UNINDEXED, owner UNINDEXED, body);

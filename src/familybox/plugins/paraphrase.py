@@ -193,8 +193,10 @@ def _clean(path: str) -> str:
 
 
 def touched_paths(box, person, ctx) -> list[str]:
-    """Files read, files that search results came from, and paths other plugins added. In that order."""
+    """Files read, files a tool exposed (a workbench workspace), files that search results came from, and
+    paths other plugins added. In that order."""
     paths = [_clean(p) for p in ctx.files_read]
+    paths += [_clean(p) for p in getattr(ctx, "files_visible", [])]
     paths += [_clean(p) for p in ctx.data.get("touched_paths", [])]
     for e in ctx.events:
         if e.get("step") == "tool" and e.get("name") == "search_files" and e.get("ok"):

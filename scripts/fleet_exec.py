@@ -1,11 +1,14 @@
 """Run commands on a fleet board through the Offline Base control plane's exec jobs (no SSH).
 
 Env: JFLEET_TOKEN (admin personal access token, jpt_...), JFLEET_URL (default
-http://decision-tree.local:8080/admin), JFLEET_NODE (default decision-tree).
+http://decision-tree.local:8080/admin), JFLEET_NODE (default decision-tree),
+FAMILYBOX_PI_DIR (folder on the board, default ~/familybox; use another one, such as
+~/familybox-wb, to try a branch without touching the main install).
 
   python scripts/fleet_exec.py run "uname -a"
-  python scripts/fleet_exec.py push            # git archive HEAD -> ~/familybox on the board, checksum verified
+  python scripts/fleet_exec.py push            # git archive HEAD -> $FAMILYBOX_PI_DIR on the board, checksum verified
   python scripts/fleet_exec.py install         # push, then scripts/pi_install.sh on the board
+  python scripts/fleet_exec.py test [args]     # uv run pytest -q [args] in $FAMILYBOX_PI_DIR (default: tests)
 
 Every command is kept in the control plane's job history. The archive contains only files tracked
 by git, so .env (API keys) never leaves this laptop.
@@ -16,8 +19,9 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
-import shlex
 import os
+import re
+import shlex
 import subprocess
 import sys
 import time
@@ -29,6 +33,16 @@ URL = os.environ.get("JFLEET_URL", "http://decision-tree.local:8080/admin").rstr
 NODE = os.environ.get("JFLEET_NODE", "decision-tree")
 TARGET_USER = os.environ.get("FAMILYBOX_PI_USER", "offlinebase")
 CHUNK = 12_000  # base64 characters per exec command
+
+
+def pi_dir() -> str:
+    """The board folder, as a shell word: "~" or "~/..." stays unquoted so the board's shell expands it."""
+    d = os.environ.get("FAMILYBOX_PI_DIR", "~/familybox").rstrip("/")
+    parts = d.split("/")[1:]
+    if (not re.fullmatch(r"~(/[A-Za-z0-9._-]+)+|/[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*", d)
+            or any(p in (".", "..") for p in parts) or not parts):
+        sys.exit(f"FAMILYBOX_PI_DIR must be a plain folder path like ~/familybox-wb, not {d!r}")
+    return d
 
 
 def api(method: str, path: str, body: dict | None = None) -> dict | list:
@@ -78,16 +92,18 @@ def push() -> None:
     digest = hashlib.sha256(archive).hexdigest()
     b64 = base64.b64encode(archive).decode()
     parts = [b64[i:i + CHUNK] for i in range(0, len(b64), CHUNK)]
-    print(f"pushing {len(archive)} bytes in {len(parts)} parts, sha256 {digest[:16]}...")
-    run("mkdir -p ~/familybox-upload && rm -f ~/familybox-upload/fb.b64", quiet=True)
+    target = pi_dir()
+    upload = target + "-upload"   # one upload folder per target, so two pushes never mix their parts
+    print(f"pushing {len(archive)} bytes in {len(parts)} parts to {target}, sha256 {digest[:16]}...")
+    run(f"mkdir -p {upload} && rm -f {upload}/fb.b64", quiet=True)
     for i, part in enumerate(parts, 1):
-        code, _ = run(f"printf %s '{part}' >> ~/familybox-upload/fb.b64", quiet=True)
+        code, _ = run(f"printf %s '{part}' >> {upload}/fb.b64", quiet=True)
         if code:
             sys.exit(f"part {i} failed")
     code, out = run(
-        "cd ~/familybox-upload && base64 -d fb.b64 > fb.tgz && "
-        f"echo '{digest}  fb.tgz' | sha256sum -c - && mkdir -p ~/familybox && "
-        "tar -xzf fb.tgz -C ~/familybox && rm -f fb.b64 fb.tgz && echo pushed-ok")
+        f"cd {upload} && base64 -d fb.b64 > fb.tgz && "
+        f"echo '{digest}  fb.tgz' | sha256sum -c - && mkdir -p {target} && "
+        f"tar -xzf fb.tgz -C {target} && rm -f fb.b64 fb.tgz && echo pushed-ok")
     if code or "pushed-ok" not in out:
         sys.exit("push failed (checksum or extract)")
 
@@ -101,7 +117,10 @@ def main() -> int:
         return 0
     if cmd == "install":
         push()
-        return run("cd ~/familybox && bash scripts/pi_install.sh", timeout_s=1800)[0]
+        return run(f"cd {pi_dir()} && bash scripts/pi_install.sh", timeout_s=1800)[0]
+    if cmd == "test":
+        args = " ".join(shlex.quote(a) for a in sys.argv[2:]) or "tests"
+        return run(f'cd {pi_dir()} && PATH="$HOME/.local/bin:$PATH" uv run pytest -q {args}', timeout_s=1800)[0]
     print(__doc__)
     return 2
 

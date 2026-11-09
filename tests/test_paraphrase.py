@@ -681,3 +681,11 @@ def test_classifier_refuses_locked_enclave_settings():
     import asyncio
     with pytest.raises(P.CheckFailed, match="locked"):
         asyncio.run(_call(response_format="json_schema", client_options={"base_url": "https://evil.example"}))
+
+
+def test_files_a_workbench_exposed_are_judged_too(cfg):
+    from types import SimpleNamespace
+    ctx = SimpleNamespace(files_read=[], files_visible=[DANA_VISIT], data={}, events=[])
+    assert P.touched_paths(None, cfg.person("dana"), ctx) == [DANA_VISIT]
+    # someone who cannot read the file never has it judged on their behalf
+    assert P.touched_paths(None, cfg.person("maya"), ctx) == []
