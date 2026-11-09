@@ -10,6 +10,9 @@ Extension points (filled by plugins in familybox/plugins/ through register(box))
   box.post_checks: list of async fn(box, person, question, draft, result, ctx) -> None
       result is the gate.GateResult. Change it in place: result.bump("held" | "refused", reason),
       result.held.append(gate.Held(...)), or result.text = ... . Any error stops the question.
+  box.client_options: list of fn(box, person, ctx) -> dict | None
+      Extra nearai_inference_sdk.InferenceClient keyword arguments for live questions (verifiers,
+      deployment_policy). Two hooks setting the same key, or an error, stops the question.
 
 ctx is a Question: qid, person, question, source, started, files_read, files_denied, data (a scratch
 dict for plugins), events, and emit(step, **data) which appends one JSON line to
@@ -36,7 +39,23 @@ from .config import Config, Person
 from .store import Sensitive, Store
 
 REPO_REPLAYS = Path(__file__).resolve().parents[2] / "replays"
+REPO_PINS = Path(__file__).resolve().parents[2] / "pins" / "near-ai-cloud.json"
+PIN_LEVELS = ("strict", "platform", "off")
 log = logging.getLogger("familybox.box")
+
+
+def _pin_level(cfg: Config) -> str:
+    """[pins] level from family.toml, or FAMILYBOX_PIN_LEVEL. Anything unknown means strict.
+    Lives here, not in familybox.pinning, so the box can still read it if that module fails to load."""
+    import os
+    import tomllib
+    level = os.environ.get("FAMILYBOX_PIN_LEVEL")
+    if not level:
+        try:
+            level = tomllib.loads((cfg.home / "family.toml").read_text()).get("pins", {}).get("level", "strict")
+        except (OSError, ValueError, AttributeError):
+            level = "strict"
+    return level if level in PIN_LEVELS else "strict"
 
 
 @dataclass
@@ -158,6 +177,7 @@ class Box:
         self.tool_providers: list = [FileTools(self.store)]
         self.pre_checks: list = []
         self.post_checks: list = []
+        self.client_options: list = []
         from . import plugins
         plugins.call_each("register", self)
 
@@ -242,9 +262,11 @@ class Box:
                 if not key:
                     ctx.emit("error", message="NEAR_AI_CLOUD_API_KEY is not set")
                     raise enclave.EnclaveError("NEAR_AI_CLOUD_API_KEY is not set")
+                self._require_pinning(ctx)
+                extra = {"client_options": opts} if (opts := self._client_options(person, ctx)) else {}
                 draft = await enclave.ask_live(api_key=key, model=self.cfg.model, person_display=person.display,
                                                question=question, run_tool=run_tool, tools=tools, emit=ctx.emit,
-                                               attestation_max_age_s=self.cfg.attestation_max_age_s)
+                                               attestation_max_age_s=self.cfg.attestation_max_age_s, **extra)
                 if mode == "record":
                     enclave.record(self.replay_dir, person_id, question, draft)
         except enclave.EnclaveError as e:
@@ -284,6 +306,35 @@ class Box:
             from .approvals import Approvals
             ans.held_ids = Approvals(self.cfg).add(person_id, question, result.held)
         return self._finish(ctx, ans)
+
+    def _require_pinning(self, ctx: Question) -> None:
+        """Fail closed if the NEAR code check should run but did not load.
+
+        Plugins that fail to import are skipped (plugins/__init__.py). For the pinning plugin that would
+        quietly turn a safety check off, so when this box has pins (its own, or the repo's shipped ones)
+        and the level is not "off", a live question needs a hook marked guards_near_code.
+        """
+        if any(getattr(h, "guards_near_code", False) for h in self.client_options):
+            return
+        if _pin_level(self.cfg) == "off":
+            return
+        rt = self.cfg.runtime
+        if (rt / "pins.json").exists() or (rt / "pins_history.jsonl").exists() or REPO_PINS.exists():
+            ctx.emit("pinning", status="not_loaded")
+            raise enclave.EnclaveError("the NEAR code check did not load; the owner must check the box")
+
+    def _client_options(self, person: Person, ctx: Question) -> dict:
+        merged: dict = {}
+        for hook in self.client_options:
+            try:
+                opts = hook(self, person, ctx) or {}
+            except Exception as e:  # noqa: BLE001 - a broken verification hook fails closed
+                log.exception("client_options hook failed")
+                raise enclave.EnclaveError(f"a safety check failed: {type(e).__name__}") from e
+            if clash := sorted(set(opts) & set(merged)):
+                raise enclave.EnclaveError(f"two plugins set the same enclave option: {', '.join(clash)}")
+            merged.update(opts)
+        return merged
 
     def _finish(self, ctx: Question, ans: Answer) -> Answer:
         ans.qid, ans.source = ctx.qid, ctx.source

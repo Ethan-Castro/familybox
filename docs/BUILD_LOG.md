@@ -184,3 +184,58 @@ Installed through the fleet control plane's exec jobs, with no SSH (`scripts/fle
   - A malformed hints file is ignored instead of breaking every form; unexpected MCP errors are logged on
     the box and the assistant gets a plain sentence.
   - Tests: 166 passed (13 new in `tests/test_forms.py`).
+
+## 2026-11-08: Pinning NEAR's serving code (alert when it changes)
+
+- **What:** `src/familybox/pinning.py` and the plugin `src/familybox/plugins/pinning.py`. The box fingerprints four things: NEAR's gateway, the model's enclave, the model's compose manager (the program inside the model CVM that installs and runs the model containers), and the model compose files that manager has deployed. It trusts the first verified use, unless `pins/near-ai-cloud.json` already names the expected values. A change stops the question before any prompt is sent and opens an owner review. Owners use `familybox pins show|check|diff|accept|reject|history|export` or the box page `/pins`.
+- **Where the check runs:** inside the SDK's own verification, before any prompt is sent. The plugin passes a gateway deployment verifier, the model `deployment_policy` callback and a TDX quote wrapper through a new `box.client_options` hook. The check covers the reports the box verified for this question. Because NEAR's model instances share a signing key, another instance running different code could still receive the prompt (see Limits). While a review waits, a pre-check stops every live question without contacting NEAR. Replay mode skips pinning.
+- **Core edits:**
+  - `enclave.ask_live(client_options=...)`. Encryption, the endpoint, the key and cache lifetimes stay locked.
+  - An `EnclaveError` raised inside an SDK callback now keeps its message.
+  - `box.client_options` is a list of hooks.
+  - The pinning check is required. If it fails to load (import error, broken `register()`), and the box has pins or the repo ships them, and the level is not `off`, live questions stop with "the NEAR code check did not load; the owner must check the box".
+- **History:** `runtime/pins_history.jsonl` is append-only and hash chained, and `pins.json` records the newest entry's hash and the entry count. So removing or editing any entry, the newest included, shows as a broken chain, unless someone rewrites both files together. A deleted `pins.json` with a history still present, or a damaged pin file, fails closed. It never quietly goes back to trusting first use. A damaged history line is reported, not a crash.
+
+**Live attestation runs (no API key, no inference, free):** 14 keyless `verify()` calls against DeepSeek-V4.1-Flash-1017, 01:49 to 01:59 UTC on 2026-11-09. These were probes, `familybox pins check` twice on a fresh box, 6 back-to-back samples, a live change, accept and recheck flow, and a fresh box against the shipped pins (gateway and model matched the shipped pins; the workload was pinned on first use). Those runs used the first version of the fingerprint. The raw captures are committed in `spikes/captures/2026-11-09/` (public attestation data, no keys), and `uv run python spikes/pin_stability.py` recomputes the current fingerprints from them with no network.
+
+What stayed the same and what changed:
+
+| Field | Gateway | Model |
+|---|---|---|
+| Signing address | same every time (one gateway instance seen) | **the same on two different instances** (gpu02, gpu04): the key is shared |
+| TLS SPKI | same every time | n/a |
+| MRTD, RTMR0-2 (from the verified quote) | same in all samples | same in all 6 gpu04 samples. **Not captured for gpu02** (the first probes did not record quotes), so whether other instances match is unknown. RTMR0 covers the VM's hardware setup, so a differently sized instance could differ. |
+| dstack OS image hash | same | same on both instances |
+| compose hash = MRCONFIGID[1:33] = sha256(app-compose) | same | **differs per instance**: `INSTANCE_LABEL=gpu02` vs `gpu04`, and gpu02 allows 4 extra env names (`AWS_REGION`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_S3_BUCKET`) |
+| app-compose with only the `INSTANCE_LABEL` line masked, images, settings, allowed env names minus those 4 | same | same on both instances |
+| compose manager image (latest `compose_manager_started`) | none | same on both: `nearaidev/compose-manager@sha256:a0c07308...` |
+| compose-manager action log | none | per instance (gpu02 had 207 entries, then 208 two minutes later after a new `compose_down`; gpu04 had 209) |
+| compose files still deployed (workload) | n/a | **differs per instance**: 10 files on gpu02, 13 on gpu04 (the logs also list GLM-5.3 compose files). Both have `prod/DeepSeek-V4.1-Flash-1017-vLLM-DEP8-Abliterated.yaml` v0.0.553, sha256 `fe8407db...` |
+
+- **So the fingerprint uses:**
+  - gateway and model: MRTD and RTMR0-2 (each verified quote on its own); the OS image hash; the app-compose settings and container image digests; the allowed env names (for the model, minus the 4 per-instance names above, matched exactly); the compose text, hashed with only the `INSTANCE_LABEL` line masked.
+  - manager: the compose manager image. The launcher can swap it at runtime (`LAUNCHER_CHANNEL`, `COMPOSE_MANAGER_IMAGE`), so it is checked on its own.
+  - workload: every compose file brought up and not fully taken down again, with the sha256 of its latest deploy.
+- **Why allowed env names count:** an allowed env is a value NEAR can inject at runtime without changing any measurement (`docs/research/near_ai_cloud.md` lists about 100, such as `MODEL_DISCOVERY_SERVER_URL` and `COMPOSE_MANAGER_IMAGE`). A new name needs a review.
+- **Kept for information only:** the raw compose hash, MRCONFIGID, the 4 per-instance env names, the newest deployed file, tags, commits and per-service updates.
+- **Levels:** `strict` (default) stops for any change. `platform` still stops for changes to NEAR's gateway, the model's enclave and OS, and the program that installs the model (the compose manager); it only logs which model compose files were deployed. `off` checks nothing.
+- **How often NEAR changes code:** on gpu02, the deployed workload file changed twice on 2026-11-08, about 15 hours apart: v0.0.546 (`80ab61ce`) to v0.0.551 (`44e8d39e`) at 06:15 UTC, then to v0.0.553 (`fe8407db`) at 20:55 UTC. gpu04 redeployed v0.0.553 at 01:08 UTC on 2026-11-09. The vLLM engine containers there were last deployed from v0.0.546, while the proxies run v0.0.553. Because the workload now counts every standing compose file, and the two instances have different sets, a strict box will also open a review the first time it meets a second model instance. Expect several workload reviews a day under strict; `platform` avoids them.
+- **Real fingerprints (recomputed from the captures):**
+  - Gateway `7f0f3c3decb96ce8...`: MRTD `7fe60787...`, OS `8db40cb2...`, dstack-0.5.12.
+  - Model `33fb0ccd8fca5f37...`: MRTD `df4d77c8...` (gpu04), OS `91fd5d69...`, dstack-nvidia-0.5.11.
+  - Manager `1eb1b2b5bdd2a97e...`.
+  - Workload: `4880ff0868b1ca57...` on gpu02, `466517bce2aab773...` on gpu04.
+  - The first three are shipped in `pins/near-ai-cloud.json`, with a note that the model TD values come from gpu04 only. A new box whose first check lands on another instance may get an owner review at once.
+- **Limits:**
+  - Model instances share one signing key, and `verify()` returned one model report per call. So the box checks the instance that answered the attestation, not necessarily the one that serves the prompt. Any instance holding that key can decrypt a prompt, including one the box never fingerprinted.
+  - The workload comes from the compose manager's signed log. The SDK calls that deployment intent, not proof of what is running.
+  - The 4 per-instance env names are left out of the model fingerprint, so an instance that newly gains them is not noticed.
+  - Someone who can write both `pins.json` and the history can rewrite them together without it showing.
+  - Image build provenance (sigstore against `nearai/cvm-compose-files`) is not checked yet.
+- **Tests:** 147 passed at first (113 before plus 34 in `tests/test_pinning.py`, all with fake verification results). No live inference was run.
+
+### Review fixes (same day)
+
+- allowed env names are fingerprinted (minus 4 per-instance names); every standing compose file counts in the workload; the compose manager is its own component that `platform` still blocks; only `INSTANCE_LABEL` is masked; each quote is fingerprinted alone; the history head is anchored in `pins.json`; a pinning plugin that fails to load stops live questions; a damaged history line or a network error in `familybox pins check` gives a plain message; a matching check rewrites `pins.json` at most every 5 minutes.
+- The raw captures and `spikes/pin_stability.py` are committed, and the shipped pins were rebuilt from them. No new live calls were made for these fixes, so the new fingerprints have not yet been seen live by a box.
+- **Tests:** 162 passed (`uv run pytest -q tests`), all offline.

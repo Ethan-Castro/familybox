@@ -1,0 +1,220 @@
+{
+ "version": 1,
+ "about": "Expected NEAR AI Cloud measurement fingerprints. A box with no pins of its own trusts these instead of trusting first use.",
+ "note": "Built from the raw captures in spikes/captures/2026-11-09 by spikes/pin_stability.py. The model TD values (MRTD, RTMR0-2) come from instance gpu04 only. Whether other model instances have the same TD values is unknown, so a box whose first check lands on another instance may get an owner review at once. The workload is not shipped: it differs per instance.",
+ "components": {
+  "gateway": [
+   {
+    "fp": "7f0f3c3decb96ce88a5d73b923f63342db157a9b2a5ce286a82be963d2bbd3db",
+    "fields": {
+     "settings": {
+      "manifest_version": 2,
+      "name": "dstack-0.5.12",
+      "runner": "docker-compose",
+      "kms_enabled": true,
+      "gateway_enabled": true,
+      "local_key_provider_enabled": false,
+      "key_provider_id": "",
+      "public_logs": false,
+      "public_sysinfo": true,
+      "no_instance_id": false,
+      "secure_time": false,
+      "port_policy": {
+       "restrict_mode": true,
+       "ports": [
+        {
+         "port": 443,
+         "pp": false
+        }
+       ]
+      }
+     },
+     "images": [
+      "alpine@sha256:4b7ce07002c69e8f3d704a9c5d6fd3053be500b7f1c69fc0d80990c2ad8dd412",
+      "nearaidev/cloud-api@sha256:d74c3c3eb67c18db5483f2e152741ffc57dbbc3ca52c10cdeb8138054fd213dd",
+      "nearaidev/cvm-ingress@sha256:1653c23200298a823c08c66d829c633fc36919bca1e09cf577b83b01353e0891",
+      "otel/opentelemetry-collector-contrib@sha256:85ac41c2db88d0df9bd6145e608a3cb023f5d8443868adbfbbf66efb51087917"
+     ],
+     "compose_sha256_masked": "ff3492cc6e957d2d09cfac1aa386a9a68edf4a1a89f1b21c3da9553e95c6774c",
+     "pre_launch_script_sha256": null,
+     "allowed_envs": [
+      "ANTHROPIC_ALLOWED_BETAS",
+      "ANTHROPIC_API_KEY",
+      "AUTH_ADMIN_EMAILS",
+      "AUTH_ADMIN_READ_ONLY_TOKENS_ENABLED",
+      "AUTH_ENCODING_KEY",
+      "AWS_ACCESS_KEY_ID",
+      "AWS_DEFAULT_REGION",
+      "AWS_REGION",
+      "AWS_S3_BUCKET",
+      "AWS_S3_REGION",
+      "AWS_SECRET_ACCESS_KEY",
+      "BRAVE_LLM_CONTEXT_API_KEY",
+      "BRAVE_SEARCH_PRO_API_KEY",
+      "CERTBOT_EMAIL",
+      "CHUTES_API_KEY",
+      "CHUTES_ENABLE_STREAMING",
+      "CHUTES_MODELS",
+      "CLOUDFLARE_API_TOKEN",
+      "CLOUD_API_RDS_CA_BUNDLE_B64",
+      "CLOUD_API_RDS_PASSWORD_B64",
+      "CLOUD_API_USAGE_TOKEN",
+      "CLOUD_UI_BASE_URL",
+      "CONTACT_EMAIL_VERIFICATION_ENABLED",
+      "CORS_ALLOWED_ORIGINS",
+      "CREDIT_ALLOCATION_POLICY_VERSION",
+      "CREDIT_USAGE_ORDER",
+      "CVM_HOST",
+      "CVM_NAME",
+      "DATABASE_NAME",
+      "DATABASE_USERNAME",
+      "DB_ENCRYPTION_KEYS",
+      "DB_ENCRYPTION_WRITE_ENABLED",
+      "DD_API_KEY",
+      "DD_HOSTNAME",
+      "ENABLE_ANTHROPIC_MESSAGES",
+      "ENABLE_CHUTES",
+      "ENV",
+      "EXTERNAL_PROVIDER_TIMEOUT",
+      "GEMINI_API_KEY",
+      "GITHUB_CLIENT_ID",
+      "GITHUB_CLIENT_SECRET",
+      "GOOGLE_CLIENT_ID",
+      "GOOGLE_CLIENT_SECRET",
+      "HOST_IP",
+      "HUGGING_FACE_HUB_TOKEN",
+      "INFERENCE_API_KEY",
+      "INFRA_COST_PER_GPU_HOUR_USD",
+      "INFRA_PROMETHEUS_BEARER_TOKEN",
+      "INFRA_PROMETHEUS_ENV",
+      "INFRA_PROMETHEUS_URL",
+      "INGRESS_S3_BUCKET",
+      "INVITATION_EMAIL_ENABLED",
+      "INVITATION_EMAIL_FROM",
+      "ITA_API_KEY",
+      "LUKKA_AML_BASE_URL",
+      "LUKKA_AML_BEARER_TOKEN",
+      "LUKKA_AML_BLOCKED_RISK_LEVELS",
+      "LUKKA_AML_ENABLED",
+      "LUKKA_AML_HIGH_RISK_SLACK_TIMEOUT_MS",
+      "LUKKA_AML_HIGH_RISK_SLACK_WEBHOOK_URL",
+      "LUKKA_AML_MEMORY_CACHE_TTL_SECONDS",
+      "LUKKA_AML_REPORT_REFRESH_DAYS",
+      "LUKKA_AML_REQUEST_TIMEOUT_SECONDS",
+      "LUKKA_AML_SCORE_BLOCK_THRESHOLD",
+      "MODEL_DISCOVERY_API_KEY",
+      "MODEL_DISCOVERY_SERVER_URL",
+      "MONITORING_INGEST_TOKEN",
+      "NATIVE_RESPONSES_MODELS",
+      "NEAR_EXPECTED_RECIPIENT",
+      "NEAR_NETWORK_ID",
+      "NEAR_RPC_URL",
+      "NEAR_STAKING_CONTRACT_ID",
+      "OBJECT_ENCRYPTION_WRITE_ENABLED",
+      "OBJECT_REWRAP_MAX_BYTES",
+      "OHTTP_ENABLED",
+      "OPENAI_API_KEY",
+      "PLACEMENT_REDIS_HOST",
+      "PLACEMENT_REDIS_PASSWORD",
+      "PLACEMENT_REDIS_PORT",
+      "PLACEMENT_REDIS_TLS_CA_CERT",
+      "PLACEMENT_REDIS_TLS_ENABLED",
+      "PROXY_TOKEN",
+      "RESEND_API_KEY",
+      "S3_ENCRYPTION_KEYS",
+      "STAKING_FARM_CREDIT_NANO_USD_PER_REWARD_UNIT",
+      "STAKING_FARM_ENABLED",
+      "STAKING_FARM_PRICE_ID",
+      "STAKING_FARM_PRODUCT_ID",
+      "STAKING_FARM_SELECTED_ORG_BINDING_ENABLED",
+      "STAKING_FARM_SYNC_STALENESS_SECONDS",
+      "TINFOIL_API_KEY",
+      "TINFOIL_MODELS",
+      "TYPESAFE_API_KEY"
+     ],
+     "os_image_hash": "8db40cb23008d6213668b5816702d100b37b859a8a5bfd18d938ae3a1b3715bd",
+     "td": [
+      {
+       "mrtd": "7fe60787222bd394cb516abca2435f22f035ab2cc9c0a4b4b3b148e46297f3d931a237b72f359052c6e657d8c1409173",
+       "rtmr0": "d090162bff4b1d1dc74dc59dc548838efc4b811b173da8536efa8e2a9c045da70ee092301293ad90afebee448bcd0211",
+       "rtmr1": "4ae609807c765916a31d724786ed74bcb97e168a9d937b04936aeef2015c907eba5ac352c6bcd749c246fd62ffb659ec",
+       "rtmr2": "764489f277a8540189761e72b4238ba36d4d647e11bd958d8ab5522af2a4867b0ff63e06b0c4967f1857236244040a5d"
+      }
+     ]
+    },
+    "seen": "November 9, 2026",
+    "instance": "gpu04"
+   }
+  ],
+  "model/deepseek-ai/DeepSeek-V4.1-Flash-1017": [
+   {
+    "fp": "33fb0ccd8fca5f3788306c572ec21e0254fb36a3e3d36d0958d0701dd7fd1590",
+    "fields": {
+     "settings": {
+      "manifest_version": 2,
+      "name": "dstack-nvidia-0.5.11",
+      "runner": "docker-compose",
+      "kms_enabled": true,
+      "gateway_enabled": false,
+      "local_key_provider_enabled": false,
+      "key_provider_id": "",
+      "public_logs": false,
+      "public_sysinfo": true,
+      "no_instance_id": false,
+      "secure_time": false,
+      "port_policy": null
+     },
+     "images": [
+      "${COMPOSE_MANAGER_IMAGE:-nearaidev/compose-manager@sha256:a0c073085684e12e19f31bb279fc8da663a374199bfecc47b04167ae79eaa766}",
+      "certbot/dns-cloudflare@sha256:742dbd2e61c8709b930712c38958386c3cb3928e09eeb1f1e490600c127e2edb",
+      "nearaidev/compose-manager-launcher@sha256:079a14b41deb11e0e27f9b69648e8b3d89bd6fb9ccf6071643b8f447fa415085",
+      "otel/opentelemetry-collector-contrib@sha256:85ac41c2db88d0df9bd6145e608a3cb023f5d8443868adbfbbf66efb51087917"
+     ],
+     "compose_sha256_masked": "02caeaf83246e019232b55a9dd859241d1bcf2cedb8186ce18043d4aa33daf9a",
+     "pre_launch_script_sha256": "9a6a0b0393412e365b5165f1960a311cc0f1ea58e6c3a840f00236832d8d00b9",
+     "allowed_envs": [
+      "BEARER_TOKEN",
+      "CERTBOT_EMAIL",
+      "CLOUDFLARE_API_TOKEN",
+      "CM_MIN_TAG_AGE_HOURS",
+      "CVM_HOST",
+      "CVM_NAME",
+      "DD_API_KEY",
+      "DD_HOSTNAME",
+      "DOCKER_REGISTRY_TOKEN",
+      "DOCKER_REGISTRY_USER",
+      "ENV",
+      "HOSTNAME",
+      "HOST_IP",
+      "HUGGING_FACE_HUB_TOKEN",
+      "LAUNCHER_CHANNEL",
+      "MONITORING_INGEST_TOKEN",
+      "PROXY_TOKEN",
+      "SLACK_WEBHOOK_URL"
+     ],
+     "os_image_hash": "91fd5d69ccee3e5ea4f2aeb8c9b632c4358c4ecfc29ba1aa6fb1e402af209829",
+     "td": [
+      {
+       "mrtd": "df4d77c857de652bd0fafa343a2026b51071ee03773d076d283abf1a7d36ff91ffa279ee4a617ac664f7e2a2c8d5891b",
+       "rtmr0": "bc122d143ab768565ba5c3774ff5f03a63c89a4df7c1f5ea38d3bd173409d14f8cbdcc36d40e703cccb996a9d9687590",
+       "rtmr1": "4ae609807c765916a31d724786ed74bcb97e168a9d937b04936aeef2015c907eba5ac352c6bcd749c246fd62ffb659ec",
+       "rtmr2": "bd67ab7554dc27ab03a077bc1447a1a67d0624ff547c4c809a8626f12d6a89712f8ec60e781e99b98208574065d21a71"
+      }
+     ]
+    },
+    "seen": "November 9, 2026",
+    "instance": "gpu04"
+   }
+  ],
+  "model/deepseek-ai/DeepSeek-V4.1-Flash-1017/manager": [
+   {
+    "fp": "1eb1b2b5bdd2a97e3a84fd6b71a0373767f2a4e3cabb0fd9d5da69e60f2f2551",
+    "fields": {
+     "compose_manager_image": "nearaidev/compose-manager@sha256:a0c073085684e12e19f31bb279fc8da663a374199bfecc47b04167ae79eaa766"
+    },
+    "seen": "November 9, 2026",
+    "instance": "gpu04"
+   }
+  ]
+ }
+}

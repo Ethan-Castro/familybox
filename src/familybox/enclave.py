@@ -95,14 +95,38 @@ def replay_key(person: str, question: str) -> str:
     return hashlib.sha256(f"{person}\n{question.strip().lower()}".encode()).hexdigest()[:16]
 
 
+# InferenceClient settings the box owns. Plugins may add verification options (client_options) but can
+# never turn off encryption, change the endpoint or credentials, or stretch the attestation cache.
+_LOCKED_CLIENT_OPTIONS = frozenset({"api_key", "base_url", "headers", "e2ee", "ohttp", "signing_algo",
+                                    "attestation_cache_time_to_live_ms", "response_cache_time_to_live_ms"})
+
+
+def _enclave_cause(e: BaseException) -> EnclaveError | None:
+    """An EnclaveError raised inside an SDK callback (a plugin's verifier) and wrapped by the SDK."""
+    seen = set()
+    while e is not None and id(e) not in seen:
+        seen.add(id(e))
+        if isinstance(e, EnclaveError):
+            return e
+        e = e.__cause__ or e.__context__
+    return None
+
+
 async def ask_live(*, api_key: str, model: str, person_display: str, question: str, run_tool: ToolRunner,
                    tools: list[dict] | None = None, emit: Emit | None = None,
-                   attestation_max_age_s: int = 300) -> Draft:
+                   attestation_max_age_s: int = 300, client_options: dict | None = None) -> Draft:
     """tools: OpenAI tool dicts offered to the model (default TOOLS). emit(step, **data) gets
-    "attestation", "turn" and "error" events; it never receives file text or answer text."""
+    "attestation", "turn" and "error" events; it never receives file text or answer text.
+    client_options: extra InferenceClient keyword arguments from plugins (verifiers, deployment_policy).
+    A verifier that raises EnclaveError stops the question with that message."""
     from nearai_inference_sdk import InferenceClient, get_sdk_error
 
     emit = emit or _no_emit
+    client_options = dict(client_options or {})
+    if locked := sorted(_LOCKED_CLIENT_OPTIONS & set(client_options)):
+        err = EnclaveError(f"a plugin tried to change locked enclave settings: {', '.join(locked)}")
+        emit("error", message=str(err), replayed=False)
+        raise err
     tools = TOOLS if tools is None else tools
     tool_kw = {"tools": tools, "tool_choice": "auto"} if tools else {}
     draft = Draft(answer="", model=model)
@@ -110,7 +134,8 @@ async def ask_live(*, api_key: str, model: str, person_display: str, question: s
                 {"role": "user", "content": question}]
     try:
         async with InferenceClient(api_key, e2ee=True,
-                                   attestation_cache_time_to_live_ms=attestation_max_age_s * 1000) as client:
+                                   attestation_cache_time_to_live_ms=attestation_max_age_s * 1000,
+                                   **client_options) as client:
             t = time.monotonic()
             att = await client.verify(model)
             if not att.models:
@@ -152,6 +177,9 @@ async def ask_live(*, api_key: str, model: str, person_display: str, question: s
         emit("error", message=str(e), replayed=False)
         raise
     except Exception as e:  # noqa: BLE001 - any SDK or transport failure fails closed
+        if (inner := _enclave_cause(e)) is not None:
+            emit("error", message=str(inner), replayed=False)
+            raise EnclaveError(str(inner)) from e
         sdk = get_sdk_error(e)
         err = EnclaveError(sdk.failure.code if sdk else f"{type(e).__name__}: {e}")
         emit("error", message=str(err), replayed=False)

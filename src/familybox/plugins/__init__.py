@@ -21,7 +21,9 @@ Drop a file in src/familybox/plugins/ (names starting with "_" are skipped). A p
 
 A plugin that fails to import, or whose hook raises while loading, is logged and skipped, so one
 broken feature never takes the box down. Checks that guard answers (pre_checks, post_checks) are
-different: once registered, an error inside them stops the question (fail closed).
+different: once registered, an error inside them stops the question (fail closed). The NEAR code
+check (pinning.py) is required: if it did not load and the box has pins and the level is not "off",
+the box refuses live questions (Box._require_pinning) instead of asking NEAR unchecked.
 """
 
 from __future__ import annotations
