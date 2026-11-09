@@ -82,3 +82,28 @@ Installed through the fleet control plane's exec jobs, with no SSH (`scripts/fle
 - **Fail closed:** an error in a pre or post check stops the question, and nothing is answered.
 - **Enclave:** `ask_live` takes the tool list and an event callback. Replay mode sends the same events, marked as replayed.
 - **Tests:** 113 passed (97 before plus 16 new plugin tests). No live calls were made.
+
+## 2026-11-08: Approve button on the Arduino UNO Q (branch feat/unoq)
+
+- **What:** a physical Approve button for held items. `familybox device add --as dana` makes an approver
+  device token (shown once, only its SHA-256 is stored, scope "approve"). The device polls a small JSON API on
+  the box's web server (`GET /api/device/v1/pending`, `POST /api/device/v1/items/<id>/approve|deny`, bearer
+  token only) and scrolls "Maya's ChatGPT wants Dana's passport number" on the UNO Q's LED matrix. Press to
+  approve the oldest item, hold to deny. Plugin: `src/familybox/plugins/approver_devices.py`, store:
+  `src/familybox/devices.py`, app: `hardware/unoq-approve/`.
+- **Never sends values:** the API returns who asked, which assistant, whose detail and what kind; never the
+  value, the question or a file path. Health details are only called "health detail" on the matrix. A
+  button-approved value can be seen once on the owner's signed-in Devices page, within a day.
+- **Security:** the token only works on the device API (not a cookie, so no CSRF; requests with an Origin
+  header are refused), it can only decide its own person's items, and 10 wrong tokens lock an address out
+  for 10 minutes. The device pins the box's self-signed certificate by SHA-256 and checks it before sending
+  the token. A press only counts once the item has been on screen for 1.5 seconds.
+- **Core change:** held items now record the question's source (`Approvals.add(..., source=)`), so the
+  button can say which assistant asked. Today's sources do not name the assistant (mcp-stdio, mcp-remote),
+  so real requests read "Maya's assistant wants ..." until a connection reports its client name.
+- **Run on this laptop:** the box's page on 127.0.0.1 with a copy of the demo household, a replayed question
+  that held two of Maya's health details, a real device token, and the simulator over pinned HTTPS: one
+  approved, one denied, both recorded in the approvals file and Maya's audit log.
+- **Not run on hardware:** the UNO Q (ArduinoQ-01) is offline and was not contacted. The sketch has not been
+  compiled. The README lists what to check on the board.
+- **Tests:** 178 passed (113 before, 27 for the device API and CLI, 38 for the button app). No NEAR calls.

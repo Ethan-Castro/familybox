@@ -22,12 +22,12 @@ class Approvals:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.path.write_text(json.dumps(data, indent=1))
 
-    def add(self, asker: str, question: str, held: list[Held]) -> list[str]:
+    def add(self, asker: str, question: str, held: list[Held], *, source: str = "") -> list[str]:
         data = self._load()
         for h in held:
             data[h.id] = {"asker": asker, "question": question, "kind": h.kind, "label": h.label,
                           "owner": h.owner, "path": h.path, "value": h.value, "status": "waiting",
-                          "created": int(time.time())}
+                          "created": int(time.time()), "source": source}
         self._save(data)
         return [h.id for h in held]
 

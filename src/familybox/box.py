@@ -254,7 +254,7 @@ class Box:
                               "tokens": [draft.tokens_in, draft.tokens_out]})
         if result.outcome == "held":
             from .approvals import Approvals
-            ans.held_ids = Approvals(self.cfg).add(person_id, question, result.held)
+            ans.held_ids = Approvals(self.cfg).add(person_id, question, result.held, source=ctx.source)
         return self._finish(ctx, ans)
 
     def _finish(self, ctx: Question, ans: Answer) -> Answer:

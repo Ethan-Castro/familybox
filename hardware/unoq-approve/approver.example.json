@@ -1,0 +1,5 @@
+{
+ "box_url": "https://familybox.local:8443",
+ "token": "fbd_00000000_REPLACE-WITH-THE-TOKEN-FROM-familybox-device-add",
+ "cert_sha256": "REPLACE:WITH:THE:FINGERPRINT:FROM:familybox-device-add"
+}
