@@ -1,0 +1,62 @@
+{
+ "title": "Student Aid Information (practice form)",
+ "description": "A made-up, simplified college aid form: the student's details and both parents' SSNs and income. Not a real FAFSA.",
+ "fields": {
+  "student_name": {
+   "label": "Student full name",
+   "hint": "{{<student>.name}}"
+  },
+  "student_ssn": {
+   "label": "Student Social Security number",
+   "hint": "{{<student>.ssn}}"
+  },
+  "student_date_of_birth": {
+   "label": "Student date of birth",
+   "hint": "{{<student>.date_of_birth}}"
+  },
+  "school_year": {
+   "label": "School year applying for",
+   "hint": "text, for example 2027-28"
+  },
+  "student_email": {
+   "label": "Student email",
+   "hint": "text"
+  },
+  "parent1_name": {
+   "label": "Parent 1 full name",
+   "hint": "{{<parent>.name}}"
+  },
+  "parent1_ssn": {
+   "label": "Parent 1 Social Security number",
+   "hint": "{{<parent>.ssn}}"
+  },
+  "parent1_wages": {
+   "label": "Parent 1 wages (W-2 box 1)",
+   "hint": "{{<parent>.w2_wages}}"
+  },
+  "parent2_name": {
+   "label": "Parent 2 full name",
+   "hint": "{{<parent>.name}}"
+  },
+  "parent2_ssn": {
+   "label": "Parent 2 Social Security number",
+   "hint": "{{<parent>.ssn}}"
+  },
+  "parent2_wages": {
+   "label": "Parent 2 wages (W-2 box 1)",
+   "hint": "{{<parent>.w2_wages}}"
+  },
+  "household_agi": {
+   "label": "Adjusted gross income from the last tax return",
+   "hint": "{{<parent>.agi}}"
+  },
+  "household_size": {
+   "label": "Number of people in the household",
+   "hint": "text"
+  },
+  "signature_date": {
+   "label": "Date signed",
+   "hint": "text"
+  }
+ }
+}

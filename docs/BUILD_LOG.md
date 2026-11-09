@@ -82,3 +82,10 @@ Installed through the fleet control plane's exec jobs, with no SSH (`scripts/fle
 - **Fail closed:** an error in a pre or post check stops the question, and nothing is answered.
 - **Enclave:** `ask_live` takes the tool list and an event callback. Replay mode sends the same events, marked as replayed.
 - **Tests:** 113 passed (97 before plus 16 new plugin tests). No live calls were made.
+
+## 2026-11-08: Fill forms on the box (feat/forms)
+
+- **What:** the `forms` plugin. MCP tools `list_family_forms` and `fill_family_form(form, for_person, fields)`, a Forms page on the box's web page, and `familybox forms list | fill | mine | approve | deny | download`. Logic in `src/familybox/formfill.py`, wiring in `src/familybox/plugins/forms.py`, details in `docs/FORMS.md`. No core files changed; `pypdf` 7.0.0 added (pure Python, installs on aarch64).
+- **How:** fields are plain text or references like `{{maya.ssn}}`. The box resolves them from the index, only from files the asker may read; fills the PDF on the box (`runtime/forms/`, 0600); and puts an approval item in front of every person whose details are in it. The assistant gets a masked summary ("SSN ending 4322") that is also run through the gate. Download needs every owner's approval, and only an owner who may read every source file can download.
+- **Demo forms:** two fictional practice forms in `demo/forms/`, made by `scripts/make_demo_forms.py`.
+- **Tests:** 153 passed (113 before plus 40 new in `tests/test_forms.py`). No live NEAR calls; forms do not use the enclave model.

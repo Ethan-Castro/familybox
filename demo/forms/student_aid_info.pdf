@@ -1,0 +1,348 @@
+%PDF-1.3
+%‚„œ”
+1 0 obj
+<<
+/Producer (familybox demo)
+/Title (Student Aid Information \050practice form\051)
+/Subject (A made\055up\054 simplified college aid form\072 the student\047s details and both parents\047 SSNs and income\056 Not a real FAFSA\056)
+>>
+endobj
+2 0 obj
+<<
+/Type /Pages
+/Count 1
+/Kids [ 4 0 R ]
+>>
+endobj
+3 0 obj
+<<
+/Type /Catalog
+/Pages 2 0 R
+/AcroForm <<
+/Fields [ 7 0 R 8 0 R 9 0 R 10 0 R 11 0 R 12 0 R 13 0 R 14 0 R 15 0 R 16 0 R 17 0 R 18 0 R 19 0 R 20 0 R ]
+/NeedAppearances true
+/DA (\057Helv 10 Tf 0 g)
+/DR <<
+/Font <<
+/Helv 5 0 R
+>>
+>>
+>>
+>>
+endobj
+4 0 obj
+<<
+/Type /Page
+/Resources <<
+/Font <<
+/F1 5 0 R
+/F2 6 0 R
+/Helv 5 0 R
+>>
+>>
+/MediaBox [ 0.0 0.0 612 792 ]
+/Parent 2 0 R
+/Contents 21 0 R
+/Annots [ 7 0 R 8 0 R 9 0 R 10 0 R 11 0 R 12 0 R 13 0 R 14 0 R 15 0 R 16 0 R 17 0 R 18 0 R 19 0 R 20 0 R ]
+>>
+endobj
+5 0 obj
+<<
+/Type /Font
+/Subtype /Type1
+/BaseFont /Helvetica
+/Encoding /WinAnsiEncoding
+>>
+endobj
+6 0 obj
+<<
+/Type /Font
+/Subtype /Type1
+/BaseFont /Helvetica-Bold
+/Encoding /WinAnsiEncoding
+>>
+endobj
+7 0 obj
+<<
+/Type /Annot
+/Subtype /Widget
+/FT /Tx
+/T (student\137name)
+/TU (Student full name)
+/F 4
+/Rect [ 290 678 560 696 ]
+/DA (\057Helv 10 Tf 0 g)
+/MK <<
+/BC [ 0.55 0.55 0.55 ]
+>>
+/P 4 0 R
+>>
+endobj
+8 0 obj
+<<
+/Type /Annot
+/Subtype /Widget
+/FT /Tx
+/T (student\137ssn)
+/TU (Student Social Security number)
+/F 4
+/Rect [ 290 654 560 672 ]
+/DA (\057Helv 10 Tf 0 g)
+/MK <<
+/BC [ 0.55 0.55 0.55 ]
+>>
+/P 4 0 R
+>>
+endobj
+9 0 obj
+<<
+/Type /Annot
+/Subtype /Widget
+/FT /Tx
+/T (student\137date\137of\137birth)
+/TU (Student date of birth)
+/F 4
+/Rect [ 290 630 560 648 ]
+/DA (\057Helv 10 Tf 0 g)
+/MK <<
+/BC [ 0.55 0.55 0.55 ]
+>>
+/P 4 0 R
+>>
+endobj
+10 0 obj
+<<
+/Type /Annot
+/Subtype /Widget
+/FT /Tx
+/T (school\137year)
+/TU (School year applying for)
+/F 4
+/Rect [ 290 606 560 624 ]
+/DA (\057Helv 10 Tf 0 g)
+/MK <<
+/BC [ 0.55 0.55 0.55 ]
+>>
+/P 4 0 R
+>>
+endobj
+11 0 obj
+<<
+/Type /Annot
+/Subtype /Widget
+/FT /Tx
+/T (student\137email)
+/TU (Student email)
+/F 4
+/Rect [ 290 582 560 600 ]
+/DA (\057Helv 10 Tf 0 g)
+/MK <<
+/BC [ 0.55 0.55 0.55 ]
+>>
+/P 4 0 R
+>>
+endobj
+12 0 obj
+<<
+/Type /Annot
+/Subtype /Widget
+/FT /Tx
+/T (parent1\137name)
+/TU (Parent 1 full name)
+/F 4
+/Rect [ 290 528 560 546 ]
+/DA (\057Helv 10 Tf 0 g)
+/MK <<
+/BC [ 0.55 0.55 0.55 ]
+>>
+/P 4 0 R
+>>
+endobj
+13 0 obj
+<<
+/Type /Annot
+/Subtype /Widget
+/FT /Tx
+/T (parent1\137ssn)
+/TU (Parent 1 Social Security number)
+/F 4
+/Rect [ 290 504 560 522 ]
+/DA (\057Helv 10 Tf 0 g)
+/MK <<
+/BC [ 0.55 0.55 0.55 ]
+>>
+/P 4 0 R
+>>
+endobj
+14 0 obj
+<<
+/Type /Annot
+/Subtype /Widget
+/FT /Tx
+/T (parent1\137wages)
+/TU (Parent 1 wages \050W\0552 box 1\051)
+/F 4
+/Rect [ 290 480 560 498 ]
+/DA (\057Helv 10 Tf 0 g)
+/MK <<
+/BC [ 0.55 0.55 0.55 ]
+>>
+/P 4 0 R
+>>
+endobj
+15 0 obj
+<<
+/Type /Annot
+/Subtype /Widget
+/FT /Tx
+/T (parent2\137name)
+/TU (Parent 2 full name)
+/F 4
+/Rect [ 290 426 560 444 ]
+/DA (\057Helv 10 Tf 0 g)
+/MK <<
+/BC [ 0.55 0.55 0.55 ]
+>>
+/P 4 0 R
+>>
+endobj
+16 0 obj
+<<
+/Type /Annot
+/Subtype /Widget
+/FT /Tx
+/T (parent2\137ssn)
+/TU (Parent 2 Social Security number)
+/F 4
+/Rect [ 290 402 560 420 ]
+/DA (\057Helv 10 Tf 0 g)
+/MK <<
+/BC [ 0.55 0.55 0.55 ]
+>>
+/P 4 0 R
+>>
+endobj
+17 0 obj
+<<
+/Type /Annot
+/Subtype /Widget
+/FT /Tx
+/T (parent2\137wages)
+/TU (Parent 2 wages \050W\0552 box 1\051)
+/F 4
+/Rect [ 290 378 560 396 ]
+/DA (\057Helv 10 Tf 0 g)
+/MK <<
+/BC [ 0.55 0.55 0.55 ]
+>>
+/P 4 0 R
+>>
+endobj
+18 0 obj
+<<
+/Type /Annot
+/Subtype /Widget
+/FT /Tx
+/T (household\137agi)
+/TU (Adjusted gross income from the last tax return)
+/F 4
+/Rect [ 290 324 560 342 ]
+/DA (\057Helv 10 Tf 0 g)
+/MK <<
+/BC [ 0.55 0.55 0.55 ]
+>>
+/P 4 0 R
+>>
+endobj
+19 0 obj
+<<
+/Type /Annot
+/Subtype /Widget
+/FT /Tx
+/T (household\137size)
+/TU (Number of people in the household)
+/F 4
+/Rect [ 290 300 560 318 ]
+/DA (\057Helv 10 Tf 0 g)
+/MK <<
+/BC [ 0.55 0.55 0.55 ]
+>>
+/P 4 0 R
+>>
+endobj
+20 0 obj
+<<
+/Type /Annot
+/Subtype /Widget
+/FT /Tx
+/T (signature\137date)
+/TU (Date signed)
+/F 4
+/Rect [ 290 276 560 294 ]
+/DA (\057Helv 10 Tf 0 g)
+/MK <<
+/BC [ 0.55 0.55 0.55 ]
+>>
+/P 4 0 R
+>>
+endobj
+21 0 obj
+<<
+/Length 1125
+>>
+stream
+BT /F2 17 Tf 50 742 Td (Student Aid Information \(practice form\)) Tj ET
+BT /F1 9 Tf 50 726 Td (FICTIONAL PRACTICE FORM. Not a real government form. Do not mail.) Tj ET
+BT /F2 12 Tf 50 700 Td (Student) Tj ET
+BT /F1 10 Tf 60 683 Td (Student full name) Tj ET
+BT /F1 10 Tf 60 659 Td (Student Social Security number) Tj ET
+BT /F1 10 Tf 60 635 Td (Student date of birth) Tj ET
+BT /F1 10 Tf 60 611 Td (School year applying for) Tj ET
+BT /F1 10 Tf 60 587 Td (Student email) Tj ET
+BT /F2 12 Tf 50 550 Td (Parent 1) Tj ET
+BT /F1 10 Tf 60 533 Td (Parent 1 full name) Tj ET
+BT /F1 10 Tf 60 509 Td (Parent 1 Social Security number) Tj ET
+BT /F1 10 Tf 60 485 Td (Parent 1 wages \(W-2 box 1\)) Tj ET
+BT /F2 12 Tf 50 448 Td (Parent 2) Tj ET
+BT /F1 10 Tf 60 431 Td (Parent 2 full name) Tj ET
+BT /F1 10 Tf 60 407 Td (Parent 2 Social Security number) Tj ET
+BT /F1 10 Tf 60 383 Td (Parent 2 wages \(W-2 box 1\)) Tj ET
+BT /F2 12 Tf 50 346 Td (Household) Tj ET
+BT /F1 10 Tf 60 329 Td (Adjusted gross income from the last tax return) Tj ET
+BT /F1 10 Tf 60 305 Td (Number of people in the household) Tj ET
+BT /F1 10 Tf 60 281 Td (Date signed) Tj ET
+endstream
+endobj
+xref
+0 22
+0000000000 65535 f 
+0000000015 00000 n 
+0000000265 00000 n 
+0000000324 00000 n 
+0000000577 00000 n 
+0000000839 00000 n 
+0000000936 00000 n 
+0000001038 00000 n 
+0000001240 00000 n 
+0000001454 00000 n 
+0000001675 00000 n 
+0000001884 00000 n 
+0000002084 00000 n 
+0000002288 00000 n 
+0000002504 00000 n 
+0000002726 00000 n 
+0000002930 00000 n 
+0000003146 00000 n 
+0000003368 00000 n 
+0000003601 00000 n 
+0000003822 00000 n 
+0000004021 00000 n 
+trailer
+<<
+/Size 22
+/Root 3 0 R
+/Info 1 0 R
+>>
+startxref
+5199
+%%EOF

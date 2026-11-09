@@ -13,6 +13,7 @@ dependencies = [
     "httpx>=0.28.1,<0.29",
     "pynacl>=1.6",
     "cryptography>=44",
+    "pypdf>=7.0.0",
 ]
 
 [dependency-groups]
