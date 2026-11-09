@@ -274,6 +274,11 @@ def test_admin_sees_everyone_but_not_private_details(cfg):
     assert "records_maya_fhir" not in t                          # health file name hidden
     assert "one of Maya&#x27;s private files" in t or "one of Maya's private files" in t
     assert "Only Maya can see the answer text" in t
+    # Held health items and gate reasons do not tell the parent what kind of health detail came up.
+    assert "Held for their owner" in t
+    for word in ("Condition", "Medication", "Allerg", "health detail"):
+        assert word not in t, word
+    assert "a private detail from one of Maya&#x27;s files" in t or "a private detail from one of Maya's files" in t
     sent = json.loads((cfg.runtime / "audit" / "maya.jsonl").read_text().splitlines()[-1])["sent_to_assistant"]
     assert web.esc(sent) not in t
 
@@ -328,17 +333,42 @@ def test_box_rejects_a_bad_qid(cfg):
 def test_workbench_runs_show_code_only_to_the_asker(cfg):
     qid = "0000000000cc"
     code = "import csv\nprint('<script>x</script>')"
-    write_events(cfg, "maya", qid, [QUESTION, ATT, {"step": "workbench", "t": 2, "ok": True, "exit_code": 0,
-                                                     "seconds": 0.4, "code": code}])
+    write_events(cfg, "maya", qid, [QUESTION, ATT, dict(WB, code=code, output="total 42 <b>")])
     maya, _ = sign_in(cfg, "maya")
     t = maya.get(f"/activity/{qid}").text
     assert "Ran code in the sealed workbench" in t and '<details class="fb-code"' in t
     assert "print(&#x27;&lt;script&gt;x&lt;/script&gt;&#x27;)" in t and "<script>x" not in t
-    assert "(2 lines)" in t
+    assert "(2 lines)" in t and "finished normally" in t and "3 of your file(s) copied in" in t
+    assert "Show what the script printed" in t and "total 42 &lt;b&gt;" in t
     dana, _ = sign_in(cfg, "dana")
     t2 = dana.get(f"/activity/{qid}").text
     assert "Ran code in the sealed workbench" in t2 and "import csv" not in t2
-    assert "The code is only shown to Maya" in t2
+    assert "The code is only shown to Maya" in t2 and "total 42" not in t2 and "script printed" not in t2
+
+
+# The event plugins/workbench.py (feat/workbench) records with ctx.emit("workbench", ...).
+WB = {"step": "workbench", "t": 2, "code": "print(1)", "output": "1\n", "exit_code": 0, "signal": None,
+      "ok": True, "error": None, "limits_hit": [], "seconds": 0.4, "cpu_s": 0.1, "max_rss_kb": 9000,
+      "output_bytes": 2, "truncated": False, "files_in_workspace": 3,
+      "limits": {"memory_mb": 256, "cpu_s": 10, "wall_s": 20, "max_procs": 16, "output_kb": 64}}
+
+
+def test_workbench_failures_are_shown_as_failures(cfg):
+    qid = "0000000000c1"
+    write_events(cfg, "maya", qid, [
+        QUESTION,
+        dict(WB, exit_code=1, t=1),
+        dict(WB, exit_code=None, signal=9, limits_hit=["cpu time"], t=2),
+        dict(WB, ok=False, exit_code=None, error="the sandbox could not start", code="", output="", t=3)])
+    maya, _ = sign_in(cfg, "maya")
+    t = maya.get(f"/activity/{qid}").text
+    assert "the script failed" in t and "exit code 1" in t
+    assert "stopped by the box (signal 9)" in t and "hit the limit on cpu time" in t
+    assert "Could not run code in the sealed workbench" in t and "the sandbox could not start" in t
+    assert t.count('class="fb-step s-bad"') >= 3
+    dana, _ = sign_in(cfg, "dana")
+    t2 = dana.get(f"/activity/{qid}").text
+    assert "the sandbox could not start" not in t2 and "The sandbox reported a problem" in t2
 
 
 def test_tool_arguments_are_escaped(cfg):
@@ -378,7 +408,9 @@ def test_files_refused_are_listed(cfg):
                                  "sent_to_assistant": "I can't see that.", "held_ids": []}) + "\n")
     c, _ = sign_in(cfg, "maya")
     t = c.get(f"/activity/{qid}").text
-    assert "Refused to open" in t and "The model never saw it" in t and "Refused: <code" in t
+    assert "Refused to open" in t and "The model never saw it" in t
+    assert "Refused: one of Dana&#x27;s private files" in t or "Refused: one of Dana's private files" in t
+    assert "visit_2026_09_14" not in t                       # Maya cannot read it, so she does not see its name
 
 
 def test_list_is_newest_first_and_summaries_are_right(cfg):
@@ -390,3 +422,95 @@ def test_list_is_newest_first_and_summaries_are_right(cfg):
     assert out[0].status == "running" and out[0].source == "cli" and out[1].status == "held"
     assert act.list_activity(cfg, cfg.person("sam")) == []
     assert len(act.list_activity(cfg, cfg.person("dana"))) == 2
+
+
+# --- review fixes --------------------------------------------------------------------------------
+
+def test_own_page_does_not_name_other_peoples_health_files(cfg):
+    sam = act.View(cfg, cfg.person("sam"), "sam")
+    for reason in ("another person's health from people/maya/health/therapy_notes.txt",
+                   "tripwire FBX-AB12 from people/dana/health/x.txt",
+                   "health from people/maya/health/therapy_notes.txt"):
+        out = sam.reason(reason)
+        assert "people/" not in out and "therapy_notes" not in out, out
+    assert "someone else's a" not in sam.reason("another person's ssn from people/maya/ids/ssn_card_maya.txt")
+    assert "someone else's Social Security number" in sam.reason(
+        "another person's ssn from people/maya/ids/ssn_card_maya.txt")
+    assert sam.path("people/nobody/x.txt") == "a private file"
+    assert "their's" not in sam.path("people/nobody/x.txt")
+    assert sam.path("shared/house/car.txt").startswith("<code")
+
+    qid = "0000000000f1"
+    write_events(cfg, "sam", qid, [QUESTION, {"step": "answer", "t": 1, "outcome": "refused", "held": 0,
+                                              "files_read": 0, "files_denied": 1, "seconds": 1}])
+    audit = cfg.runtime / "audit" / "sam.jsonl"
+    audit.parent.mkdir(parents=True, exist_ok=True)
+    audit.write_text(json.dumps({"qid": qid, "outcome": "refused", "files_read": [],
+                                 "files_denied": ["people/maya/health/therapy_notes.txt"],
+                                 "reasons": ["another person's health from people/maya/health/therapy_notes.txt"],
+                                 "sent_to_assistant": "Blocked.", "held_ids": []}) + "\n")
+    c, _ = sign_in(cfg, "sam")
+    t = c.get(f"/activity/{qid}").text
+    assert "people/maya/health" not in t and "therapy_notes" not in t
+    assert "health detail" not in t
+
+
+def test_kind_words_have_one_article():
+    assert act.kind_word("health") == "a health detail" and act.kind_word("id") == "an ID number"
+    assert act.kind_noun("ssn") == "Social Security number"
+
+
+def test_denied_read_is_recorded_in_the_event(cfg):
+    from familybox.box import Question
+
+    box = Box(cfg, mode="replay")
+    sam = cfg.person("sam")
+    ctx = Question(box, sam, "q", "cli", "0000000000f2")
+    out = box.run_tool(sam, "read_file", {"path": "people/maya/health/records_maya_fhir.json"}, ctx, {"read_file"})
+    assert "not yours" in out
+    ev = ctx.events[-1]
+    assert ev["step"] == "tool" and ev["denied"] is True and ev["ok"] is False
+    ok = box.run_tool(sam, "read_file", {"path": ctx.files_denied[0].replace("maya/health/records_maya_fhir.json",
+                                                                              "sam/nothing.txt")}, ctx, {"read_file"})
+    assert ok and ctx.events[-1].get("denied") is True       # a missing file is refused the same way
+
+
+def test_running_question_shows_a_denied_read_as_refused(cfg):
+    qid = "0000000000f3"
+    write_events(cfg, "sam", qid, [QUESTION, {"step": "tool", "t": 1, "name": "read_file",
+                                              "arguments": {"path": "people/maya/health/x.txt"},
+                                              "ok": False, "denied": True, "why": "not yours"}])
+    c, _ = sign_in(cfg, "sam")
+    live = c.get(f"/activity/{qid}/live").json()
+    assert live["status"] == "running"
+    assert "Refused to open" in live["html"] and "Opened" not in live["html"]
+    assert "people/maya" not in live["html"]
+
+
+def test_a_crash_after_the_first_step_shows_did_not_finish(cfg, monkeypatch):
+    from familybox.box import Question
+
+    async def half(self, person_id, question, *, source="cli", qid=None):
+        Question(self, self.cfg.person(person_id), question, source, qid).emit("question", source=source,
+                                                                                 mode="replay", chars=1)
+        raise KeyError("bad replay file")
+    monkeypatch.setattr(Box, "ask_async", half)
+    c, token = sign_in(cfg, "maya")
+    qid = qid_of(ask(c, token, ALLERGY_Q))
+    live = c.get(f"/activity/{qid}/live").json()
+    assert live["status"] == "unfinished" and "Working..." not in live["html"]
+    assert "internal problem" in live["html"] and "bad replay file" not in live["html"]
+    # Stored on disk too, so a fresh server (no memory of the crash) says the same.
+    path = cfg.runtime / "events" / "maya" / f"{qid}.jsonl"
+    assert act.status_of(act.read_events(path), time.time()) == "unfinished"
+    [s] = act.list_activity(cfg, cfg.person("maya"))
+    assert s.status == "unfinished"
+
+
+def test_times_name_their_zone_and_can_be_localized(cfg):
+    out = act.when_html(1_790_000_000)
+    assert 'data-ts="1790000000"' in out and out.startswith('<time class="fb-time"')
+    import datetime as dt
+    zone = dt.datetime.fromtimestamp(1_790_000_000).astimezone().tzname()
+    assert act.when(1_790_000_000).endswith(zone)
+    assert "Live updates stopped. Reload the page." in plugin.JS and "r.status === 401" in plugin.JS

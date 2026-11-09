@@ -14,6 +14,7 @@ Extension points (filled by plugins in familybox/plugins/ through register(box))
 ctx is a Question: qid, person, question, source, started, files_read, files_denied, data (a scratch
 dict for plugins), events, and emit(step, **data) which appends one JSON line to
 <runtime>/events/<person>/<qid>.jsonl. Known protected values are scrubbed from every event.
+A tool run that adds to ctx.files_denied is recorded as a refused step (ok false, denied true).
 """
 
 from __future__ import annotations
@@ -166,6 +167,7 @@ class Box:
             ctx.emit("tool", name=name, arguments=args, ok=False, why="not offered")
             return json.dumps({"error": f"unknown tool {name}"})
         for p in self.tool_providers:
+            denied_before = len(ctx.files_denied)
             try:
                 out = p.run(person, name, args, ctx)
             except Exception as e:  # noqa: BLE001 - a broken tool gives the model an error, not a crash
@@ -173,7 +175,11 @@ class Box:
                 ctx.emit("tool", name=name, arguments=args, ok=False, why=type(e).__name__)
                 return json.dumps({"error": f"the {name} tool failed"})
             if out is not None:
-                ctx.emit("tool", name=name, arguments=args, ok=True, provider=type(p).__name__)
+                if len(ctx.files_denied) > denied_before:   # a refused read: say so in the event itself
+                    ctx.emit("tool", name=name, arguments=args, ok=False, denied=True, why="not yours",
+                             provider=type(p).__name__)
+                else:
+                    ctx.emit("tool", name=name, arguments=args, ok=True, provider=type(p).__name__)
                 return out
         ctx.emit("tool", name=name, arguments=args, ok=False, why="no provider")
         return json.dumps({"error": f"unknown tool {name}"})

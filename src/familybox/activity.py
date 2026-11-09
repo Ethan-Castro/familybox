@@ -7,9 +7,13 @@ Data sources (nothing new is stored on disk):
 Who sees what:
   - Everyone sees their own questions in full: tool arguments, files, reasons and the exact text sent.
   - The admin also sees everyone else's questions, but only the trust facts: where the model ran, that
-    each step was signed, which tools ran, what the gate decided. Search words, workbench code, the
-    answer text and file names the admin could not read themselves are hidden. A child's health
-    questions stay the child's.
+    each step was signed, which tools ran, how many files were opened or refused, and what the gate
+    decided (passed, numbers removed, held, blocked). Search words, workbench code and output, the
+    answer text, and the names of files the admin could not read themselves are hidden.
+  - Health details are never described to anyone but their owner. When the gate holds or blocks
+    something from a health file, other viewers (the admin included) only see "a private detail from
+    one of Maya's files", not whether it was a condition, a medication or a visit.
+  - A file path is only shown to someone who could open that file themselves, even on their own page.
   - Held values are never shown here, to anyone. They live only in Approvals.
 
 The question text itself is never written to disk by the box (the audit keeps a SHA-256). The web
@@ -95,10 +99,12 @@ def audit_entry(cfg: Config, person_id: str, qid: str) -> dict | None:
 
 
 def status_of(events: list[dict], mtime: float, now: float | None = None) -> str:
-    """The outcome once answered, else running, or unfinished if it went quiet."""
+    """The outcome once answered, else running, or unfinished if it crashed or went quiet."""
     for ev in reversed(events):
         if ev.get("step") == "answer":
             return str(ev.get("outcome", "error"))
+        if ev.get("step") == "crashed":
+            return "unfinished"
     now = time.time() if now is None else now
     return "running" if now - mtime < STALE_S else "unfinished"
 
@@ -169,24 +175,39 @@ def find(cfg: Config, viewer: Person, qid: str) -> tuple[str, Path] | None:
 
 # --- formatting helpers --------------------------------------------------------------------------
 
+def _fmt(secs_: float, seconds: bool) -> str:
+    """The box's own clock, with its time zone named (a Pi left on UTC would otherwise look hours off).
+    The page's script rewrites these into the reader's own time zone."""
+    d = dt.datetime.fromtimestamp(secs_).astimezone()
+    hour = d.hour % 12 or 12
+    sec = f":{d.second:02d}" if seconds else ""
+    zone = d.tzname() or ""
+    return (f"{d.strftime('%b')} {d.day}, {hour}:{d.minute:02d}{sec} {'AM' if d.hour < 12 else 'PM'}"
+            + (f" {zone}" if zone else ""))
+
+
 def when(ts: float | None) -> str:
     if not ts:
         return ""
-    d = dt.datetime.fromtimestamp(ts)
-    hour = d.hour % 12 or 12
-    return f"{d.strftime('%b')} {d.day}, {hour}:{d.minute:02d} {'AM' if d.hour < 12 else 'PM'}"
+    return _fmt(ts, False)
+
+
+def when_html(ts: float | None, seconds: bool = False) -> str:
+    """A time element the page's script can show in the reader's own time zone."""
+    if not ts:
+        return ""
+    return (f'<time class="fb-time" data-ts="{int(ts)}" data-sec="{1 if seconds else 0}">'
+            f'{esc(_fmt(ts, seconds))}</time>')
 
 
 def clock(ts) -> str:
     """verified_at from the SDK: epoch milliseconds (or seconds). Anything else is shown as is."""
     if not isinstance(ts, (int, float)) or isinstance(ts, bool):
         return esc(ts) if ts else "unknown"
-    secs = ts / 1000 if ts > 1e11 else ts
-    if secs < 1e9:
+    secs_ = ts / 1000 if ts > 1e11 else ts
+    if secs_ < 1e9:
         return esc(ts)
-    d = dt.datetime.fromtimestamp(secs)
-    hour = d.hour % 12 or 12
-    return f"{d.strftime('%b')} {d.day}, {hour}:{d.minute:02d}:{d.second:02d} {'AM' if d.hour < 12 else 'PM'}"
+    return when_html(secs_, seconds=True)
 
 
 def secs(x) -> str:
@@ -224,14 +245,37 @@ class View:
         return p.display if p else self.owner
 
     def path(self, rel) -> str:
-        """A file path as this viewer may see it, already escaped."""
+        """A file path as this viewer may see it, already escaped. Only someone who could open the file
+        themselves sees its name, even on their own question's page."""
         rel = str(rel or "")
         if not rel:
             return "a file"
-        if self.full or (access.can_read(self.viewer, rel) and not access.is_health(rel)):
+        if access.can_read(self.viewer, rel):
             return f'<code class="fb-path">{esc(rel)}</code>'
-        owner = access.owner_of(rel)
-        return f"one of {esc(self.cfg.people[owner].display if owner in self.cfg.people else 'their')}'s private files"
+        return self.private_file(access.owner_of(rel))
+
+    def private_file(self, owner) -> str:
+        if owner == self.viewer.id:
+            return "one of your private files"
+        if isinstance(owner, str) and owner in self.cfg.people:
+            return f"one of {esc(self.cfg.people[owner].display)}'s private files"
+        return "a private file"
+
+    def hide_health(self, kind, rel) -> bool:
+        """Health details are described only to their owner (and only on the owner's own page)."""
+        rel = str(rel or "")
+        if not (kind == "health" or (rel and access.is_health(rel))):
+            return False
+        owner = access.owner_of(rel) if rel else None
+        return not (self.full and owner == self.viewer.id)
+
+    def private_detail(self, rel) -> str:
+        owner = access.owner_of(str(rel or "")) if rel else None
+        if owner == self.viewer.id:
+            return "a private detail from one of your files"
+        if isinstance(owner, str) and owner in self.cfg.people:
+            return f"a private detail from one of {esc(self.cfg.people[owner].display)}'s files"
+        return "a private detail from a private file"
 
     def arguments(self, name: str, args) -> str:
         if isinstance(args, str):
@@ -263,12 +307,18 @@ class View:
             return "a word or phrase on the family's never-share list"
         m = re.match(r"another person's (\w+) from (.+)$", text)
         if m:
-            return f"someone else's {esc(kind_word(m.group(1)))} from {self.path(m.group(2))}"
+            if self.hide_health(m.group(1), m.group(2)):
+                return f"someone else's private detail, {self.private_detail(m.group(2))}"
+            return f"someone else's {esc(kind_noun(m.group(1)))} from {self.path(m.group(2))}"
         m = re.match(r"(\w+) from (.+) in a form that could not be masked$", text)
         if m:
-            return f"{esc(kind_word(m.group(1)))} from {self.path(m.group(2))} that could not be cleanly removed"
+            what = (self.private_detail(m.group(2)) if self.hide_health(m.group(1), m.group(2))
+                    else f"{esc(kind_word(m.group(1)))} from {self.path(m.group(2))}")
+            return f"{what} that could not be cleanly removed"
         m = re.match(r"(\w+) from (.+)$", text)
         if m:
+            if self.hide_health(m.group(1), m.group(2)):
+                return self.private_detail(m.group(2))
             return f"{esc(kind_word(m.group(1)))} from {self.path(m.group(2))}"
         if text in ("SSN-shaped number", "card number"):
             return {"SSN-shaped number": "a number shaped like a Social Security number",
@@ -276,9 +326,19 @@ class View:
         return esc(text) if self.full else "a safety check from a plugin"
 
 
+KIND_NOUNS = {"ssn": "Social Security number", "id": "ID number", "health": "health detail",
+              "tripwire": "tripwire"}
+
+
+def kind_noun(kind: str) -> str:
+    """The bare noun, for "someone else's ..." and similar."""
+    return KIND_NOUNS.get(kind, kind)
+
+
 def kind_word(kind: str) -> str:
-    return {"ssn": "a Social Security number", "id": "an ID number", "health": "a health detail",
-            "tripwire": "a tripwire"}.get(kind, kind)
+    """The noun with its article: "a health detail", "an ID number"."""
+    noun = kind_noun(kind)
+    return f"{'an' if noun[:1].lower() in 'aeiou' else 'a'} {noun}"
 
 
 # --- rendering -----------------------------------------------------------------------------------
@@ -297,24 +357,47 @@ def _held_list(view: View, held) -> str:
     for h in held:
         if not isinstance(h, dict):
             continue
+        if view.hide_health(h.get("kind"), h.get("path")):
+            rows.append(f'<li>{view.private_detail(h.get("path"))}</li>')
+            continue
         rows.append(f'<li>{esc(h.get("label") or kind_word(str(h.get("kind"))))}, '
                     f'belongs to {esc(view.name(h.get("owner")))}, from {view.path(h.get("path"))}</li>')
+    rows = list(dict.fromkeys(rows))
     return (f'<p class="muted">Held for their owner (the values are never shown here):</p>'
             f'<ul class="fb-list">{"".join(rows)}</ul>') if rows else ""
 
 
 def _workbench(view: View, ev: dict, n: int) -> str:
-    ok = ev.get("ok")
-    cls = "ok" if ok else ("bad" if ok is False else "info")
+    """A sandbox run, as plugins/workbench.py records it: code, output, ok (the sandbox ran), exit_code,
+    signal, error, limits_hit, seconds, cpu_s, files_in_workspace. The code and output are the owner's."""
+    ran = ev.get("ok")
+    code_ = ev.get("exit_code")
+    if ran is True and code_ == 0 and not ev.get("signal"):
+        cls, title = "ok", "Ran code in the sealed workbench (no network, read-only files)"
+    elif ran is True:
+        cls, title = "bad", "Ran code in the sealed workbench, but the script failed"
+    elif ran is False:
+        cls, title = "bad", "Could not run code in the sealed workbench"
+    else:
+        cls, title = "info", "Ran code in the sealed workbench (no network, read-only files)"
     bits = []
-    keys = ("exit_code", "seconds", "output_chars", "why", "message") if view.full else ("exit_code", "seconds")
-    for k in keys:
-        if k in ev and not isinstance(ev[k], (dict, list)):
-            v = secs(ev[k]) if k == "seconds" else ev[k]
-            bits.append(f'{esc(k.replace("_", " "))}: {esc(v)}')
-    if isinstance(ev.get("files"), list):
-        bits.append("files: " + ", ".join(view.path(f) for f in ev["files"]))
-    body = f'<p class="muted">{"; ".join(bits)}</p>' if bits else ""
+    if isinstance(code_, int) and not isinstance(code_, bool):
+        bits.append("finished normally" if code_ == 0 else f"the script stopped with an error (exit code {code_})")
+    if isinstance(ev.get("signal"), int) and ev.get("signal"):
+        bits.append(f"stopped by the box (signal {ev['signal']})")
+    if secs(ev.get("seconds")):
+        bits.append(f"took {secs(ev.get('seconds'))}")
+    nfiles = ev.get("files_in_workspace")
+    if isinstance(nfiles, int) and not isinstance(nfiles, bool):
+        whose = "your" if view.full else f"{view.owner_name()}'s"
+        bits.append(f"{nfiles} of {whose} file(s) copied in, read-only")
+    limits = [str(x) for x in ev.get("limits_hit") or [] if isinstance(x, (str, int))]
+    if limits:
+        bits.append("hit the limit on " + ", ".join(limits))
+    body = f'<p class="muted">{esc("; ".join(bits))}.</p>' if bits else ""
+    err = ev.get("error")
+    if isinstance(err, str) and err:
+        body += (f'<p>{esc(err)}</p>' if view.full else '<p class="muted">The sandbox reported a problem.</p>')
     code = ev.get("code")
     if isinstance(code, str) and code:
         if view.full:
@@ -322,7 +405,12 @@ def _workbench(view: View, ev: dict, n: int) -> str:
                      f'({code.count(chr(10)) + 1} lines)</summary><pre><code>{esc(code)}</code></pre></details>')
         else:
             body += f'<p class="muted">The code is only shown to {esc(view.owner_name())}.</p>'
-    return _item(cls, "Ran code in the sealed workbench (no network, read-only files)", body, ev.get("t"), f"ev-{n}")
+    output = ev.get("output")
+    if isinstance(output, str) and output and view.full:
+        body += (f'<details class="fb-code" id="wbo-{n}"><summary>Show what the script printed '
+                 f'(the model saw this; the box checks the final answer)</summary>'
+                 f'<pre><code>{esc(output)}</code></pre></details>')
+    return _item(cls, title, body, ev.get("t"), f"ev-{n}")
 
 
 def render_detail(view: View, events: list[dict], audit: dict | None, status: str) -> str:
@@ -399,7 +487,7 @@ def render_detail(view: View, events: list[dict], audit: dict | None, status: st
             name = str(ev.get("name", ""))
             args = ev.get("arguments") or {}
             path = args.get("path") if isinstance(args, dict) else None
-            if name == "read_file" and isinstance(path, str) and path in denied:
+            if name == "read_file" and isinstance(path, str) and (ev.get("denied") or path in denied):
                 items.append(_item("bad", f'Refused to open {view.path(path)}',
                                    "<p>Not this person's file to read. The model never saw it.</p>", t, key))
             elif name == "read_file" and isinstance(path, str) and ev.get("ok"):
@@ -412,6 +500,9 @@ def render_detail(view: View, events: list[dict], audit: dict | None, status: st
                 items.append(_item("bad", f'Did not run <code>{esc(name)}</code>', f"<p>{esc(why)}.</p>", t, key))
         elif isinstance(step, str) and step.startswith("workbench"):
             items.append(_workbench(view, ev, n))
+        elif step == "crashed":
+            items.append(_item("bad", "Stopped: the box hit an internal problem",
+                               "<p>The question did not finish. Nothing was answered.</p>", t, key))
         elif step in ("error", "pre_check_stopped", "post_check_stopped"):
             title = {"error": "Stopped: the box could not get a verified answer",
                      "pre_check_stopped": "Stopped by a safety check before the model was asked",

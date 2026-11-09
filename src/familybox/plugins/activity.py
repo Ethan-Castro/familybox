@@ -12,6 +12,7 @@ Rendering and the who-sees-what rules live in familybox.activity.
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 from collections import deque
@@ -78,24 +79,58 @@ table.fb-table { width: 100%; border-collapse: collapse; font-size: 15px; }
 
 JS = r"""(function () {
   "use strict";
+  var MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  function two(n) { return (n < 10 ? "0" : "") + n; }
+  // Times are rendered with the box's clock and zone; show them in the reader's own time zone instead.
+  function localTimes(scope) {
+    var els = scope.querySelectorAll("time.fb-time[data-ts]");
+    for (var i = 0; i < els.length; i++) {
+      var d = new Date(parseInt(els[i].getAttribute("data-ts"), 10) * 1000);
+      if (isNaN(d.getTime())) { continue; }
+      var h = d.getHours() % 12 || 12;
+      var s = els[i].getAttribute("data-sec") === "1" ? ":" + two(d.getSeconds()) : "";
+      els[i].textContent = MONTHS[d.getMonth()] + " " + d.getDate() + ", " + h + ":" + two(d.getMinutes()) +
+        s + (d.getHours() < 12 ? " AM" : " PM");
+      els[i].setAttribute("datetime", d.toISOString());
+    }
+  }
+  localTimes(document);
   var root = document.getElementById("fb-live");
   if (!root) { return; }
   var url = root.getAttribute("data-poll");
-  var tries = 0;
+  var tries = 0, fails = 0;
   function openIds() {
     var ids = [], els = root.querySelectorAll("details[open]");
     for (var i = 0; i < els.length; i++) { if (els[i].id) { ids.push(els[i].id); } }
     return ids;
   }
+  function stopped() {
+    if (document.getElementById("fb-stopped")) { return; }
+    var p = document.createElement("p");
+    p.id = "fb-stopped";
+    p.className = "bad";
+    p.textContent = "Live updates stopped. Reload the page.";
+    root.parentNode.insertBefore(p, root);
+  }
+  function retry() {
+    fails += 1;
+    if (tries < 900) { setTimeout(tick, Math.min(3000 * Math.pow(2, fails - 1), 30000)); } else { stopped(); }
+  }
   function tick() {
     tries += 1;
     fetch(url, { credentials: "same-origin", headers: { "Accept": "application/json" }, cache: "no-store" })
-      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (r) {
+        if (r.ok) { return r.json(); }
+        if (r.status === 401 || r.status === 404) { stopped(); } else { retry(); }
+        return null;
+      })
       .then(function (d) {
         if (!d) { return; }
+        fails = 0;
         if (d.version !== root.getAttribute("data-version")) {
           var keep = openIds();
           root.innerHTML = d.html;
+          localTimes(root);
           for (var i = 0; i < keep.length; i++) {
             var el = document.getElementById(keep[i]);
             if (el) { el.open = true; }
@@ -103,9 +138,11 @@ JS = r"""(function () {
           root.setAttribute("data-version", d.version);
         }
         root.setAttribute("data-status", d.status);
-        if (d.status === "running" && tries < 900) { setTimeout(tick, 1000); }
+        if (d.status === "running") {
+          if (tries < 900) { setTimeout(tick, 1000); } else { stopped(); }
+        }
       })
-      .catch(function () { if (tries < 900) { setTimeout(tick, 3000); } });
+      .catch(function () { retry(); });
   }
   if (url && root.getAttribute("data-status") === "running") { setTimeout(tick, 600); }
 })();
@@ -159,13 +196,13 @@ def web_routes(ctx):
             src = act.SOURCE_SHORT.get(s.source, s.source or "Unknown")
             q = text_for(sess, s.person, s.qid)
             label = esc(q[:80] + ("..." if len(q) > 80 else "")) if q else "(question text is not kept)"
-            rows.append(f'<tr><td><a href="/activity/{esc(s.qid)}">{esc(act.when(s.started))}</a>'
+            rows.append(f'<tr><td><a href="/activity/{esc(s.qid)}">{act.when_html(s.started)}</a>'
                         f'<div class="muted">{label}</div></td>'
                         + (f'<td>{esc(person)}</td>' if viewer.admin else "")
                         + f'<td class="fb-hide">{esc(src)}</td><td>{act.badge(s.status)}</td></tr>')
         for qid, p in pending.items():   # web asks that have not written their first step yet
             if p["owner"] == viewer.id and not act.find(cfg, viewer, qid):
-                rows.insert(0, f'<tr><td><a href="/activity/{esc(qid)}">{esc(act.when(p["started"]))}</a></td>'
+                rows.insert(0, f'<tr><td><a href="/activity/{esc(qid)}">{act.when_html(p["started"])}</a></td>'
                             + (f'<td>{esc(viewer.display)}</td>' if viewer.admin else "")
                             + f'<td class="fb-hide">Web page</td><td>{act.badge("unfinished" if p["failed"] else "running")}'
                             f'</td></tr>')
@@ -201,6 +238,8 @@ def web_routes(ctx):
             except OSError:
                 mtime = time.time()
             status = act.status_of(events, mtime)
+            if status == "running" and pending.get(qid, {}).get("failed"):
+                status = "unfinished"
             audit = act.audit_entry(cfg, owner, qid) if status not in ("running", "unfinished") else None
             return owner, events, audit, status
         p = pending.get(qid)
@@ -224,7 +263,7 @@ def web_routes(ctx):
         who = "You" if view.full else esc(view.owner_name())
         body = (f'{assets()}<div class="fb-wide"><p><a href="/activity">Back to activity</a></p>'
                 f'<h1>How the box handled this question</h1>'
-                f'<p class="muted">{who}, {esc(act.when(time.time() if not events else _started(events, owner, qid)))}.'
+                f'<p class="muted">{who}, {act.when_html(time.time() if not events else _started(events, owner, qid))}.'
                 f' Each step below was recorded by the box as it happened.</p>'
                 f'<div id="fb-live" aria-live="polite" data-poll="/activity/{esc(qid)}/live" '
                 f'data-status="{esc(status)}" data-version="{esc(act.version(events, audit, status))}">{live}</div>'
@@ -251,6 +290,20 @@ def web_routes(ctx):
         return JSONResponse({"status": status, "version": act.version(events, audit, status),
                              "html": act.render_detail(view, events, audit, status)})
 
+    def mark_crashed(person_id: str, qid: str) -> None:
+        """Store the crash on disk too, so the page says "Did not finish" after a restart. Only appended
+        to a question that already wrote its first step; the message never carries the error itself."""
+        path = cfg.runtime / "events" / person_id / f"{qid}.jsonl"
+        if not path.is_file():
+            return
+        started = pending.get(qid, {}).get("started", time.time())
+        try:
+            with path.open("a") as f:
+                f.write(json.dumps({"qid": qid, "t": round(time.time() - started, 3), "step": "crashed",
+                                    "message": "the box hit an internal problem"}) + "\n")
+        except OSError:
+            log.exception("could not record the crash of %s", qid)
+
     async def run_question(person_id: str, question: str, qid: str) -> None:
         try:
             await ctx.box().ask_async(person_id, question, source="web", qid=qid)
@@ -258,6 +311,7 @@ def web_routes(ctx):
             log.exception("web question %s failed", qid)
             if qid in pending:
                 pending[qid]["failed"] = True
+            mark_crashed(person_id, qid)
             return
         finally:
             running.discard(person_id)
