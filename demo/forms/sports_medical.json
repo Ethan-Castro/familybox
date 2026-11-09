@@ -1,0 +1,91 @@
+{
+ "title": "School Sports Medical Form (practice form)",
+ "description": "A made-up school sports form: the athlete's health details, insurance and an emergency contact. Health details can only be filled by the athlete themselves.",
+ "fields": {
+  "athlete_name": {
+   "label": "Athlete full name",
+   "hint": "{{<athlete>.name}}",
+   "kinds": [
+    "name"
+   ]
+  },
+  "athlete_date_of_birth": {
+   "label": "Athlete date of birth",
+   "hint": "{{<athlete>.date_of_birth}}",
+   "kinds": [
+    "dob"
+   ]
+  },
+  "sport": {
+   "label": "Sport",
+   "hint": "text",
+   "kinds": []
+  },
+  "grade": {
+   "label": "Grade",
+   "hint": "text",
+   "kinds": []
+  },
+  "allergies": {
+   "label": "Allergies",
+   "hint": "{{<athlete>.allergies}}",
+   "kinds": [
+    "health"
+   ]
+  },
+  "conditions": {
+   "label": "Medical conditions",
+   "hint": "{{<athlete>.conditions}}",
+   "kinds": [
+    "health"
+   ]
+  },
+  "medications": {
+   "label": "Medications",
+   "hint": "{{<athlete>.medications}}",
+   "kinds": [
+    "health"
+   ]
+  },
+  "medical_record_number": {
+   "label": "Clinic medical record number",
+   "hint": "{{<athlete>.medical_record_number}}",
+   "kinds": [
+    "id"
+   ]
+  },
+  "insurance_plan": {
+   "label": "Insurance plan",
+   "hint": "{{family.insurance_plan}}",
+   "kinds": [
+    "text"
+   ]
+  },
+  "insurance_member_id": {
+   "label": "Insurance member ID",
+   "hint": "{{family.insurance_member_id}}",
+   "kinds": [
+    "id"
+   ]
+  },
+  "insurance_group_number": {
+   "label": "Insurance group number",
+   "hint": "{{family.insurance_group_number}}",
+   "kinds": [
+    "id"
+   ]
+  },
+  "emergency_contact_name": {
+   "label": "Emergency contact name",
+   "hint": "{{<parent>.name}} or text",
+   "kinds": [
+    "name"
+   ]
+  },
+  "emergency_contact_phone": {
+   "label": "Emergency contact phone",
+   "hint": "text",
+   "kinds": []
+  }
+ }
+}

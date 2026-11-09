@@ -14,6 +14,7 @@ dependencies = [
     "pynacl>=1.6",
     "cryptography>=44",
     "pillow>=11",
+    "pypdf==7.0.0",
 ]
 
 [dependency-groups]

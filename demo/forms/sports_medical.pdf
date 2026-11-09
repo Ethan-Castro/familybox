@@ -1,0 +1,330 @@
+%PDF-1.3
+%‚„œ”
+1 0 obj
+<<
+/Producer (familybox demo)
+/Title (School Sports Medical Form \050practice form\051)
+/Subject (A made\055up school sports form\072 the athlete\047s health details\054 insurance and an emergency contact\056 Health details can only be filled by the athlete themselves\056)
+>>
+endobj
+2 0 obj
+<<
+/Type /Pages
+/Count 1
+/Kids [ 4 0 R ]
+>>
+endobj
+3 0 obj
+<<
+/Type /Catalog
+/Pages 2 0 R
+/AcroForm <<
+/Fields [ 7 0 R 8 0 R 9 0 R 10 0 R 11 0 R 12 0 R 13 0 R 14 0 R 15 0 R 16 0 R 17 0 R 18 0 R 19 0 R ]
+/NeedAppearances true
+/DA (\057Helv 10 Tf 0 g)
+/DR <<
+/Font <<
+/Helv 5 0 R
+>>
+>>
+>>
+>>
+endobj
+4 0 obj
+<<
+/Type /Page
+/Resources <<
+/Font <<
+/F1 5 0 R
+/F2 6 0 R
+/Helv 5 0 R
+>>
+>>
+/MediaBox [ 0.0 0.0 612 792 ]
+/Parent 2 0 R
+/Contents 20 0 R
+/Annots [ 7 0 R 8 0 R 9 0 R 10 0 R 11 0 R 12 0 R 13 0 R 14 0 R 15 0 R 16 0 R 17 0 R 18 0 R 19 0 R ]
+>>
+endobj
+5 0 obj
+<<
+/Type /Font
+/Subtype /Type1
+/BaseFont /Helvetica
+/Encoding /WinAnsiEncoding
+>>
+endobj
+6 0 obj
+<<
+/Type /Font
+/Subtype /Type1
+/BaseFont /Helvetica-Bold
+/Encoding /WinAnsiEncoding
+>>
+endobj
+7 0 obj
+<<
+/Type /Annot
+/Subtype /Widget
+/FT /Tx
+/T (athlete\137name)
+/TU (Athlete full name)
+/F 4
+/Rect [ 290 678 560 696 ]
+/DA (\057Helv 10 Tf 0 g)
+/MK <<
+/BC [ 0.55 0.55 0.55 ]
+>>
+/P 4 0 R
+>>
+endobj
+8 0 obj
+<<
+/Type /Annot
+/Subtype /Widget
+/FT /Tx
+/T (athlete\137date\137of\137birth)
+/TU (Athlete date of birth)
+/F 4
+/Rect [ 290 654 560 672 ]
+/DA (\057Helv 10 Tf 0 g)
+/MK <<
+/BC [ 0.55 0.55 0.55 ]
+>>
+/P 4 0 R
+>>
+endobj
+9 0 obj
+<<
+/Type /Annot
+/Subtype /Widget
+/FT /Tx
+/T (sport)
+/TU (Sport)
+/F 4
+/Rect [ 290 630 560 648 ]
+/DA (\057Helv 10 Tf 0 g)
+/MK <<
+/BC [ 0.55 0.55 0.55 ]
+>>
+/P 4 0 R
+>>
+endobj
+10 0 obj
+<<
+/Type /Annot
+/Subtype /Widget
+/FT /Tx
+/T (grade)
+/TU (Grade)
+/F 4
+/Rect [ 290 606 560 624 ]
+/DA (\057Helv 10 Tf 0 g)
+/MK <<
+/BC [ 0.55 0.55 0.55 ]
+>>
+/P 4 0 R
+>>
+endobj
+11 0 obj
+<<
+/Type /Annot
+/Subtype /Widget
+/FT /Tx
+/T (allergies)
+/TU (Allergies)
+/F 4
+/Rect [ 290 552 560 570 ]
+/DA (\057Helv 10 Tf 0 g)
+/MK <<
+/BC [ 0.55 0.55 0.55 ]
+>>
+/P 4 0 R
+>>
+endobj
+12 0 obj
+<<
+/Type /Annot
+/Subtype /Widget
+/FT /Tx
+/T (conditions)
+/TU (Medical conditions)
+/F 4
+/Rect [ 290 528 560 546 ]
+/DA (\057Helv 10 Tf 0 g)
+/MK <<
+/BC [ 0.55 0.55 0.55 ]
+>>
+/P 4 0 R
+>>
+endobj
+13 0 obj
+<<
+/Type /Annot
+/Subtype /Widget
+/FT /Tx
+/T (medications)
+/TU (Medications)
+/F 4
+/Rect [ 290 504 560 522 ]
+/DA (\057Helv 10 Tf 0 g)
+/MK <<
+/BC [ 0.55 0.55 0.55 ]
+>>
+/P 4 0 R
+>>
+endobj
+14 0 obj
+<<
+/Type /Annot
+/Subtype /Widget
+/FT /Tx
+/T (medical\137record\137number)
+/TU (Clinic medical record number)
+/F 4
+/Rect [ 290 480 560 498 ]
+/DA (\057Helv 10 Tf 0 g)
+/MK <<
+/BC [ 0.55 0.55 0.55 ]
+>>
+/P 4 0 R
+>>
+endobj
+15 0 obj
+<<
+/Type /Annot
+/Subtype /Widget
+/FT /Tx
+/T (insurance\137plan)
+/TU (Insurance plan)
+/F 4
+/Rect [ 290 426 560 444 ]
+/DA (\057Helv 10 Tf 0 g)
+/MK <<
+/BC [ 0.55 0.55 0.55 ]
+>>
+/P 4 0 R
+>>
+endobj
+16 0 obj
+<<
+/Type /Annot
+/Subtype /Widget
+/FT /Tx
+/T (insurance\137member\137id)
+/TU (Insurance member ID)
+/F 4
+/Rect [ 290 402 560 420 ]
+/DA (\057Helv 10 Tf 0 g)
+/MK <<
+/BC [ 0.55 0.55 0.55 ]
+>>
+/P 4 0 R
+>>
+endobj
+17 0 obj
+<<
+/Type /Annot
+/Subtype /Widget
+/FT /Tx
+/T (insurance\137group\137number)
+/TU (Insurance group number)
+/F 4
+/Rect [ 290 378 560 396 ]
+/DA (\057Helv 10 Tf 0 g)
+/MK <<
+/BC [ 0.55 0.55 0.55 ]
+>>
+/P 4 0 R
+>>
+endobj
+18 0 obj
+<<
+/Type /Annot
+/Subtype /Widget
+/FT /Tx
+/T (emergency\137contact\137name)
+/TU (Emergency contact name)
+/F 4
+/Rect [ 290 324 560 342 ]
+/DA (\057Helv 10 Tf 0 g)
+/MK <<
+/BC [ 0.55 0.55 0.55 ]
+>>
+/P 4 0 R
+>>
+endobj
+19 0 obj
+<<
+/Type /Annot
+/Subtype /Widget
+/FT /Tx
+/T (emergency\137contact\137phone)
+/TU (Emergency contact phone)
+/F 4
+/Rect [ 290 300 560 318 ]
+/DA (\057Helv 10 Tf 0 g)
+/MK <<
+/BC [ 0.55 0.55 0.55 ]
+>>
+/P 4 0 R
+>>
+endobj
+20 0 obj
+<<
+/Length 973
+>>
+stream
+BT /F2 17 Tf 50 742 Td (School Sports Medical Form \(practice form\)) Tj ET
+BT /F1 9 Tf 50 726 Td (FICTIONAL PRACTICE FORM for a made-up school. Not a real medical form.) Tj ET
+BT /F2 12 Tf 50 700 Td (Athlete) Tj ET
+BT /F1 10 Tf 60 683 Td (Athlete full name) Tj ET
+BT /F1 10 Tf 60 659 Td (Athlete date of birth) Tj ET
+BT /F1 10 Tf 60 635 Td (Sport) Tj ET
+BT /F1 10 Tf 60 611 Td (Grade) Tj ET
+BT /F2 12 Tf 50 574 Td (Health) Tj ET
+BT /F1 10 Tf 60 557 Td (Allergies) Tj ET
+BT /F1 10 Tf 60 533 Td (Medical conditions) Tj ET
+BT /F1 10 Tf 60 509 Td (Medications) Tj ET
+BT /F1 10 Tf 60 485 Td (Clinic medical record number) Tj ET
+BT /F2 12 Tf 50 448 Td (Insurance) Tj ET
+BT /F1 10 Tf 60 431 Td (Insurance plan) Tj ET
+BT /F1 10 Tf 60 407 Td (Insurance member ID) Tj ET
+BT /F1 10 Tf 60 383 Td (Insurance group number) Tj ET
+BT /F2 12 Tf 50 346 Td (Emergency contact) Tj ET
+BT /F1 10 Tf 60 329 Td (Emergency contact name) Tj ET
+BT /F1 10 Tf 60 305 Td (Emergency contact phone) Tj ET
+endstream
+endobj
+xref
+0 21
+0000000000 65535 f 
+0000000015 00000 n 
+0000000307 00000 n 
+0000000366 00000 n 
+0000000612 00000 n 
+0000000867 00000 n 
+0000000964 00000 n 
+0000001066 00000 n 
+0000001268 00000 n 
+0000001489 00000 n 
+0000001669 00000 n 
+0000001850 00000 n 
+0000002039 00000 n 
+0000002238 00000 n 
+0000002431 00000 n 
+0000002657 00000 n 
+0000002859 00000 n 
+0000003074 00000 n 
+0000003295 00000 n 
+0000003516 00000 n 
+0000003739 00000 n 
+trailer
+<<
+/Size 21
+/Root 3 0 R
+/Info 1 0 R
+>>
+startxref
+4764
+%%EOF

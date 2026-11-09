@@ -84,11 +84,8 @@ def _write_private(path: Path, data: bytes) -> None:
 
 
 def _audit(cfg: Config, person_id: str, entry: dict) -> None:
-    log = cfg.runtime / "audit" / f"{person_id}.jsonl"
-    log.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    fd = os.open(log, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
-    with os.fdopen(fd, "a") as f:
-        f.write(json.dumps({"time": int(time.time())} | entry) + "\n")
+    from .approvals import append_private
+    append_private(cfg.runtime / "audit" / f"{person_id}.jsonl", json.dumps({"time": int(time.time())} | entry))
 
 
 # --- sign-in codes and sessions ---------------------------------------------------------------

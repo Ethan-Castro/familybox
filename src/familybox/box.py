@@ -311,8 +311,8 @@ class Box:
             "held_ids": ans.held_ids,
             "enclave": ans.enclave,
         }
-        with log_path.open("a") as f:
-            f.write(json.dumps(entry) + "\n")
+        from .approvals import append_private
+        append_private(log_path, json.dumps(entry))
 
 
 def _held_summary(held: list[gate.Held]) -> list[dict]:

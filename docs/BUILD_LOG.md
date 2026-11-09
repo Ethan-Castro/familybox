@@ -162,3 +162,25 @@ Installed through the fleet control plane's exec jobs, with no SSH (`scripts/fle
 - **Files page:** a photo's text is labeled "Text read from the photo X" and can only be removed with its photo, on the Photos page.
 - **Speed and display:** photo hashes are remembered until the file changes. Labels shown to people are tidy ("Member ID"), and a short value like a 5 digit group number shows only its last 2 characters.
 - **Tests:** 182 passed, 1 skipped (`uv run pytest -q tests`). No live calls were made for these fixes.
+
+## 2026-11-08: Fill forms on the box (feat/forms)
+
+- **What:** the `forms` plugin. MCP tools `list_family_forms` and `fill_family_form(form, for_person, fields)`, a Forms page on the box's web page, and `familybox forms list | fill | mine | approve | deny | download`. Logic in `src/familybox/formfill.py`, wiring in `src/familybox/plugins/forms.py`, details in `docs/FORMS.md`. `pypdf` pinned at 7.0.0 (a pure-Python wheel, expected to install on aarch64; not yet verified on the Pi).
+- **How:** fields are plain text or references like `{{maya.ssn}}`. The box resolves them from the index, only from files the asker may read; fills the PDF on the box (`runtime/forms/`, 0600); and puts an approval item in front of every person whose details are in it. The assistant gets a masked summary ("SSN ending 4322") that is also run through the gate. Download needs every owner's approval, and only an owner who may read every source file can download.
+- **Demo forms:** two fictional practice forms in `demo/forms/`, made by `scripts/make_demo_forms.py`.
+- **Tests:** 153 passed (113 before plus 40 new in `tests/test_forms.py`). No live NEAR calls; forms do not use the enclave model.
+- **Review fixes (same day):**
+  - The Forms page and `forms mine` used to show every approver the same summary, so Maya, approving a
+    form with her parents' SSNs, saw "Dana's SSN ending 4320". Field lines are now stored as structured
+    references and written per viewer; a detail the viewer may not read shows as "(hidden)".
+  - An approver who is not a recipient is now told who can download, instead of "download it".
+  - Expiry no longer waits for someone to look: a sweep runs at box start, hourly in the web server, and
+    on every form request. It also deletes PDFs the index doesn't list. A damaged index is moved aside,
+    not overwritten.
+  - Caps: 5 waiting forms per person, 10 fills per hour. Hints files can limit which kinds of detail a
+    field takes (the demo forms do), and each approval question maps fields to the owner's own details.
+  - Core changes: `approvals.json` writes now hold a shared lock and replace the file atomically with
+    mode 0600; audit logs are created 0600 (`approvals.append_private`, used by box, web and forms).
+  - A malformed hints file is ignored instead of breaking every form; unexpected MCP errors are logged on
+    the box and the assistant gets a plain sentence.
+  - Tests: 166 passed (13 new in `tests/test_forms.py`).
