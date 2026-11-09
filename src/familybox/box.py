@@ -158,7 +158,7 @@ class FileTools:
             if text is None:
                 ctx.files_denied.append(path)
                 return json.dumps({"error": "not found or not yours to read"})
-            ctx.files_read.append(path)
+            ctx.files_read.append(access.canonical(path))   # one spelling, so post checks find its facts
             return text
         return None
 
@@ -322,6 +322,12 @@ class Box:
         if (rt / "pins.json").exists() or (rt / "pins_history.jsonl").exists() or REPO_PINS.exists():
             ctx.emit("pinning", status="not_loaded")
             raise enclave.EnclaveError("the NEAR code check did not load; the owner must check the box")
+
+    def enclave_options(self, person: Person, ctx: Question) -> dict:
+        """For plugins that make their own live NEAR call during a question (for example a second
+        privacy check): the same NEAR code check the main call gets. Raises EnclaveError to stop."""
+        self._require_pinning(ctx)
+        return self._client_options(person, ctx)
 
     def _client_options(self, person: Person, ctx: Question) -> dict:
         merged: dict = {}
