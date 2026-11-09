@@ -82,3 +82,26 @@ Installed through the fleet control plane's exec jobs, with no SSH (`scripts/fle
 - **Fail closed:** an error in a pre or post check stops the question, and nothing is answered.
 - **Enclave:** `ask_live` takes the tool list and an event callback. Replay mode sends the same events, marked as replayed.
 - **Tests:** 113 passed (97 before plus 16 new plugin tests). No live calls were made.
+
+## 2026-11-08: Remote MCP for ChatGPT and Claude web (branch feat/remote)
+
+- **What:** the box's web page now serves MCP at `/mcp` and is its own OAuth 2.1 sign-in server (RFC 8414 and 9728 metadata, RFC 7591 registration, code with PKCE S256 only, refresh rotation, RFC 7009 revoke). A family member links an assistant by typing a one-time code from `familybox code` and tapping "Yes, link it". Details and the tunnel steps are in `docs/REMOTE.md`.
+- **Built as a plugin:** `src/familybox/plugins/remote.py` (routes, consent page, Assistants page, CLI) and `src/familybox/remote.py` (storage, provider, `/mcp` gateway). It uses the MCP SDK's own auth handlers (`mcp.server.auth`). One core edit: `mcp_server.build_server` takes an optional `cfg` and `box`.
+- **The person always comes from the token.** Each person gets their own MCP server inside the box. Questions are logged with source `mcp-remote`.
+- **New CLI:** `familybox token --as X` (bearer token, shown once), `familybox connections --as X`, `familybox revoke --as X <id>` or `--all`. The web page has an Assistants page with Revoke and "Make a token".
+- **Stored only as hashes:** client secrets, codes, access, refresh and API tokens.
+- **Finding:** the SDK's revoke handler requires a `client_secret` field even from public clients, so the box has its own `/revoke`. The SDK's client authenticator compares plain secrets, so the box subclasses it to compare hashes.
+- **Tests:** 30 new in `tests/test_remote.py`, all in-process. One drives the MCP SDK's own OAuth client through the full sign-in. Not exposed to the internet and not tried with the real ChatGPT or Claude apps yet. No live NEAR calls.
+
+
+## 2026-11-08: Remote MCP review fixes (branch feat/remote)
+
+- **Assistant-only listener:** `familybox serve --remote-port 8444` opens a second listener on 127.0.0.1 that serves only the sign-in endpoints and `/mcp`. `/signin`, `/approvals`, `/files` and the rest answer 404 there. The tunnel recipes in `docs/REMOTE.md` now point at it and also filter paths in the tunnel. Before this, the recipes would have put the Approvals page on the internet.
+- **Lockout split:** wrong codes on the consent page count in their own file (`remote_failures.json`), so internet traffic can no longer lock the home sign-in. Three wrong codes burn one sign-in request. A second person's code can't take over a request.
+- **No open redirect:** `/authorize` errors and Cancel before a code is entered show a page on the box instead of sending the browser to the app's address.
+- **Floods:** a cap of 3 waiting sign-ins per app. Requests and apps partway through linking are never pushed out by other apps.
+- **Redirects:** app links must be reversed-domain schemes (RFC 8252), plus `cursor://`. `intent:`, `ms-*:` and `search-ms:` are refused.
+- **Refresh retry:** the same refresh token used again within 30 seconds returns the same new pair (kept encrypted under a key made from the old token) instead of revoking.
+- **Audit:** remote questions record the connection id. The Assistants page shows "last asked". The standalone `familybox-mcp --http` now logs `mcp-http-local`.
+- **Finding:** the MCP SDK's error types (`TokenError`, `AuthorizeError`, `RegistrationError`) are frozen dataclasses. Raised inside a `@contextmanager` block, contextlib fails trying to set `__traceback__` and turns a 400 into a 500. `RemoteStore.edit` is now a plain class.
+- **Tests:** 154 passed (143 before plus 11 new). Also ran `familybox serve --port 18543 --remote-port 18544` once on 127.0.0.1 with demo data: 404 for `/approvals` and `/signin` on 18544, the home page on 18543, clean shutdown on Ctrl-C. No live NEAR calls. Still not exposed to the internet.

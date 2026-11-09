@@ -7,6 +7,8 @@ What is stored in <runtime>/web/ (all 0600, folder 0700):
   secret           random key used to hash sign-in codes
   codes.json       hashed one-time codes, 10 minute lifetime, single use
   failures.json    times of wrong codes (5 per 10 minutes locks sign-in)
+  remote_failures.json  the same, for codes typed on the remote consent page (its own lockout, so
+                   internet traffic can never lock the home sign-in)
   sessions.json    hashed session ids -> person, CSRF token, expiry (12 hours)
 
 Nothing here prints file contents or file names. Uploads and deletes append one line to the person's
@@ -144,17 +146,22 @@ class WebState:
             self._save("codes.json", codes)
         return code
 
-    def locked(self, now: float | None = None) -> bool:
+    def locked(self, now: float | None = None, bucket: str = "failures.json") -> bool:
         now = now or time.time()
-        fails = [t for t in self._load("failures.json", []) if now - t < LOCKOUT_WINDOW_S]
+        fails = [t for t in self._load(bucket, []) if now - t < LOCKOUT_WINDOW_S]
         return len(fails) >= LOCKOUT_MAX
 
-    def redeem(self, code: str) -> tuple[str | None, str | None]:
-        """Returns (person_id, None) on success or (None, reason) where reason is 'locked' or 'wrong'."""
+    def redeem(self, code: str, bucket: str = "failures.json") -> tuple[str | None, str | None]:
+        """Returns (person_id, None) on success or (None, reason) where reason is 'locked' or 'wrong'.
+
+        bucket is the file that counts wrong codes. The web sign-in uses failures.json; codes typed on
+        pages the internet can reach use their own bucket, so they can never lock the home sign-in."""
+        if bucket not in ("failures.json", "remote_failures.json"):
+            raise ValueError("unknown failure bucket")
         now = time.time()
         code = self.normalize(code)
         with self._lock():
-            fails = [t for t in self._load("failures.json", []) if now - t < LOCKOUT_WINDOW_S]
+            fails = [t for t in self._load(bucket, []) if now - t < LOCKOUT_WINDOW_S]
             if len(fails) >= LOCKOUT_MAX:
                 return None, "locked"
             codes = {h: c for h, c in self._load("codes.json", {}).items() if c["expires"] > now}
@@ -166,7 +173,7 @@ class WebState:
                         hit = h
             if hit is None:
                 fails.append(now)
-                self._save("failures.json", fails)
+                self._save(bucket, fails)
                 self._save("codes.json", codes)
                 return None, ("locked" if len(fails) >= LOCKOUT_MAX else "wrong")
             person = codes.pop(hit)["person"]
@@ -532,7 +539,10 @@ class WebContext:
     box: Any
 
 
-def create_app(cfg: Config, *, port: int = 8443) -> Starlette:
+def create_app(cfg: Config, *, port: int = 8443, remote_only: bool = False, box=None) -> Starlette:
+    """The box's web app. remote_only=True serves only familybox.remote.REMOTE_PATHS (the sign-in
+    endpoints and /mcp), for the listener a tunnel points at: sign-in, files, approvals and the rest
+    answer 404 there. box is an optional shared () -> Box getter."""
     state = WebState(cfg)
     from . import plugins
     nav = list(NAV)
@@ -932,6 +942,8 @@ def create_app(cfg: Config, *, port: int = 8443) -> Starlette:
     _box: list = []
 
     def get_box():
+        if box is not None:
+            return box()
         if not _box:
             from .box import Box
             _box.append(Box(cfg))
@@ -941,18 +953,49 @@ def create_app(cfg: Config, *, port: int = 8443) -> Starlette:
                      csrf_field=_csrf_field, forbidden=forbidden, esc=esc, box=get_box)
     for extra in plugins.call_each("web_routes", ctx):
         routes.extend(extra or [])   # after the core routes, so a plugin can never shadow them
+    if remote_only:
+        from .remote import REMOTE_PATHS
+        routes = [r for r in routes if getattr(r, "path", None) in REMOTE_PATHS]
     app = Starlette(routes=routes, max_body_size=FORM_SLACK)
     return SecurityHeaders(app)
 
 
-def serve(cfg: Config, *, lan: bool = False, port: int = 8443) -> None:
+def serve(cfg: Config, *, lan: bool = False, port: int = 8443, remote_port: int | None = None) -> None:
+    """Serve the web page. remote_port adds a second listener, always on 127.0.0.1, that serves only
+    the routes assistants on the internet need. Point a tunnel at that port, never at the main one."""
+    import asyncio
+
     import uvicorn
 
+    if remote_port is not None and remote_port == port:
+        raise SystemExit("--remote-port must be different from --port")
     cert, key, fp = ensure_cert(cfg)
     host = "0.0.0.0" if lan else "127.0.0.1"
+    shared: list = []
+
+    def box():
+        if not shared:
+            from .box import Box
+            shared.append(Box(cfg))
+        return shared[0]
+
     print(f"familybox web page on https://{'<this box>' if lan else '127.0.0.1'}:{port}/")
+    if remote_port is not None:
+        print(f"assistant-only listener on https://127.0.0.1:{remote_port}/ (sign-in for assistants and /mcp, "
+              f"nothing else). Point the tunnel here.")
     print(f"certificate SHA-256 fingerprint: {fp}")
     print("check that your browser shows the same fingerprint before signing in.")
     print("sign-in codes: familybox code --as <person>", flush=True)
-    uvicorn.run(create_app(cfg, port=port), host=host, port=port, ssl_certfile=str(cert), ssl_keyfile=str(key),
-                access_log=False, log_level="warning", server_header=False)
+    # lifespan off: the app has no startup hooks (the /mcp session manager starts on first use).
+    common = dict(ssl_certfile=str(cert), ssl_keyfile=str(key), access_log=False, log_level="warning",
+                  server_header=False, lifespan="off")
+    servers = [uvicorn.Server(uvicorn.Config(create_app(cfg, port=port, box=box), host=host, port=port, **common))]
+    if remote_port is not None:
+        servers.append(uvicorn.Server(uvicorn.Config(create_app(cfg, port=remote_port, remote_only=True, box=box),
+                                                     host="127.0.0.1", port=remote_port, **common)))
+
+    async def run_all():
+        await asyncio.gather(*(s.serve() for s in servers))
+
+    with contextlib.suppress(KeyboardInterrupt):
+        asyncio.run(run_all())

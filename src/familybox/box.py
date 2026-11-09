@@ -50,6 +50,7 @@ class Answer:
     enclave: dict = field(default_factory=dict)
     qid: str = ""
     source: str = ""
+    connection: str = ""              # which linked assistant or API token asked (remote MCP), else ""
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -68,6 +69,7 @@ class Question:
         self.person = person
         self.question = question
         self.source = source
+        self.connection = ""          # remote MCP connection id that asked, if any
         self.started = time.time()
         self.files_read: list[str] = []
         self.files_denied: list[str] = []
@@ -179,12 +181,15 @@ class Box:
     def ask(self, person_id: str, question: str, *, source: str = "cli") -> Answer:
         return asyncio.run(self.ask_async(person_id, question, source=source))
 
-    async def ask_async(self, person_id: str, question: str, *, source: str = "cli") -> Answer:
+    async def ask_async(self, person_id: str, question: str, *, source: str = "cli",
+                        connection: str = "") -> Answer:
         person = self.cfg.person(person_id)
         ctx = Question(self, person, question, source)
+        ctx.connection = connection
         key = enclave.api_key()
         mode = self.mode if self.mode != "auto" else ("live" if key else "replay")
-        ctx.emit("question", source=source, mode=mode, chars=len(question))
+        ctx.emit("question", source=source, mode=mode, chars=len(question),
+                 **({"connection": connection} if connection else {}))
 
         def stopped(why: str, step: str) -> Answer:
             ctx.emit(step, message=why)
@@ -259,6 +264,7 @@ class Box:
 
     def _finish(self, ctx: Question, ans: Answer) -> Answer:
         ans.qid, ans.source = ctx.qid, ctx.source
+        ans.connection = ctx.connection
         ans.files_read, ans.files_denied = ctx.files_read, ctx.files_denied
         ctx.emit("answer", outcome=ans.outcome, held=len(ans.held_ids), files_read=len(ans.files_read),
                  files_denied=len(ans.files_denied), seconds=round(time.time() - ctx.started, 2))
@@ -272,6 +278,7 @@ class Box:
             "time": int(time.time()),
             "qid": ans.qid,
             "source": ans.source,
+            **({"connection": ans.connection} if ans.connection else {}),
             "question_sha256": hashlib.sha256(ans.question.encode()).hexdigest(),
             "outcome": ans.outcome,
             "reasons": ans.reasons,

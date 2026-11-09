@@ -8,7 +8,9 @@
   familybox log --as maya                 what left the box for maya
   familybox verify                        check the NEAR enclave attestation only (no inference)
   familybox code --as maya                one-time sign-in code for the box's web page (10 minutes)
-  familybox serve [--lan] [--port 8443]   the box's private web page (HTTPS; --lan only on the box itself)
+  familybox serve [--lan] [--port 8443] [--remote-port 8444]
+                                          the box's private web page (HTTPS; --lan only on the box itself);
+                                          --remote-port adds an assistant-only listener for a tunnel
 
   familybox cloud status --as maya        Google Drive connection, last import, last backup
   familybox cloud connect --as maya       print the Google sign-in link, then paste the code back
@@ -59,6 +61,8 @@ def main(argv: list[str] | None = None) -> int:
     sv = sub.add_parser("serve")
     sv.add_argument("--lan", action="store_true", help="listen on the home network (0.0.0.0); use only on the box")
     sv.add_argument("--port", type=int, default=8443)
+    sv.add_argument("--remote-port", type=int, default=None,
+                    help="also listen on 127.0.0.1:N with only the assistant sign-in and /mcp; point a tunnel here")
     c = sub.add_parser("cloud")
     csub = c.add_subparsers(dest="action", required=True)
     for name in ("status", "connect", "import", "backup", "backup-key", "restore", "disconnect"):
@@ -128,7 +132,7 @@ def main(argv: list[str] | None = None) -> int:
         print("type it on the box's web page within 10 minutes. It works once.")
     elif args.cmd == "serve":
         from . import web
-        web.serve(cfg, lan=args.lan, port=args.port)
+        web.serve(cfg, lan=args.lan, port=args.port, remote_port=args.remote_port)
     elif args.cmd == "cloud":
         return _cloud(cfg, args)
     elif args.cmd == "verify":

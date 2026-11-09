@@ -43,6 +43,8 @@ claude mcp add family-box-maya -e FAMILYBOX_HOME=$PWD/demo -e FAMILYBOX_PERSON=m
 
 The assistant gets two tools, `ask_family_box` and `family_box_status`. It has no tool that lists, searches or reads files.
 
+For ChatGPT and Claude on the web, `familybox serve` also serves MCP at `/mcp` with its own sign-in: the family member types a one-time code from the box to link their assistant. See [docs/REMOTE.md](docs/REMOTE.md).
+
 ### Put files on the box privately
 
 ```bash

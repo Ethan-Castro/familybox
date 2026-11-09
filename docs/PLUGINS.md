@@ -35,7 +35,7 @@ the text, the box replaces the text with the standard blocked message.
 
 ## The per-question ctx (familybox.box.Question)
 
-`ctx.qid` (12 hex chars), `ctx.person`, `ctx.question`, `ctx.source` ("cli", "mcp-stdio", "mcp-remote",
+`ctx.qid` (12 hex chars), `ctx.person`, `ctx.question`, `ctx.source` ("cli", "mcp-stdio", "mcp-http-local", "mcp-remote",
 "web"), `ctx.started`, `ctx.files_read`, `ctx.files_denied`, `ctx.data` (scratch dict), `ctx.events`,
 and `ctx.emit(step, **data)`, which appends one JSON line to `<runtime>/events/<person>/<qid>.jsonl`.
 Never pass file text or answer text to emit. Known protected values are scrubbed from every event anyway.
