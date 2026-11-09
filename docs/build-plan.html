@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>familybox Build Plan</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter+Tight:wght@300;400&display=swap" rel="stylesheet">
+<style>
+:root {
+  /* Stripe-style ledger: white canvas, midnight ink, one indigo for small functional marks. Single light theme by choice. */
+  --indigo: #533afd;
+  --ink: #061b31;
+  --slate: #64748d;
+  --steel: #50617a;
+  --smoke: #839bc8;
+  --mist: #f8fafd;
+  --frost: #e5edf5;
+  --lilac: #d6d9fc;
+  --wash: #e8e9ff;
+  --font: "Inter Tight", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  color-scheme: light;
+}
+* { box-sizing: border-box; }
+html { background: #ffffff; }
+body {
+  margin: 0; background: #ffffff; color: var(--ink);
+  font-family: var(--font); font-weight: 300; font-size: 16px; line-height: 1.4;
+  letter-spacing: -0.01em; font-feature-settings: "ss01" on, "tnum" on;
+}
+main { max-width: 960px; margin: 0 auto; padding: 72px 24px 96px; }
+h1, h2, h3 { font-weight: 300; margin: 0; text-wrap: balance; }
+h1 { font-size: clamp(36px, 6vw, 56px); line-height: 1.03; letter-spacing: -0.025em; max-width: 14ch; }
+.lede { font-size: clamp(18px, 2.4vw, 22px); color: var(--slate); margin: 24px 0 0; max-width: 46ch; line-height: 1.35; }
+.label { font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--smoke); font-weight: 400; margin: 0 0 12px; }
+hr { border: 0; border-top: 1px solid var(--frost); margin: 64px 0; }
+
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 32px; margin-top: 56px; }
+.stat b { display: block; font-weight: 300; font-size: 48px; line-height: 1; letter-spacing: -0.02em; }
+.stat span { display: block; margin-top: 8px; color: var(--slate); font-size: 14px; }
+
+section h2 { font-size: 32px; line-height: 1.1; letter-spacing: -0.02em; }
+section .note { color: var(--slate); margin: 12px 0 0; font-size: 18px; max-width: 52ch; }
+ul.items { list-style: none; margin: 32px 0 0; padding: 0; border-top: 1px solid var(--frost); }
+ul.items li { display: grid; grid-template-columns: 1fr auto; gap: 8px 24px; padding: 20px 0; border-bottom: 1px solid var(--frost); }
+.items h3 { font-size: 20px; line-height: 1.25; letter-spacing: -0.01em; }
+.items p { grid-column: 1 / 2; margin: 0; color: var(--steel); font-size: 15px; max-width: 62ch; }
+.meta { grid-column: 2; grid-row: 1 / 3; display: flex; flex-direction: column; align-items: flex-end; gap: 8px; white-space: nowrap; }
+.effort { font-size: 13px; color: var(--slate); font-weight: 400; }
+.pill { font-size: 12px; font-weight: 400; padding: 3px 10px; border-radius: 9999px; border: 1px solid var(--lilac); color: var(--indigo); }
+.pill.done { background: var(--wash); border-color: var(--wash); }
+.pill.need { border-color: var(--frost); color: var(--slate); }
+.skip li h3 { color: var(--steel); }
+
+footer { margin-top: 72px; padding: 24px; background: var(--mist); border-radius: 4px; color: var(--slate); font-size: 14px; }
+footer strong { color: var(--ink); font-weight: 400; }
+@media (max-width: 560px) {
+  ul.items li { grid-template-columns: 1fr; }
+  .meta { grid-column: 1; grid-row: auto; flex-direction: row; align-items: center; }
+}
+</style>
+</head>
+<body>
+<main>
+  <p class="label">NEAR Hackathon 2026 · Privacy &amp; Private AI · due Nov 14</p>
+  <h1>familybox build plan</h1>
+  <p class="lede">TEE attestation proves where the model ran. The household box decides what that model is ever allowed to reveal, and to whom.</p>
+
+  <div class="stats">
+    <div class="stat"><b>0/30</b><span>attacks leaked through the box (no gate: 5, open: 10)</span></div>
+    <div class="stat"><b>97</b><span>tests passing, on the laptop and the Pi 5</span></div>
+    <div class="stat"><b>1.6 s</b><span>for the Pi to verify NEAR's enclave proof itself</span></div>
+  </div>
+
+  <hr>
+
+  <section>
+    <p class="label">Already built</p>
+    <h2>The core works today</h2>
+    <ul class="items">
+      <li><h3>Verified, encrypted NEAR model</h3><p>Fresh attestation, end-to-end encryption, and an enclave signature checked on every turn. Fails closed.</p><div class="meta"><span class="pill done">done</span></div></li>
+      <li><h3>Per-person files and answer gate</h3><p>Each person reaches only their own folders. Every answer is checked against the real SSNs, IDs and diagnoses before an assistant sees it.</p><div class="meta"><span class="pill done">done</span></div></li>
+      <li><h3>MCP, upload page, approvals</h3><p>Assistants ask over MCP. Family members upload privately and approve held values on the box's own page.</p><div class="meta"><span class="pill done">done</span></div></li>
+      <li><h3>Drive import and encrypted backup</h3><p>Built and tested against a fake Google. Real use waits on an OAuth client.</p><div class="meta"><span class="pill done">done</span></div></li>
+      <li><h3>Running on the Raspberry Pi</h3><p>Installed on decision-tree through the fleet, no SSH. Tests and replay demo pass.</p><div class="meta"><span class="pill done">done</span></div></li>
+    </ul>
+  </section>
+
+  <hr>
+
+  <section>
+    <p class="label">Must build</p>
+    <h2>Needed to submit well</h2>
+    <ul class="items">
+      <li><h3>ChatGPT and Claude on the web</h3><p>A remote MCP endpoint with sign-in through the relay, so any family member's assistant can reach the box.</p><div class="meta"><span class="effort">1 day</span><span class="pill">next</span></div></li>
+      <li><h3>Live trust panel</h3><p>On the box's page: attestation, encryption, each signed turn, files read, and what the gate held. Visible during the demo.</p><div class="meta"><span class="effort">1 day</span><span class="pill">planned</span></div></li>
+      <li><h3>Live answers on the Pi</h3><p>Put the NEAR key on the board and run the demo questions and attack suite on the device.</p><div class="meta"><span class="effort">½ day</span><span class="pill need">needs your OK</span></div></li>
+      <li><h3>Demo video and submission</h3><p>A 60 to 90 second script with the side-by-side leak comparison, the X post draft, and the submission checklist.</p><div class="meta"><span class="effort">1 day</span><span class="pill">planned</span></div></li>
+      <li><h3>Final README pass</h3><p>Clean-install check and honest legal wording from the research.</p><div class="meta"><span class="effort">½ day</span><span class="pill">planned</span></div></li>
+    </ul>
+  </section>
+
+  <hr>
+
+  <section>
+    <p class="label">Should build</p>
+    <h2>Widens the lead</h2>
+    <ul class="items">
+      <li><h3>Photo transcription, both copies kept</h3><p>Snap an insurance card or W-2. NEAR's enclave vision model reads it once; the box keeps the image and a signed transcript, and starts protecting the numbers on it.</p><div class="meta"><span class="effort">1 day</span><span class="pill">planned</span></div></li>
+      <li><h3>Fill forms on the box</h3><p>The assistant drafts a FAFSA or school form. The box fills in the real SSN and IDs locally and sends the PDF only to the owner's phone.</p><div class="meta"><span class="effort">1 day</span><span class="pill">planned</span></div></li>
+      <li><h3>Alert when NEAR's code changes</h3><p>Pin the verified enclave measurements. If they change, pause sensitive questions until the owner allows it.</p><div class="meta"><span class="effort">1 day</span><span class="pill">planned</span></div></li>
+      <li><h3>Confidential analysis workbench</h3><p>The NEAR model writes Python that runs on the Pi in a throwaway sandbox: no network, only the asker's files (read-only), memory and time limits. Output goes back to the model, never straight to the assistant, and every script is logged for the owner.</p><div class="meta"><span class="effort">1 day</span><span class="pill">planned</span></div></li>
+      <li><h3>Second check for reworded leaks</h3><p>A cheap enclave call asks whether an answer reveals a diagnosis or ID in other words. Measured with the attack suite.</p><div class="meta"><span class="effort">½ day</span><span class="pill">planned</span></div></li>
+      <li><h3>Three attack runs, not one</h3><p>Report the spread so the numbers hold up.</p><div class="meta"><span class="effort">background</span><span class="pill">planned</span></div></li>
+    </ul>
+  </section>
+
+  <hr>
+
+  <section>
+    <p class="label">If time allows</p>
+    <h2>Nice to have</h2>
+    <ul class="items">
+      <li><h3>Disclosure log anchored on NEAR</h3><p>Each person's record of what left the box, anchored on testnet so it can't be quietly rewritten.</p><div class="meta"><span class="effort">½ day</span><span class="pill need">needs testnet account</span></div></li>
+      <li><h3>Approve button on the UNO Q</h3><p>Its LED matrix shows the request; one press approves. Depends on the board coming back online.</p><div class="meta"><span class="effort">1 day</span><span class="pill need">board offline</span></div></li>
+      <li><h3>Red-team page for judges</h3><p>Try to get a fake family's data out of the box, live. Needs hosting, a spending cap, and your approval to publish.</p><div class="meta"><span class="effort">1 day</span><span class="pill need">needs your OK</span></div></li>
+    </ul>
+  </section>
+
+  <hr>
+
+  <section class="skip">
+    <p class="label">Not building</p>
+    <h2>Left out on purpose</h2>
+    <ul class="items">
+      <li><h3>Open bash or a networked coding harness</h3><p>A shell with network access lets one poisoned document send every SSN off the box. The sandboxed workbench above gives the same analysis power with no way out.</p><div class="meta"></div></li>
+      <li><h3>Token payments or Intents</h3><p>They would be decoration here, not part of the privacy story.</p><div class="meta"></div></li>
+      <li><h3>OCR on the Pi, local embeddings, multiple boxes</h3><p>Out of scope for the week.</p><div class="meta"></div></li>
+    </ul>
+  </section>
+
+  <footer><strong>Still needed from Ethan:</strong> OK to put the NEAR key on the Pi, a Google OAuth client for real Drive tests, and research prompts 5 and 6. Plan as of Nov 8, 2026.</footer>
+</main>
+</body>
+</html>
