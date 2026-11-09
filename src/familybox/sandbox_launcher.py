@@ -7,15 +7,17 @@ It is process 1 of a fresh PID namespace, root only inside its own user namespac
 devices except a downed loopback. It then:
 
   1. builds a new root on tmpfs with an allowlist: /usr (and the /bin, /lib... symlinks) bound
-     read-only, a tiny /etc, a few /dev nodes, read-only /data (copies of the asker's files) and
-     /code, writable tmpfs /work and /tmp that vanish afterwards;
+     read-only, with empty read-only folders over /usr/local (where locally installed tools and
+     their settings live) and Debian's dist-packages (so only the standard library is importable),
+     a tiny /etc, a few /dev nodes, read-only /data (copies of the asker's files) and /code, and
+     writable tmpfs /work and /tmp that vanish afterwards and cannot hold runnable programs;
   2. pivots into it and detaches the old root, so the box home, runtime, other people's folders,
      /home, /run (sockets) and /proc of the host are not reachable at all (not just covered);
   3. drops every capability (bounding set, ambient, securebits locked, no_new_privs);
   4. forks the analysis script under rlimits (memory, CPU, threads, file size, open files), a
      seccomp filter and a wall clock, waits for it, and writes one JSON status line to status_fd.
 
-The seccomp filter lets the script start threads but no new processes (so the memory limit
+The seccomp filter lets the script start threads but no additional processes (so the memory limit
 covers the whole script: one address space), and refuses the system calls a sandbox escape or a
 kernel exploit usually starts from: namespaces, mounts, ptrace, keyrings, bpf, io_uring and others.
 
@@ -60,6 +62,9 @@ PIVOT_ROOT_NR = {"x86_64": 155, "aarch64": 41, "arm64": 41, "riscv64": 41, "armv
                  "i686": 217, "i386": 217}
 
 SYSTEM_DIRS = ("usr", "bin", "sbin", "lib", "lib64", "lib32", "libx32")
+# Inside /usr, covered by an empty read-only folder: local installs (tools, tokens, databases) and
+# third-party Python packages. The script gets the system Python and its standard library only.
+HIDDEN_IN_USR = ("local", "lib/python3/dist-packages")
 DEV_NODES = ("null", "zero", "full", "random", "urandom")
 
 libc = ctypes.CDLL(None, use_errno=True)
@@ -200,6 +205,10 @@ def build_root(stage, spec):
         elif os.path.isdir(src):
             os.mkdir(dst)
             bind_ro(src, dst)
+    for sub in HIDDEN_IN_USR:
+        target = os.path.join(root, "usr", sub)
+        if os.path.isdir(target) and not os.path.islink(target):
+            tmpfs(target, "4k", "0555", inodes=16, extra=MS_RDONLY | MS_NOEXEC)
 
     etc = os.path.join(root, "etc")
     os.mkdir(etc)
@@ -226,8 +235,9 @@ def build_root(stage, spec):
 
     for d in ("work", "tmp", "data", "code", "proc"):
         os.mkdir(os.path.join(root, d))
-    tmpfs(os.path.join(root, "work"), spec["work_bytes"], "0755")
-    tmpfs(os.path.join(root, "tmp"), spec["tmp_bytes"], "1777")
+    # noexec: a program the script writes there cannot be run
+    tmpfs(os.path.join(root, "work"), spec["work_bytes"], "0755", extra=MS_NOEXEC)
+    tmpfs(os.path.join(root, "tmp"), spec["tmp_bytes"], "1777", extra=MS_NOEXEC)
     data = os.path.join(root, "data")
     tmpfs(data, spec["data_bytes"], "0755", inodes=spec["data_inodes"])
     shutil.copytree(spec["data_src"], data, dirs_exist_ok=True, symlinks=True)  # links copied as links

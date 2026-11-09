@@ -38,10 +38,12 @@ def cfg(tmp_path, monkeypatch):
     return c
 
 
-def enable(cfg, people=None):
+def enable(cfg, people=None, include_granted=None):
     extra = "\n[workbench]\nenabled = true\n"
     if people is not None:
         extra += f"people = {json.dumps(people)}\n"
+    if include_granted is not None:
+        extra += f"include_granted = {json.dumps(include_granted)}\n"
     with (cfg.home / "family.toml").open("a") as f:
         f.write(extra)
 
@@ -74,8 +76,11 @@ class FakeSandbox:
 
     def __init__(self, output="42\n", **kw):
         self.output, self.kw, self.calls = output, kw, []
+        self.sleep = 0.0
 
-    def __call__(self, code, *, data_dir, scratch, limits=sandbox.Limits()):
+    def __call__(self, code, *, data_dir, scratch, limits=sandbox.Limits(), slot_held=False):
+        if self.sleep:
+            time.sleep(self.sleep)
         listing = sorted(p.relative_to(data_dir).as_posix() for p in data_dir.rglob("*") if p.is_file())
         self.calls.append({"code": code, "files": listing, "index": json.loads((data_dir / "index.json").read_text())})
         return sandbox.Result(ok=True, exit_code=0, output=self.output, output_bytes=len(self.output),
@@ -150,7 +155,12 @@ def test_workspace_has_only_readable_files(cfg, tmp_path):
     # FHIR JSON arrives flattened to text as well as the original
     assert "Patient:" in (tmp_path / "maya/text/people/maya/health/records_maya_fhir.json.txt").read_text()
 
+    # By default only Dana's own files and shared/, even though also_reads grants her more
     dana = {f["path"] for f in workbench.stage_workspace(cfg, store, cfg.person("dana"), tmp_path / "dana")}
+    assert dana and all(p.startswith(("people/dana/", "shared/")) for p in dana)
+    # include_granted adds the folders the owner granted her, and still never a health folder
+    dana = {f["path"] for f in workbench.stage_workspace(cfg, store, cfg.person("dana"), tmp_path / "dana2",
+                                                         include_granted=True)}
     assert "people/maya/ids/ssn_card_maya.txt" in dana            # also_reads
     assert not any(p.startswith("people/maya/health/") for p in dana)   # health stays owner only
     assert "people/sam/taxes/w2_2025_sam.txt" in dana and "people/sam/ids/ssn_card_sam.txt" not in dana
@@ -189,13 +199,17 @@ def test_run_through_the_box_logs_code_output_and_limits(cfg, tmp_path, fake):
     assert call["code"] == code
     assert all(f.startswith(("files/people/maya/", "text/people/maya/", "files/shared/", "text/shared/"))
                or f in ("index.json", "README.txt") for f in call["files"])
-    # every file the script could see counts as read, so the gate applies those owners' rules
-    assert "people/maya/ids/ssn_card_maya.txt" in ans.files_read
+    # files the script could see are recorded apart from files read (none were read one by one),
+    # and the gate still applies their owners' rules
+    assert "people/maya/ids/ssn_card_maya.txt" in ans.files_visible and ans.files_read == []
 
     ev = [e for e in events(cfg, ans) if e["step"] == "workbench"]
     assert len(ev) == 1 and ev[0]["limits_hit"] == ["cpu"] and ev[0]["exit_code"] == 0
     assert "print(open(" in ev[0]["code"] and "[protected]" in ev[0]["output"]
     audit = last_audit(cfg, "maya")
+    assert "people/maya/ids/ssn_card_maya.txt" in audit["files_visible"] and audit["files_read"] == []
+    assert stat.S_IMODE((cfg.runtime / "audit" / "maya.jsonl").stat().st_mode) == 0o600
+    assert stat.S_IMODE((cfg.runtime / "audit").stat().st_mode) == 0o700
     wb = audit["plugins"]["workbench"][0]
     assert "print(open(" in wb["code"] and wb["limits"]["memory_mb"] == 512
     own_log = cfg.runtime / "workbench" / "maya.jsonl"
@@ -243,6 +257,114 @@ def test_runs_per_question_are_capped(cfg, tmp_path, fake):
     assert len(fake.calls) == workbench.MAX_RUNS_PER_QUESTION
 
 
+def test_a_slow_script_does_not_hold_up_other_questions(cfg, tmp_path, fake):
+    """Tools run off the event loop: while one person's script sleeps, another question finishes."""
+    import asyncio
+    enable(cfg)
+    fake.sleep = 1.5
+    slow, quick = "Add up my bills with a script", "When does the car registration expire?"
+    write_replay(tmp_path / "rp", "maya", slow, "done", [["run_analysis", json.dumps({"code": "print(1)"})]])
+    write_replay(tmp_path / "rp", "dana", quick, "In March.", [])
+    box = Box(cfg, mode="replay", replay_dir=tmp_path / "rp")
+    done = {}
+
+    async def timed(person, q, delay):
+        await asyncio.sleep(delay)
+        t = time.monotonic()
+        await box.ask_async(person, q)
+        done[person] = time.monotonic() - t
+
+    async def both():
+        await asyncio.gather(timed("maya", slow, 0), timed("dana", quick, 0.2))
+    asyncio.run(both())
+    assert done["maya"] >= 1.5 and done["dana"] < 1.0, done
+    assert len(fake.calls) == 1
+
+
+def test_enclave_runs_tools_off_the_event_loop():
+    import asyncio
+    import threading
+    loop_thread = threading.get_ident()
+    seen = {}
+
+    def slow_tool(name, args):
+        seen["thread"] = threading.get_ident()
+        time.sleep(0.6)
+        return "ok"
+
+    async def main():
+        ticks = 0
+
+        async def ticker():
+            nonlocal ticks
+            for _ in range(5):
+                await asyncio.sleep(0.05)
+                ticks += 1
+        out, _ = await asyncio.gather(enclave.run_tool_off_loop(slow_tool, "x", "{}"), ticker())
+        return out, ticks
+    out, ticks = asyncio.run(main())
+    assert out == "ok" and ticks == 5 and seen["thread"] != loop_thread
+
+
+def test_busy_returns_at_once_and_does_not_use_up_a_run(cfg, tmp_path, fake):
+    enable(cfg)
+    with sandbox.slot() as got:
+        assert got
+        t = time.monotonic()
+        res, files = workbench.run_for(cfg, Store(cfg), cfg.person("maya"), "print(1)")
+        assert res.busy and not res.ok and files == [] and time.monotonic() - t < 0.5
+        assert workbench.model_view(res) == {"error": sandbox.BUSY, "busy": True}
+        with sandbox.slot() as again:
+            assert not again
+        q = "count things while busy"
+        calls = [["run_analysis", json.dumps({"code": "print(1)"})]] * 4
+        write_replay(tmp_path / "rp", "maya", q, "done", calls)
+        ans = Box(cfg, mode="replay", replay_dir=tmp_path / "rp").ask("maya", q)
+    assert fake.calls == []
+    assert sum(e["step"] == "workbench_busy" for e in events(cfg, ans)) == 4   # never hit the per-question cap
+    with sandbox.slot() as got:
+        assert got   # released
+
+
+def test_settings_fail_closed_on_wrong_types(cfg, fake):
+    toml = cfg.home / "family.toml"
+    original = toml.read_text()
+    for bad, word in (('enabled = "false"', "enabled"), ('enabled = "true"', "enabled"), ("enabled = 1", "enabled"),
+                      ('enabled = true\npeople = "dana"', "people"), ("enabled = true\npeople = [1, 2]", "people"),
+                      ('enabled = true\ninclude_granted = "yes"', "include_granted")):
+        toml.write_text(original + f"\n[workbench]\n{bad}\n")
+        st = workbench.status(cfg, cfg.person("dana"))
+        assert not st["offered"] and not st["enabled"], bad
+        assert "not valid" in st["reason"] and word in st["reason"] and "\u2014" not in st["reason"], st
+        assert "run_analysis" not in tool_names(Box(cfg, mode="replay"), "dana")
+    toml.write_text(original + '\n[workbench]\nenabled = true\npeople = ["dana"]\n')
+    assert workbench.status(cfg, cfg.person("dana"))["offered"]
+
+
+def test_staging_folder_is_private_in_ram_and_leftovers_are_removed(cfg, tmp_path, monkeypatch):
+    xdg = tmp_path / "xdg"
+    xdg.mkdir(mode=0o700)
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(xdg))
+    d = workbench.scratch_dir(cfg)
+    assert d == xdg / "familybox-workbench" and stat.S_IMODE(d.stat().st_mode) == 0o700
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path / "missing"))
+    d2 = workbench.scratch_dir(cfg)
+    assert d2 == cfg.runtime / "workbench" / "tmp" and stat.S_IMODE(d2.stat().st_mode) == 0o700
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(xdg))
+    old_ws, old_run, fresh = d / "ws-crashed", d2 / "run-crashed", d / "ws-running-now"
+    for p in (old_ws, old_run, fresh):
+        (p / "data").mkdir(parents=True)
+        (p / "data" / "copy.txt").write_text(MAYA_SSN)
+    keep = d / "not-ours"
+    keep.mkdir()
+    long_ago = time.time() - 2 * workbench.LEFTOVER_AGE_S
+    for p in (old_ws, old_run, keep):
+        os.utime(p, (long_ago, long_ago))
+    Box(cfg, mode="replay")   # register() cleans up
+    assert not old_ws.exists() and not old_run.exists()
+    assert fresh.exists() and keep.exists()   # a run in progress, and anything not ours, stay
+
+
 def test_model_view_reports_errors_and_limits():
     assert workbench.model_view(sandbox.Result(ok=False, error="nope")) == {"error": "nope"}
     v = workbench.model_view(sandbox.Result(ok=True, exit_code=1, signal=24, output="x", output_bytes=99999,
@@ -253,13 +375,31 @@ def test_model_view_reports_errors_and_limits():
 def test_limits_hit_classification():
     lim = sandbox.Limits()
     r = sandbox.Result(ok=True, exit_code=1, output="Traceback...\nMemoryError\n")
-    assert sandbox.limits_hit(r, timed_out=False, flooded=False, limits=lim) == ["memory"]
-    r = sandbox.Result(ok=True, signal=24)
+    assert sandbox.limits_hit(r, timed_out=False, flooded=False, limits=lim) == []
+    assert sandbox.script_reported(r.output, []) == ["memory"]          # said by the script, not measured
+    r = sandbox.Result(ok=True, signal=24, cpu_s=20.01)
     assert sandbox.limits_hit(r, timed_out=False, flooded=False, limits=lim) == ["cpu"]
     r = sandbox.Result(ok=True, signal=9)
     assert sandbox.limits_hit(r, timed_out=True, flooded=False, limits=lim) == ["time"]
+    r = sandbox.Result(ok=True, max_rss_kb=500 * 1024)
+    assert sandbox.limits_hit(r, timed_out=False, flooded=False, limits=lim) == ["memory"]
     r = sandbox.Result(ok=True, exit_code=1, output="BlockingIOError: [Errno 11] Resource temporarily unavailable")
-    assert sandbox.limits_hit(r, timed_out=False, flooded=False, limits=lim) == ["processes"]
+    assert sandbox.script_reported(r.output, []) == ["processes"]
+
+
+def test_a_script_cannot_fake_measured_limits():
+    """Printing the words, or sending itself SIGXCPU or SIGKILL, never shows up as a measured limit."""
+    lim = sandbox.Limits()
+    words = "MemoryError\nResource temporarily unavailable\nNo space left on device\n"
+    for sig in (None, 24, 9):
+        r = sandbox.Result(ok=True, signal=sig, output=words, cpu_s=0.05, max_rss_kb=9000)
+        assert sandbox.limits_hit(r, timed_out=False, flooded=False, limits=lim) == []
+    assert sandbox.script_reported(words, []) == ["memory", "processes", "disk"]
+    e = {"limits_hit": [], "limits_reported_by_script": ["memory"]}
+    assert workbench.limits_text(e) == ("limits hit: none; the script's output mentions: memory "
+                                        "(not measured by the box)")
+    v = workbench.model_view(sandbox.Result(ok=True, exit_code=1, script_reported=["memory"]))
+    assert "limits_hit" not in v and v["output_mentions_limits"] == ["memory"]
 
 
 def _bpf(prog, arch_id, nr, arg0=0):
@@ -339,7 +479,8 @@ def test_fleet_exec_target_dir(monkeypatch):
     assert fleet_exec.pi_dir() == "~/familybox"
     monkeypatch.setenv("FAMILYBOX_PI_DIR", "~/familybox-wb/")
     assert fleet_exec.pi_dir() == "~/familybox-wb"
-    for bad in ("~/x; rm -rf ~", "~/../etc", "~", "/", "relative/path", "~/a b", "$(id)"):
+    for bad in ("~/x; rm -rf ~", "~/../etc", "~", "/", "relative/path", "~/a b", "$(id)",
+                "~/.", "~/familybox/.", "~/familybox/./.", "/.", "~/./familybox", "~/familybox/.."):
         monkeypatch.setenv("FAMILYBOX_PI_DIR", bad)
         with pytest.raises(SystemExit):
             fleet_exec.pi_dir()
@@ -467,8 +608,8 @@ open("/work/left_over.txt", "w").write("from the first run")
     assert r2.output.strip() == "[] []"
     original = (cfg.files / "people/maya/ids/ssn_card_maya.txt").read_text()
     assert original.endswith(f"{MAYA_SSN}\n") or MAYA_SSN in original
-    scratch = cfg.runtime / "workbench" / "tmp"
-    assert list(scratch.iterdir()) == []   # the staging copy is gone
+    scratch = workbench.scratch_dir(cfg)
+    assert not [d for d in scratch.iterdir() if d.name.startswith(("ws-", "run-"))]   # the staging copy is gone
 
 
 @linux_sandbox
@@ -497,10 +638,12 @@ except OSError:
 
 @linux_sandbox
 def test_real_memory_bomb(cfg):
+    # A refused allocation is a MemoryError inside the script: the box can only see it in the output,
+    # so it is labelled as reported by the script (or measured, when memory use got near the limit).
     r = run_as(cfg, "maya", "x = bytearray(2 * 1024**3)\nprint('ALLOCATED')")
-    assert r.ok and "ALLOCATED" not in r.output and "memory" in r.limits_hit, r
+    assert r.ok and "ALLOCATED" not in r.output and "memory" in r.limits_hit + r.script_reported, r
     r = run_as(cfg, "maya", "x = []\nwhile True:\n    x.append(bytearray(32 * 1024**2))")
-    assert r.ok and r.exit_code == 1 and "memory" in r.limits_hit, r
+    assert r.ok and r.exit_code == 1 and "memory" in r.limits_hit + r.script_reported, r
 
 
 @linux_sandbox
@@ -532,7 +675,7 @@ for _ in range(500):
 """
     t = time.monotonic()
     r = run_as(cfg, "maya", code)
-    assert r.ok and "fork refused after 0 BlockingIOError" in r.output and "processes" in r.limits_hit, r
+    assert r.ok and "fork refused after 0 BlockingIOError" in r.output and "processes" in r.script_reported, r
     assert time.monotonic() - t < 6
     left = [p for p in os.listdir("/proc") if p.isdigit() and _cmdline(p).endswith("/code/main.py")]
     assert left == []
@@ -573,6 +716,51 @@ except RuntimeError as e:
     assert r.ok and "STARTED" not in r.output and "no programs" in r.output and "threads 8" in r.output, r
     n = int(re.search(r"thread limit (\d+)", r.output).group(1))
     assert 0 < n < sandbox.Limits().max_procs and time.monotonic() - t < 6
+
+
+@linux_sandbox
+def test_real_no_local_installs_or_extra_packages(cfg):
+    """/usr/local (local tools, their settings and tokens) and dist-packages are empty folders inside."""
+    code = """
+import os
+for d in ["/usr/local", "/usr/lib/python3/dist-packages"]:
+    print(d, os.listdir(d) if os.path.isdir(d) else "absent")
+try:
+    open("/usr/local/x", "w")
+    print("WROTE")
+except OSError:
+    print("read-only")
+"""
+    r = run_as(cfg, "maya", code)
+    assert r.ok and r.exit_code == 0, r
+    lines = r.output.splitlines()
+    assert lines[0] in ("/usr/local []", "/usr/local absent"), r.output
+    assert lines[1] in ("/usr/lib/python3/dist-packages []", "/usr/lib/python3/dist-packages absent"), r.output
+    assert lines[2] == "read-only"
+
+
+@linux_sandbox
+def test_real_programs_written_by_the_script_cannot_run(cfg):
+    """/work and /tmp are noexec. A system program may replace the script, but it stays in the sandbox."""
+    code = """
+import os, shutil
+for d in ["/work", "/tmp"]:
+    shutil.copy("/usr/bin/true", d + "/mytrue")
+    os.chmod(d + "/mytrue", 0o755)
+    open(d + "/s.sh", "w").write("#!/bin/sh\\necho RAN\\n")
+    os.chmod(d + "/s.sh", 0o755)
+    for p in (d + "/mytrue", d + "/s.sh"):
+        try:
+            os.execv(p, [p])
+        except OSError as e:
+            print("refused", p, type(e).__name__)
+import sys
+sys.stdout.flush()
+os.execv("/bin/sh", ["sh", "-c", "echo shell ran; exit 7"])
+"""
+    r = run_as(cfg, "maya", code)
+    assert r.ok and r.output.count("refused") == 4 and "RAN" not in r.output, r
+    assert "shell ran" in r.output and r.exit_code == 7, r
 
 
 @linux_sandbox
@@ -618,7 +806,7 @@ def test_real_script_cannot_forge_the_status(cfg):
 
 @linux_sandbox
 def test_real_end_to_end_through_the_box(cfg, tmp_path, monkeypatch):
-    enable(cfg)
+    enable(cfg, include_granted=True)   # Sam's W-2 is a folder granted to Dana
     code = ("import re\ntotal = 0\n"
             "for p in ['people/dana/taxes/w2_2025_dana.txt', 'people/sam/taxes/w2_2025_sam.txt']:\n"
             "    t = open('/data/text/' + p + '.txt').read()\n"

@@ -53,6 +53,9 @@ def build_server(person_id: str, mode: str = "auto", source: str = "mcp-stdio") 
                          f"({e.get('turns')} encrypted turns, every reply enclave-signed"
                          f"{', replayed from a recording' if e.get('replayed') else ''}).")
             lines.append(f"Files read: {len(ans.files_read)}. Box check: {ans.outcome}.")
+            if ans.files_visible:
+                lines.append(f"An analysis script could see {len(ans.files_visible)} of {person.display}'s "
+                             "files (copies, in a sealed sandbox).")
             if ans.held_ids:
                 lines.append(f"{len(ans.held_ids)} detail(s) held for the owner's approval on their own device.")
         return "\n".join(lines)

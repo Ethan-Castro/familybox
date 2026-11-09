@@ -4,14 +4,18 @@ Extension points (filled by plugins in familybox/plugins/ through register(box))
 
   box.tool_providers: list of objects with
       tools(person) -> list[dict]                        OpenAI tool dicts offered to the model
-      run(person, name, args, ctx) -> str | None         sync; None means "not my tool"
+      run(person, name, args, ctx) -> str | None         sync, called in a worker thread; None = "not my tool"
   box.pre_checks:  list of async fn(box, person, question, ctx) -> None
       Raise enclave.EnclaveError to stop the question before the model sees it (any error stops it too).
   box.post_checks: list of async fn(box, person, question, draft, result, ctx) -> None
       result is the gate.GateResult. Change it in place: result.bump("held" | "refused", reason),
       result.held.append(gate.Held(...)), or result.text = ... . Any error stops the question.
 
-ctx is a Question: qid, person, question, source, started, files_read, files_denied, data (a scratch
+Tools are called from a worker thread (never on the event loop), one at a time per question.
+
+ctx is a Question: qid, person, question, source, started, files_read, files_denied, files_visible
+(files a tool exposed without the model reading them one by one, such as a workbench workspace; the
+gate applies their owners' rules too, but they are not counted as read), data (a scratch
 dict for plugins), events, and emit(step, **data) which appends one JSON line to
 <runtime>/events/<person>/<qid>.jsonl. Known protected values are scrubbed from every event.
 """
@@ -23,6 +27,7 @@ import hashlib
 import inspect
 import json
 import logging
+import os
 import secrets
 import time
 from dataclasses import asdict, dataclass, field
@@ -47,6 +52,7 @@ class Answer:
     held_ids: list[str] = field(default_factory=list)
     files_read: list[str] = field(default_factory=list)
     files_denied: list[str] = field(default_factory=list)
+    files_visible: list[str] = field(default_factory=list)
     enclave: dict = field(default_factory=dict)
     qid: str = ""
     source: str = ""
@@ -71,6 +77,7 @@ class Question:
         self.started = time.time()
         self.files_read: list[str] = []
         self.files_denied: list[str] = []
+        self.files_visible: list[str] = []
         self.data: dict[str, Any] = {}
         self.events: list[dict] = []
         self._scrub: list[Sensitive] | None = None
@@ -208,8 +215,9 @@ class Box:
 
         try:
             if mode == "replay":
-                draft = enclave.ask_replay(replay_dir=self.replay_dir, person=person_id, question=question,
-                                           run_tool=run_tool, emit=ctx.emit)
+                # Off the event loop: replayed tool calls run the box's real tools, which may be slow.
+                draft = await asyncio.to_thread(enclave.ask_replay, replay_dir=self.replay_dir, person=person_id,
+                                                question=question, run_tool=run_tool, emit=ctx.emit)
             else:
                 if not key:
                     ctx.emit("error", message="NEAR_AI_CLOUD_API_KEY is not set")
@@ -224,7 +232,7 @@ class Box:
                                             f"({e}). Nothing was answered.", "error", [str(e)]))
 
         owners = set(access.readable_owners(self.cfg, person))
-        file_owners = {access.owner_of(p) for p in ctx.files_read} - {None}
+        file_owners = {access.owner_of(p) for p in ctx.files_read + ctx.files_visible} - {None}
         never = list(person.never_share) + [t for o in file_owners for t in self.cfg.people[o].never_share
                                             if o in self.cfg.people]
         result = gate.check(draft.answer, sensitive=self.store.sensitive_values(), readable_owners=owners,
@@ -259,15 +267,16 @@ class Box:
 
     def _finish(self, ctx: Question, ans: Answer) -> Answer:
         ans.qid, ans.source = ctx.qid, ctx.source
-        ans.files_read, ans.files_denied = ctx.files_read, ctx.files_denied
+        ans.files_read, ans.files_denied, ans.files_visible = ctx.files_read, ctx.files_denied, ctx.files_visible
         ctx.emit("answer", outcome=ans.outcome, held=len(ans.held_ids), files_read=len(ans.files_read),
-                 files_denied=len(ans.files_denied), seconds=round(time.time() - ctx.started, 2))
+                 files_denied=len(ans.files_denied), files_visible=len(ans.files_visible), seconds=round(time.time() - ctx.started, 2))
         self._audit(ans, ctx.data.get("audit"))
         return ans
 
     def _audit(self, ans: Answer, plugin_extra: dict | None = None) -> None:
         log_path = self.cfg.runtime / "audit" / f"{ans.person}.jsonl"
-        log_path.parent.mkdir(parents=True, exist_ok=True)
+        log_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        os.chmod(log_path.parent, 0o700)
         entry = {
             "time": int(time.time()),
             "qid": ans.qid,
@@ -281,9 +290,12 @@ class Box:
             "held_ids": ans.held_ids,
             "enclave": ans.enclave,
         }
+        if ans.files_visible:
+            entry["files_visible"] = ans.files_visible
         if plugin_extra:  # plugins add audit details through ctx.data["audit"][<plugin name>]
             entry["plugins"] = plugin_extra
-        with log_path.open("a") as f:
+        fd = os.open(log_path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+        with os.fdopen(fd, "a") as f:
             f.write(json.dumps(entry) + "\n")
 
 

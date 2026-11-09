@@ -38,7 +38,9 @@ CHUNK = 12_000  # base64 characters per exec command
 def pi_dir() -> str:
     """The board folder, as a shell word: "~" or "~/..." stays unquoted so the board's shell expands it."""
     d = os.environ.get("FAMILYBOX_PI_DIR", "~/familybox").rstrip("/")
-    if not re.fullmatch(r"~(/[A-Za-z0-9._-]+)+|/[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*", d) or ".." in d.split("/"):
+    parts = d.split("/")[1:]
+    if (not re.fullmatch(r"~(/[A-Za-z0-9._-]+)+|/[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*", d)
+            or any(p in (".", "..") for p in parts) or not parts):
         sys.exit(f"FAMILYBOX_PI_DIR must be a plain folder path like ~/familybox-wb, not {d!r}")
     return d
 
