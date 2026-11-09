@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>familybox: Submission Options</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter+Tight:wght@300;400&display=swap" rel="stylesheet">
+<style>
+:root {
+  /* Stripe-style ledger: white canvas, midnight ink, one indigo for small functional marks. Single light theme by choice. */
+  --indigo: #533afd;
+  --ink: #061b31;
+  --slate: #64748d;
+  --steel: #50617a;
+  --smoke: #839bc8;
+  --mist: #f8fafd;
+  --frost: #e5edf5;
+  --lilac: #d6d9fc;
+  --wash: #e8e9ff;
+  --font: "Inter Tight", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  color-scheme: light;
+}
+* { box-sizing: border-box; }
+html { background: #ffffff; }
+body {
+  margin: 0; background: #ffffff; color: var(--ink);
+  font-family: var(--font); font-weight: 300; font-size: 16px; line-height: 1.4;
+  letter-spacing: -0.01em; font-feature-settings: "ss01" on, "tnum" on;
+}
+main { max-width: 960px; margin: 0 auto; padding: 72px 24px 96px; }
+h1, h2, h3 { font-weight: 300; margin: 0; text-wrap: balance; }
+h1 { font-size: clamp(36px, 6vw, 56px); line-height: 1.03; letter-spacing: -0.025em; max-width: 14ch; }
+.lede { font-size: clamp(18px, 2.4vw, 22px); color: var(--slate); margin: 24px 0 0; max-width: 46ch; line-height: 1.35; }
+.label { font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--smoke); font-weight: 400; margin: 0 0 12px; }
+hr { border: 0; border-top: 1px solid var(--frost); margin: 64px 0; }
+
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 32px; margin-top: 56px; }
+.stat b { display: block; font-weight: 300; font-size: 48px; line-height: 1; letter-spacing: -0.02em; }
+.stat span { display: block; margin-top: 8px; color: var(--slate); font-size: 14px; }
+
+section h2 { font-size: 32px; line-height: 1.1; letter-spacing: -0.02em; }
+section .note { color: var(--slate); margin: 12px 0 0; font-size: 18px; max-width: 52ch; }
+ul.items { list-style: none; margin: 32px 0 0; padding: 0; border-top: 1px solid var(--frost); }
+ul.items li { display: grid; grid-template-columns: 1fr auto; gap: 8px 24px; padding: 20px 0; border-bottom: 1px solid var(--frost); }
+.items h3 { font-size: 20px; line-height: 1.25; letter-spacing: -0.01em; }
+.items p { grid-column: 1 / 2; margin: 0; color: var(--steel); font-size: 15px; max-width: 62ch; }
+.meta { grid-column: 2; grid-row: 1 / 3; display: flex; flex-direction: column; align-items: flex-end; gap: 8px; white-space: nowrap; }
+.effort { font-size: 13px; color: var(--slate); font-weight: 400; }
+.pill { font-size: 12px; font-weight: 400; padding: 3px 10px; border-radius: 9999px; border: 1px solid var(--lilac); color: var(--indigo); }
+.pill.done { background: var(--wash); border-color: var(--wash); }
+.pill.need { border-color: var(--frost); color: var(--slate); }
+.skip li h3 { color: var(--steel); }
+.pill.wip { border-color: var(--lilac); color: var(--indigo); background: #fff; }
+
+footer { margin-top: 72px; padding: 24px; background: var(--mist); border-radius: 4px; color: var(--slate); font-size: 14px; }
+footer strong { color: var(--ink); font-weight: 400; }
+@media (max-width: 560px) {
+  ul.items li { grid-template-columns: 1fr; }
+  .meta { grid-column: 1; grid-row: auto; flex-direction: row; align-items: center; }
+}
+.verdict { margin-top: 32px; padding: 24px; border: 1px solid var(--lilac); border-radius: 6px; }
+.verdict h3 { font-size: 20px; font-weight: 300; margin: 0 0 8px; }
+.verdict p { margin: 6px 0 0; color: var(--steel); font-size: 15px; max-width: 70ch; }
+.rules { margin: 24px 0 0; padding: 0; list-style: none; }
+.rules li { padding: 10px 0; border-bottom: 1px solid var(--frost); color: var(--steel); font-size: 15px; }
+.rules b { color: var(--ink); font-weight: 400; }
+.pill.no { border-color: #f3c6cf; color: #c4314b; }
+</style>
+</head>
+<body>
+<main>
+  <p class="label">NEAR Hackathon 2026 · due Nov 14, 23:59 UTC · 5 days left</p>
+  <h1>Ways to widen the entry</h1>
+  <p class="lede">Two levers: point familybox at more judges, or add one separate project. The first is nearly free. The second costs days that familybox also needs.</p>
+
+  <div class="stats">
+    <div class="stat"><b>2</b><span>projects per person at most, and each README must name the other</span></div>
+    <div class="stat"><b>13</b><span>tracks; one submission can list several</span></div>
+    <div class="stat"><b>0/39</b><span>attacks leaked through familybox in today's first live run</span></div>
+  </div>
+
+  <hr>
+
+  <section>
+    <p class="label">The rules that decide this</p>
+    <h2>What is allowed</h2>
+    <ul class="rules">
+      <li><b>Two projects at most per person</b>, only if they are independent, and each README names the other.</li>
+      <li><b>One submission per project and per repo.</b> Each email can file two.</li>
+      <li><b>Several tracks per submission</b> is fine and still counts as one entry.</li>
+      <li><b>Code from Oct 19 on counts.</b> Older projects are baseline; only new, separated work is judged.</li>
+      <li><b>AI screens first, humans decide.</b> Claude Code and Codex check that each repo runs and does what its README says.</li>
+    </ul>
+  </section>
+
+  <hr>
+
+  <section>
+    <p class="label">Lever 1</p>
+    <h2>Widen familybox</h2><p class="note">Cheapest first. These reach more judges without a second codebase.</p>
+    <ul class="items">
+      <li><h3>List the security track too</h3><p>One submission can list several tracks. familybox fits AI Security &amp; Defense directly: a policy engine on AI output, TEE attestation, pinning, a sandbox, and planted-instruction attacks in the suite.</p><div class="meta"><span class="effort">minutes</span><span class="pill done">do now</span></div></li>
+      <li><h3>A security section in the README</h3><p>Map the security track's own words (policy engines, sandboxing, TEE attestation, a prompt-injection demo) to what is already built and measured, so those judges find it in one place.</p><div class="meta"><span class="effort">1 hour</span><span class="pill done">do now</span></div></li>
+      <li><h3>Lead with today's NEAR finding</h3><p>The box caught NEAR running two versions of one model's serving stack at once. That is concrete evidence the pinning matters, for both tracks.</p><div class="meta"><span class="effort">1 hour</span><span class="pill done">do now</span></div></li>
+      <li><h3>Host the red-team page</h3><p>Judges try to break the fictional family live. The page is built, with a hard daily spending cap. A hosted demo is a plus with judges.</p><div class="meta"><span class="effort">½ day</span><span class="pill need">needs your OK</span></div></li>
+      <li><h3>Anchor the logs on NEAR testnet</h3><p>Turns on the written contract, so the NEAR chain shows up beyond NEAR AI Cloud. Adds a visible NEAR primitive.</p><div class="meta"><span class="effort">½ day</span><span class="pill need">needs testnet account</span></div></li>
+      <li><h3>Open Innovation as a third track</h3><p>Possible, but a stretch. A weak fit can read as track-stuffing.</p><div class="meta"><span class="effort">minutes</span><span class="pill ">optional</span></div></li>
+    </ul>
+  </section>
+
+  <hr>
+
+  <section>
+    <p class="label">Lever 2</p>
+    <h2>Add one separate project</h2><p class="note">Pick at most one. It needs its own repo and no shared familybox code.</p>
+    <ul class="items">
+      <li><h3>Tidemark: a public change log for NEAR AI's enclaves</h3><p>Collectors verify every NEAR AI model's attestation on a schedule and record each change of code or measurements in a NEAR contract, with a small guard any app can drop in. Today's real drift is its first entry. Best fit: Security. Scored highest of the 12 concepts. Must be fresh code, framed as a public good, not familybox's pinning.</p><div class="meta"><span class="effort">3 to 4 days</span><span class="pill done">best second pick</span></div></li>
+      <li><h3>Tenant Zero: probes for cross-customer leaks</h3><p>Preregistered canary tests that check whether one NEAR AI customer can detect another's prompts (cache timing first), each verdict pinned to the live measurement. Cheap in tokens, but needs a second org's credits, and probing the sponsor is awkward with its founder judging.</p><div class="meta"><span class="effort">3 days</span><span class="pill ">risky</span></div></li>
+      <li><h3>Parallax: prove roughly where the model ran</h3><p>Time attestation round trips from several regions; light speed bounds the distance to the enclave, posted on NEAR. Very novel, but the bounds may come out continent-sized, which would show nothing.</p><div class="meta"><span class="effort">2 hour spike first</span><span class="pill ">risky</span></div></li>
+      <li><h3>Overlap: sealed negotiation through an enclave</h3><p>Rival parties seal briefs to an attested model that returns one bounded verdict. Our own review found a fatal flaw: anyone holding a sealed brief can resubmit it and read the answer.</p><div class="meta"><span class="effort">n/a</span><span class="pill no">skip</span></div></li>
+      <li><h3>Re-enter Muse Privacy or Base Agent</h3><p>Built before the Oct 19 window, so they are not eligible as is. Only new work since then counts, kept on its own branch with the diff linked.</p><div class="meta"><span class="effort">n/a</span><span class="pill no">not eligible as is</span></div></li>
+      <li><h3>A second privacy-track project</h3><p>Allowed, but it would mostly compete with familybox for the same judges and the same prize.</p><div class="meta"><span class="effort">n/a</span><span class="pill no">avoid</span></div></li>
+    </ul>
+  </section>
+
+  <hr>
+
+  <section>
+    <p class="label">Recommendation</p>
+    <h2>What I would do</h2>
+    <div class="verdict">
+      <h3>Now: list privacy and security, and write the security section.</h3>
+      <p>Both are free and make familybox a contender in two tracks instead of one.</p>
+      <h3 style="margin-top:20px">Then, if you want a second entry: Tidemark, in Security.</h3>
+      <p>Start it only after familybox's Pi checks and final numbers are in. Fresh repo, fresh code, its own README that names familybox (and familybox's README names it). It has a real story today: NEAR's own serving code drifting mid-rollout, caught live.</p>
+      <p>Skip it if the Pi and the demo video aren't done by Nov 12. One strong entry beats two thin ones.</p>
+    </div>
+  </section>
+
+  <footer><strong>Nothing is submitted, posted or made public without your OK.</strong> Rules from nearhackathon.com/HACKATHON.md (copy in docs/research/rules.md); concept scores from docs/DECISION_MEMO.md. As of Nov 9, 2026.</footer>
+</main>
+</body>
+</html>

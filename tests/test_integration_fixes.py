@@ -88,3 +88,12 @@ def test_activity_list_skips_photo_reads(cfg):
     folder.mkdir(parents=True)
     (folder / ("b" * 12 + ".jsonl")).write_text(json.dumps({"step": "photo", "t": 0}) + "\n")
     assert activity.list_activity(cfg, cfg.person("maya")) == []
+
+
+def test_other_person_named_only_in_the_question_counts(cfg):
+    people = cfg.people.values()
+    maya = cfg.person("maya")
+    q = "What does the fridge note in the shared folder say about Mom?"
+    a = "Her counseling sessions switched to every other Tuesday."
+    assert not paraphrase.mentions_other_person(a, maya, people)
+    assert paraphrase.mentions_other_person(f"{q}\n{a}", maya, people)

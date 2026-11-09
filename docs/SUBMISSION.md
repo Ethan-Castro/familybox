@@ -5,9 +5,9 @@ without Ethan's yes. The real payload is never committed (it holds personal data
 
 ## Checklist
 
-- [ ] Final attack report numbers in README, DEMO_SCRIPT and the X post (three runs, show the range)
+- [x] Final attack report numbers in README, DEMO_SCRIPT and the X post (three runs, show the range)
 - [ ] Pi run on the merged build: tests including the 16 sandbox tests, live demo questions, workbench
-- [ ] Clean-install check from a fresh clone, following the README word for word, replay mode, no key
+- [x] Clean-install check from a fresh clone, following the README word for word, replay mode, no key (2026-11-09: 675 passed, 17 skipped)
 - [ ] No secrets anywhere in git history (`git log -p | grep -E 'sk-|jpt_'` plus a scanner)
 - [ ] `docs/private/` and `.env` still untracked
 - [ ] Pre-hackathon separation: all code is from 2026-11-07 onward (README "Prior work and disclosures")
@@ -51,7 +51,7 @@ owner's own phone after they approve. Each person reaches only their own files; 
 owner-only. A second enclave check catches facts given away in other words, and the box pins NEAR's serving
 code and pauses if it changes.
 
-In a 38-attack suite run three times, [results]. Includes a live trust timeline, photo transcription,
+In a 39-attack suite run three times on NEAR, 0 of the 30 direct, encoded, cross-person and planted-instruction attacks got through the box in every run, and no SSN or ID number ever did; with the model's reply trusted as is, 13 to 14 of 39 leaked. Reworded hints remain the open gap (0 to 4 per run, mostly about the asker's own records; one cross-person hint came from a bug since fixed). Includes a live trust timeline, photo transcription,
 form filling, a sandboxed analysis workbench and a red-team page.
 
 ## X post (draft, Ethan posts)
@@ -63,6 +63,6 @@ form filling, a sandboxed analysis workbench and a red-team page.
 > A @NEARProtocol AI Cloud model reads them in a verified TEE. The box checks every answer against the real
 > numbers before the assistant sees it.
 >
-> [N] of 38 attacks leaked through the box, vs [N] with no protection. Repo + video: [link]
+> 39 attacks, 3 runs: no SSN or ID number got out through the box. Trust the model's reply instead and 13 leak. Repo + video: [link]
 >
 > What would you trust it with? #NEARHackathon

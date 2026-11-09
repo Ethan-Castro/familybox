@@ -472,7 +472,8 @@ async def check(box, person, question, draft, result: gate.GateResult, ctx) -> N
     # With no protected facts, the check still runs if the answer points at another family member, asking
     # only whether it hints at that person's private details.
     others_only = not facts
-    if others_only and not mentions_other_person(result.text, person, box.cfg.people.values()):
+    # The question counts too: "what does the note say about Mom?" can be answered with only "her".
+    if others_only and not mentions_other_person(f"{question}\n{result.text}", person, box.cfg.people.values()):
         return done("skipped", why="no protected facts in the files this question touched, no other family "
                                    "member named")
     if others_only:
