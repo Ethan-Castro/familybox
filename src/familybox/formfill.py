@@ -20,6 +20,7 @@ from __future__ import annotations
 import contextlib
 import fcntl
 import json
+import logging
 import os
 import re
 import secrets
@@ -31,15 +32,20 @@ from pathlib import Path, PurePosixPath
 from pypdf import PdfReader, PdfWriter
 
 from . import access, gate
-from .approvals import Approvals
+from .approvals import Approvals, append_private
 from .config import Config, Person
 from .store import Store
 
 FORM_TTL_S = 7 * 24 * 3600          # a filled form is deleted after a week
+MAX_WAITING = 5                     # forms one person can have waiting for approval at once
+MAX_FILLS_PER_HOUR = 10             # forms one person can fill in an hour
 MAX_FIELDS = 60
 MAX_TEXT = 300
 ID_ALPHABET = "abcdefghjkmnpqrstuvwxyz"   # letters only, so a form id can never look like part of a number
 FAMILY = "family"
+KINDS = ("ssn", "id", "health", "dob", "name", "money", "text")
+
+log = logging.getLogger("familybox.forms")
 
 REF_RE = re.compile(r"\{\{\s*([A-Za-z0-9_-]+)\s*\.\s*([A-Za-z0-9_]+)\s*\}\}")
 CTRL_RE = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
@@ -105,7 +111,7 @@ class Template:
     title: str
     description: str
     path: Path
-    fields: dict[str, dict]     # name -> {"label", "hint"}
+    fields: dict[str, dict]     # name -> {"label", "hint", "kinds"}; kinds None means any detail
 
 
 def templates_dir(cfg: Config) -> Path:
@@ -126,14 +132,24 @@ def list_templates(cfg: Config) -> list[Template]:
             title = (reader.metadata.title if reader.metadata else None) or pdf.stem
         except Exception:  # noqa: BLE001 - a broken template is skipped, not fatal
             continue
-        hints = {}
+        hints: dict = {}
         side = pdf.with_suffix(".json")
         if side.exists():
-            with contextlib.suppress(ValueError):
-                hints = json.loads(side.read_text())
-        hf = hints.get("fields", {})
-        fields = {n: {"label": str(hf.get(n, {}).get("label") or n),
-                      "hint": str(hf.get(n, {}).get("hint") or "")} for n in names}
+            try:
+                h = json.loads(side.read_text())
+            except (OSError, ValueError):
+                log.warning("form hints %s are not valid JSON; ignored", side.name)
+                h = {}
+            hints = h if isinstance(h, dict) else {}
+        hf = hints.get("fields")
+        hf = hf if isinstance(hf, dict) else {}
+        fields = {}
+        for n in names:
+            e = hf.get(n)
+            e = e if isinstance(e, dict) else {}
+            kinds = e.get("kinds")
+            kinds = [k for k in kinds if k in KINDS] if isinstance(kinds, list) else None
+            fields[n] = {"label": str(e.get("label") or n), "hint": str(e.get("hint") or ""), "kinds": kinds}
         out.append(Template(pdf.stem, str(hints.get("title") or title), str(hints.get("description") or ""),
                             pdf, fields))
     return out
@@ -228,13 +244,23 @@ def resolve(cfg: Config, store: Store, asker: Person, who: str, key: str,
     raise FormError(f"{{{{{who}.{key}}}}}: the box can't use that detail; it isn't in {whose}.")
 
 
-def masked(r: Resolved, display: dict[str, str]) -> str:
-    whose = "the family's" if r.owner is None else f"{display.get(r.owner, r.owner)}'s"
-    if r.field.kind == "ssn":
-        return f"{whose} SSN ending {gate.digits(r.value)[-4:]}"
-    if r.field.kind == "id" and len(re.sub(r"[^A-Za-z0-9]", "", r.value)) >= 7:
-        return f"{whose} {r.field.label} ending {re.sub(r'[^A-Za-z0-9]', '', r.value)[-3:]}"
-    return f"{whose} {r.field.label} (kept on the box)"
+def whose(owner: str | None, display: dict[str, str], viewer: str | None = None) -> str:
+    if owner is None:
+        return "the family's"
+    return "your" if owner == viewer else f"{display.get(owner, owner)}'s"
+
+
+def mask_tail(fd: FieldDef, value: str) -> str:
+    """The masked detail without whose it is: "SSN ending 4322", "allergies (kept on the box)"."""
+    if fd.kind == "ssn":
+        return f"SSN ending {gate.digits(value)[-4:]}"
+    if fd.kind == "id" and len(re.sub(r"[^A-Za-z0-9]", "", value)) >= 7:
+        return f"{fd.label} ending {re.sub(r'[^A-Za-z0-9]', '', value)[-3:]}"
+    return f"{fd.label} (kept on the box)"
+
+
+def masked(r: Resolved, display: dict[str, str], viewer: str | None = None) -> str:
+    return f"{whose(r.owner, display, viewer)} {mask_tail(r.field, r.value)}"
 
 
 # --- the form store -------------------------------------------------------------------------------
@@ -276,13 +302,22 @@ def _index_path(cfg: Config) -> Path:
 
 
 def _load(cfg: Config) -> dict:
+    """The form index. Call with _locked held. A damaged index is moved aside (never silently overwritten);
+    the PDFs it listed are then removed by sweep() once they are older than FORM_TTL_S."""
     p = _index_path(cfg)
     if not p.exists():
         return {}
     try:
-        return json.loads(p.read_text())
+        data = json.loads(p.read_text())
+        if isinstance(data, dict) and all(isinstance(v, dict) for v in data.values()):
+            return data
     except ValueError:
-        return {}
+        pass
+    aside = p.with_name(f"index.damaged-{int(time.time())}-{secrets.token_hex(3)}.json")
+    os.replace(p, aside)
+    os.chmod(aside, 0o600)
+    log.error("forms index was damaged; moved to %s and started a new one", aside.name)
+    return {}
 
 
 def _save(cfg: Config, data: dict) -> None:
@@ -296,10 +331,7 @@ def pdf_path(cfg: Config, form_id: str) -> Path:
 
 
 def _audit(cfg: Config, person_id: str, entry: dict) -> None:
-    log = cfg.runtime / "audit" / f"{person_id}.jsonl"
-    log.parent.mkdir(parents=True, exist_ok=True)
-    with log.open("a") as f:
-        f.write(json.dumps({"time": int(time.time())} | entry) + "\n")
+    append_private(cfg.runtime / "audit" / f"{person_id}.jsonl", json.dumps({"time": int(time.time())} | entry))
 
 
 # --- filling --------------------------------------------------------------------------------------
@@ -345,6 +377,36 @@ def _names(ids: list[str], display: dict[str, str]) -> str:
     return names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1]
 
 
+def _field_line(entry: dict, display: dict[str, str], viewer: Person | None) -> str:
+    """One summary line, for one viewer. A detail the viewer may not read on the box is shown as hidden,
+    without its last digits. viewer=None means the asker at fill time, who could read every detail used."""
+    parts = []
+    for x in entry.get("refs", []):
+        w = whose(x["owner"], display, viewer.id if viewer else None)
+        if viewer is None or access.can_read(viewer, x["path"]):
+            parts.append(f"{w} {x['mask']}")
+        else:
+            parts.append(f"{w} {x['label']} (hidden)")
+    if parts and not entry.get("typed"):
+        return f"{entry['name']}: {', '.join(parts)}"
+    typed = "your text" if viewer is None else "typed-in text"
+    if parts:
+        return f"{entry['name']}: {typed} with {', '.join(parts)}"
+    return f"{entry['name']}: {typed}"
+
+
+def field_lines(cfg: Config, rec: dict, viewer_id: str) -> list[str]:
+    display = {p.id: p.display for p in cfg.people.values()}
+    viewer = cfg.person(viewer_id)
+    out = []
+    for e in rec.get("fields", []):
+        if isinstance(e, dict):
+            out.append(_field_line(e, display, viewer))
+        elif viewer_id == rec.get("asker"):
+            out.append(str(e))            # a record from before per-viewer lines: only the asker sees it
+    return out
+
+
 def fill(cfg: Config, asker_id: str, form: str, for_person: str, fields: dict, *, source: str = "cli",
          store: Store | None = None) -> FillResult:
     asker = cfg.person(asker_id)
@@ -363,6 +425,7 @@ def fill(cfg: Config, asker_id: str, form: str, for_person: str, fields: dict, *
     cache: dict = {}
     values: dict[str, str] = {}
     summary: list[str] = []
+    stored: list[dict] = []         # per field: name, typed text or not, and which details went in
     used: list[Resolved] = []
     problems: list[str] = []
     for fname, raw in fields.items():
@@ -398,10 +461,16 @@ def fill(cfg: Config, asker_id: str, form: str, for_person: str, fields: dict, *
                 problems.append(f"{fname}: {e}")
                 ok = False
                 break
+            kinds = tpl.fields[fname].get("kinds")
+            if kinds is not None and r.field.kind not in kinds:
+                problems.append(f"{fname}: this field doesn't take a {r.field.label} ({{{{{m.group(1)}.{m.group(2)}}}}}). "
+                                f"Check which field it belongs in.")
+                ok = False
+                break
             out.append(raw[last:m.start()])
             out.append(r.value)
             last = m.end()
-            parts.append(masked(r, display))
+            parts.append(r)
             used.append(r)
         if not ok:
             continue
@@ -410,12 +479,11 @@ def fill(cfg: Config, asker_id: str, form: str, for_person: str, fields: dict, *
         if not value:
             continue
         values[fname] = value
-        if parts and not literal.strip():
-            summary.append(f"- {fname}: {', '.join(parts)}")
-        elif parts:
-            summary.append(f"- {fname}: your text with {', '.join(parts)}")
-        else:
-            summary.append(f"- {fname}: your text")
+        entry = {"name": fname, "typed": bool(literal.strip()),
+                 "refs": [{"ref": r.ref, "kind": r.field.kind, "label": r.field.label, "owner": r.owner,
+                           "path": r.path, "mask": mask_tail(r.field, r.value)} for r in parts]}
+        stored.append(entry)
+        summary.append(f"- {_field_line(entry, display, None)}")
     if problems:
         raise FormError("The form was not filled. Fix these and try again:\n" + "\n".join(f"- {p}" for p in problems))
     if not values:
@@ -440,29 +508,41 @@ def fill(cfg: Config, asker_id: str, form: str, for_person: str, fields: dict, *
 
     with _locked(cfg):
         data = _load(cfg)
+        now = time.time()
+        mine_open = [r for r in data.values() if r.get("asker") == asker.id]
+        if sum(1 for r in mine_open if r.get("status") == "waiting") >= MAX_WAITING:
+            raise FormError("Too many forms are waiting for approval. Approve or delete some on the Forms page "
+                            "first.")
+        if sum(1 for r in mine_open if now - r.get("created", 0) < 3600) >= MAX_FILLS_PER_HOUR:
+            raise FormError("Too many forms were filled in the last hour. Try again later.")
         form_id = "".join(secrets.choice(ID_ALPHABET) for _ in range(10))
         while form_id in data:
             form_id = "".join(secrets.choice(ID_ALPHABET) for _ in range(10))
         _write_private(pdf_path(cfg, form_id), buf.getvalue())
-        what = sorted({r.field.label for r in uniq})
-        held = []
         items = {}
         for o in approvers:
-            mine = sorted({r.field.label for r in uniq if r.owner == o}) or what
             item_id = f"form-{form_id}-{o}"
-            held.append(gate.Held(item_id, "form", f"Filled form: {tpl.title}",
-                                  f"Approved. Download it from the Forms page on this box (form {form_id}).",
-                                  o, f"forms/{form_id}.pdf"))
+            if o in recipients:
+                done = f"Approved. Download it from the Forms page on this box (form {form_id})."
+            else:
+                done = (f"Approved. {_names(recipients, display)} can download it from the Forms page "
+                        f"on this box (form {form_id}).")
+            held = gate.Held(item_id, "form", f"Filled form: {tpl.title}", done, o, f"forms/{form_id}.pdf")
             items[o] = item_id
-            who_for = display[target]
-            question = (f"{display[asker.id]}'s assistant filled \"{tpl.title}\" for {who_for}. "
-                        f"It uses {'your ' if o in [r.owner for r in uniq] else ''}{', '.join(mine) or 'only typed-in text'}.")
-            Approvals(cfg).add(asker.id, question, [held[-1]])
+            own = [f"{e['name']} gets {', '.join('your ' + x['mask'] for x in e['refs'] if x['owner'] == o)}"
+                   for e in stored if any(x["owner"] == o for x in e["refs"])]
+            shared = sorted({x["label"] for e in stored for x in e["refs"] if x["owner"] is None})
+            uses = ("; ".join(own) + ".") if own else "None of your own details are in it."
+            if shared:
+                uses += f" It also uses the family's {', '.join(shared)}."
+            question = (f"{display[asker.id]}'s assistant filled \"{tpl.title}\" for {display[target]}. {uses} "
+                        f"After everyone approves, {_names(recipients, display)} can download it.")
+            Approvals(cfg).add(asker.id, question, [held])
         data[form_id] = {
             "form": tpl.slug, "title": tpl.title, "asker": asker.id, "for": target, "source": source,
             "created": int(time.time()), "status": "waiting",
             "approvers": approvers, "recipients": recipients, "items": items,
-            "fields": [line[2:] for line in summary],
+            "fields": stored,
             "refs": [{"ref": r.ref, "kind": r.field.kind, "owner": r.owner, "path": r.path} for r in uniq],
             "sources": sources,
         }
@@ -542,12 +622,40 @@ def refresh(cfg: Config, now: float | None = None) -> dict:
 
 
 def forms_for(cfg: Config, person_id: str) -> list[dict]:
-    """Forms this person asked for, must approve, or may download (newest first). No values inside."""
+    """Forms this person asked for, must approve, or may download (newest first). No values inside, and
+    "fields" is written for this person: a detail they may not read on the box shows as hidden."""
     out = []
     for fid, rec in refresh(cfg).items():
         if person_id in ({rec["asker"]} | set(rec["approvers"]) | set(rec["recipients"])):
-            out.append({"id": fid, **rec, "approvals": _approval_status(cfg, rec)})
+            view = {k: v for k, v in rec.items() if k not in ("refs", "fields", "sources")}
+            out.append({"id": fid, **view, "fields": field_lines(cfg, rec, person_id),
+                        "approvals": _approval_status(cfg, rec)})
     return sorted(out, key=lambda r: -r["created"])
+
+
+def sweep(cfg: Config, now: float | None = None) -> None:
+    """Expire old forms and delete their PDFs, plus any PDF left in the forms folder that the index no
+    longer lists (those can never be downloaded). Runs when the box starts, on a timer in the web server, and on every form request."""
+    d = cfg.runtime / "forms"
+    if not d.is_dir():
+        return
+    now = now or time.time()
+    refresh(cfg, now)
+    with _locked(cfg):                      # a fill writes its PDF and its index entry under this lock
+        data = _load(cfg)
+        open_ids = {fid for fid, r in data.items() if r.get("status") in ("waiting", "ready")}
+        for pdf in d.glob("*.pdf"):
+            if pdf.stem not in open_ids:    # closed, or not listed at all (for example a damaged index)
+                with contextlib.suppress(FileNotFoundError):
+                    pdf.unlink()
+        # Approval items for forms the index no longer knows about can never lead to a download: close them.
+        appr = Approvals(cfg)
+        for item_id, item in appr._load().items():
+            if item.get("kind") == "form" and item.get("status") == "waiting":
+                fid = item_id.split("-")[1] if item_id.count("-") >= 2 else ""
+                if fid not in data:
+                    with contextlib.suppress(KeyError):
+                        appr.decide(item["owner"], item_id, False)
 
 
 def decide(cfg: Config, person_id: str, form_id: str, approve: bool) -> dict:

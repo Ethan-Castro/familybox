@@ -12,7 +12,8 @@ field gets which detail, and the box puts the real value in itself.
 3. The box looks each reference up, but only in files the person asking may read. A teen's assistant
    can't use a parent's SSN, and a parent's assistant can't use a teen's health record.
 4. The box fills the PDF, keeps it in `runtime/forms/` (only the box's user can read it), and asks every
-   person whose details are in it to approve.
+   person whose details are in it to approve. Each person's approval question says which field gets which
+   of their details, masked, for example "student_ssn gets your SSN ending 4322".
 5. The assistant gets back only what was filled, with references masked ("Maya's SSN ending 4322").
    That text goes through the same answer check as every other answer before it leaves.
 6. Once everyone has approved, the PDF can be downloaded from the **Forms** page of the box's web page.
@@ -24,7 +25,21 @@ from. So the PDF never shows anyone something they couldn't already see on the b
 example a form mixing two people who can't see each other's files), the box says so and asks for the form
 to be filled in two parts.
 
+The Forms page and `familybox forms mine` list what went into each field, written for whoever is looking.
+A detail you may not read on the box shows as hidden ("Dana's SSN (hidden)"), without its last digits, even
+when you are one of the people asked to approve.
+
 Filled forms are deleted after 7 days, when anyone denies, or when someone deletes them on the Forms page.
+The box checks for old forms when it starts, every hour while the web page is running, and on every form
+request, so a form expires even if nobody opens the Forms page. If the forms list on disk is ever damaged,
+the box moves it aside instead of overwriting it, and deletes the filled PDFs it can no longer account for.
+
+## Limits
+
+- One person can have at most 5 forms waiting for approval, and can fill at most 10 forms an hour. This
+  stops an assistant that has been tricked from flooding someone's approvals.
+- A form's hints file can say which kinds of detail each field takes (`"kinds": ["ssn"]`). The box then
+  refuses, for example, an SSN reference in a name field. A field with `"kinds": []` takes typed-in text only.
 
 ## Details a reference can use
 
@@ -55,7 +70,8 @@ familybox forms download --as maya <form id> out.pdf
 `demo/forms/` holds two made-up practice forms, made by `uv run python scripts/make_demo_forms.py`:
 a simplified "Student Aid Information" form and a "School Sports Medical Form". They are fictional and
 are not real government or school forms. Any fillable PDF with text fields can be added there; an
-optional `<name>.json` next to it adds plain-English labels and hints for the assistant.
+optional `<name>.json` next to it adds plain-English labels, hints for the assistant and the `kinds`
+each field takes.
 
 ## Known limits
 

@@ -10,6 +10,7 @@ are not real government or school forms.
 from __future__ import annotations
 
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -82,6 +83,14 @@ FORMS = {
 }
 
 
+def _kinds(hint: str) -> list[str]:
+    """Which kinds of detail a field takes, from the details its hint references. A field whose hint has no
+    reference takes typed-in text only. The box refuses, say, an SSN reference in a name field."""
+    from familybox.formfill import ALIASES, FIELDS
+    keys = [ALIASES.get(k, k) for k in re.findall(r"\.([a-z0-9_]+)\}\}", hint)]
+    return sorted({FIELDS[k].kind for k in keys if k in FIELDS})
+
+
 def _pdf_text(s: str) -> str:
     return s.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
 
@@ -139,7 +148,7 @@ def make_form(slug: str, spec: dict, out_dir: Path) -> Path:
     with pdf.open("wb") as f:
         w.write(f)
     hints = {"title": spec["title"], "description": spec["description"],
-             "fields": {name: {"label": label, "hint": hint}
+             "fields": {name: {"label": label, "hint": hint, "kinds": _kinds(hint)}
                         for _, rows in spec["sections"] for name, label, hint in rows}}
     (out_dir / f"{slug}.json").write_text(json.dumps(hints, indent=1) + "\n")
     return pdf

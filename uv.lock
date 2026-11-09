@@ -1101,7 +1101,7 @@ requires-dist = [
     { name = "mcp", specifier = "==2.3.0" },
     { name = "nearai-inference-sdk", specifier = "==0.3.0" },
     { name = "pynacl", specifier = ">=1.6" },
-    { name = "pypdf", specifier = ">=7.0.0" },
+    { name = "pypdf", specifier = "==7.0.0" },
     { name = "python-multipart", specifier = ">=0.0.33" },
     { name = "starlette", specifier = ">=1.10" },
     { name = "uvicorn", specifier = ">=0.54" },

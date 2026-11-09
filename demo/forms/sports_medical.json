@@ -4,55 +4,88 @@
  "fields": {
   "athlete_name": {
    "label": "Athlete full name",
-   "hint": "{{<athlete>.name}}"
+   "hint": "{{<athlete>.name}}",
+   "kinds": [
+    "name"
+   ]
   },
   "athlete_date_of_birth": {
    "label": "Athlete date of birth",
-   "hint": "{{<athlete>.date_of_birth}}"
+   "hint": "{{<athlete>.date_of_birth}}",
+   "kinds": [
+    "dob"
+   ]
   },
   "sport": {
    "label": "Sport",
-   "hint": "text"
+   "hint": "text",
+   "kinds": []
   },
   "grade": {
    "label": "Grade",
-   "hint": "text"
+   "hint": "text",
+   "kinds": []
   },
   "allergies": {
    "label": "Allergies",
-   "hint": "{{<athlete>.allergies}}"
+   "hint": "{{<athlete>.allergies}}",
+   "kinds": [
+    "health"
+   ]
   },
   "conditions": {
    "label": "Medical conditions",
-   "hint": "{{<athlete>.conditions}}"
+   "hint": "{{<athlete>.conditions}}",
+   "kinds": [
+    "health"
+   ]
   },
   "medications": {
    "label": "Medications",
-   "hint": "{{<athlete>.medications}}"
+   "hint": "{{<athlete>.medications}}",
+   "kinds": [
+    "health"
+   ]
   },
   "medical_record_number": {
    "label": "Clinic medical record number",
-   "hint": "{{<athlete>.medical_record_number}}"
+   "hint": "{{<athlete>.medical_record_number}}",
+   "kinds": [
+    "id"
+   ]
   },
   "insurance_plan": {
    "label": "Insurance plan",
-   "hint": "{{family.insurance_plan}}"
+   "hint": "{{family.insurance_plan}}",
+   "kinds": [
+    "text"
+   ]
   },
   "insurance_member_id": {
    "label": "Insurance member ID",
-   "hint": "{{family.insurance_member_id}}"
+   "hint": "{{family.insurance_member_id}}",
+   "kinds": [
+    "id"
+   ]
   },
   "insurance_group_number": {
    "label": "Insurance group number",
-   "hint": "{{family.insurance_group_number}}"
+   "hint": "{{family.insurance_group_number}}",
+   "kinds": [
+    "id"
+   ]
   },
   "emergency_contact_name": {
    "label": "Emergency contact name",
-   "hint": "{{<parent>.name}} or text"
+   "hint": "{{<parent>.name}} or text",
+   "kinds": [
+    "name"
+   ]
   },
   "emergency_contact_phone": {
    "label": "Emergency contact phone",
-   "hint": "text"
+   "hint": "text",
+   "kinds": []
   }
  }
 }

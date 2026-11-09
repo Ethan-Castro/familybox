@@ -14,14 +14,53 @@ The logic lives in familybox.formfill; this module only wires it into the box.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import sys
+import threading
 import time
 from typing import Annotated
 
 from pydantic import Field
 
 from .. import formfill
+
+log = logging.getLogger("familybox.forms")
+BROKEN = "The box couldn't fill that form. Ask the person who runs the box to check it."
+SWEEP_EVERY_S = 3600
+_sweepers: set[str] = set()
+_sweepers_lock = threading.Lock()
+
+
+def _sweep(cfg) -> None:
+    """Expire old forms and remove leftover PDFs. Never lets a sweep error stop a request."""
+    try:
+        formfill.sweep(cfg)
+    except Exception:  # noqa: BLE001
+        log.exception("forms sweep failed")
+
+
+def _start_sweeper(cfg) -> None:
+    """One background sweep per runtime folder, so filled PDFs expire even if nobody opens the Forms page."""
+    key = str(cfg.runtime)
+    with _sweepers_lock:
+        if key in _sweepers:
+            return
+        _sweepers.add(key)
+
+    def loop():
+        while cfg.runtime.exists():
+            time.sleep(SWEEP_EVERY_S)
+            _sweep(cfg)
+        with _sweepers_lock:
+            _sweepers.discard(key)
+
+    threading.Thread(target=loop, name="familybox-forms-sweep", daemon=True).start()
+
+
+def register(box) -> None:
+    _sweep(box.cfg)                 # at box start
+
 
 STATUS_TEXT = {"waiting": "Waiting for approval", "ready": "Approved, ready to download",
                "denied": "Denied. The filled PDF was deleted.", "expired": "Expired. The filled PDF was deleted.",
@@ -37,7 +76,11 @@ def mcp_tools(server, person, box) -> None:
                  description="The fillable forms on the family box, their fields, and how to reference a private "
                              "detail (like {{maya.ssn}}) so the box fills it without showing it to you.")
     async def list_family_forms() -> str:
-        return formfill.describe_templates(cfg)
+        try:
+            return formfill.describe_templates(cfg)
+        except Exception:  # noqa: BLE001 - never send raw errors to the assistant
+            log.exception("list_family_forms failed")
+            return "The box couldn't list its forms. Ask the person who runs the box to check it."
 
     @server.tool(name="fill_family_form", title="Fill a family form",
                  description="Fill a form on the family box. Give each field either plain text, or a reference "
@@ -51,10 +94,14 @@ def mcp_tools(server, person, box) -> None:
                                          description="Who the form is about, for example maya.")],
         fields: Annotated[dict[str, str], Field(description="Field name -> text or {{person.detail}} reference.")],
     ) -> str:
+        _sweep(cfg)
         try:
             return formfill.fill(cfg, person.id, form, for_person, fields, source="mcp", store=box.store).text
         except formfill.FormError as e:
             return str(e)
+        except Exception:  # noqa: BLE001 - logged on the box; the assistant gets plain words only
+            log.exception("fill_family_form failed")
+            return BROKEN
 
 
 # --- CLI ------------------------------------------------------------------------------------------
@@ -92,6 +139,7 @@ def run_cli(args, cfg) -> int | None:
     except KeyError as e:
         print(e.args[0])
         return 2
+    _sweep(cfg)
     try:
         if act == "fill":
             try:
@@ -112,8 +160,11 @@ def run_cli(args, cfg) -> int | None:
             rec = formfill.decide(cfg, args.person, args.id, act == "approve")
             if act == "deny":
                 print("Denied. The filled PDF was deleted.")
+            elif rec["status"] == "ready" and args.person in rec["recipients"]:
+                print("Approved. Everyone has approved; you can download the filled PDF now.")
             elif rec["status"] == "ready":
-                print("Approved. Everyone has approved; the filled PDF can be downloaded now.")
+                names = ", ".join(cfg.person(o).display for o in rec["recipients"])
+                print(f"Approved. Everyone has approved; {names} can download the filled PDF now.")
             else:
                 print("Approved. Still waiting for the others to approve.")
         elif act == "download":
@@ -146,8 +197,10 @@ def web_routes(ctx) -> list:
 
     cfg, esc = ctx.cfg, ctx.esc
     display = {p.id: p.display for p in cfg.people.values()}
+    _start_sweeper(cfg)
 
     def forms_page(sess, extra: str = "", status: int = 200):
+        _sweep(cfg)
         cards = []
         for r in formfill.forms_for(cfg, sess.person.id):
             me = sess.person.id

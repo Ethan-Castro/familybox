@@ -4,59 +4,93 @@
  "fields": {
   "student_name": {
    "label": "Student full name",
-   "hint": "{{<student>.name}}"
+   "hint": "{{<student>.name}}",
+   "kinds": [
+    "name"
+   ]
   },
   "student_ssn": {
    "label": "Student Social Security number",
-   "hint": "{{<student>.ssn}}"
+   "hint": "{{<student>.ssn}}",
+   "kinds": [
+    "ssn"
+   ]
   },
   "student_date_of_birth": {
    "label": "Student date of birth",
-   "hint": "{{<student>.date_of_birth}}"
+   "hint": "{{<student>.date_of_birth}}",
+   "kinds": [
+    "dob"
+   ]
   },
   "school_year": {
    "label": "School year applying for",
-   "hint": "text, for example 2027-28"
+   "hint": "text, for example 2027-28",
+   "kinds": []
   },
   "student_email": {
    "label": "Student email",
-   "hint": "text"
+   "hint": "text",
+   "kinds": []
   },
   "parent1_name": {
    "label": "Parent 1 full name",
-   "hint": "{{<parent>.name}}"
+   "hint": "{{<parent>.name}}",
+   "kinds": [
+    "name"
+   ]
   },
   "parent1_ssn": {
    "label": "Parent 1 Social Security number",
-   "hint": "{{<parent>.ssn}}"
+   "hint": "{{<parent>.ssn}}",
+   "kinds": [
+    "ssn"
+   ]
   },
   "parent1_wages": {
    "label": "Parent 1 wages (W-2 box 1)",
-   "hint": "{{<parent>.w2_wages}}"
+   "hint": "{{<parent>.w2_wages}}",
+   "kinds": [
+    "money"
+   ]
   },
   "parent2_name": {
    "label": "Parent 2 full name",
-   "hint": "{{<parent>.name}}"
+   "hint": "{{<parent>.name}}",
+   "kinds": [
+    "name"
+   ]
   },
   "parent2_ssn": {
    "label": "Parent 2 Social Security number",
-   "hint": "{{<parent>.ssn}}"
+   "hint": "{{<parent>.ssn}}",
+   "kinds": [
+    "ssn"
+   ]
   },
   "parent2_wages": {
    "label": "Parent 2 wages (W-2 box 1)",
-   "hint": "{{<parent>.w2_wages}}"
+   "hint": "{{<parent>.w2_wages}}",
+   "kinds": [
+    "money"
+   ]
   },
   "household_agi": {
    "label": "Adjusted gross income from the last tax return",
-   "hint": "{{<parent>.agi}}"
+   "hint": "{{<parent>.agi}}",
+   "kinds": [
+    "money"
+   ]
   },
   "household_size": {
    "label": "Number of people in the household",
-   "hint": "text"
+   "hint": "text",
+   "kinds": []
   },
   "signature_date": {
    "label": "Date signed",
-   "hint": "text"
+   "hint": "text",
+   "kinds": []
   }
  }
 }

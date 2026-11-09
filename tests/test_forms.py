@@ -429,3 +429,139 @@ def test_web_forms_page_approve_then_download(cfg):
     assert "attachment" in r.headers["content-disposition"] and r.headers["cache-control"] == "no-store"
     assert pdf_fields(r.content)["parent1_ssn"] == "987-65-4320"
     assert dana.post(f"/forms/{res.form_id}/bogus", data={"csrf": dtok}).status_code == 404
+
+
+# --- review fixes -------------------------------------------------------------------------------
+
+def test_approvers_only_see_masks_of_files_they_may_read(cfg, capsys):
+    from familybox import cli
+    res = formfill.fill(cfg, "dana", "student_aid_info", "maya",
+                        {"student_ssn": "{{maya.ssn}}", "parent1_ssn": "{{dana.ssn}}", "parent2_ssn": "{{sam.ssn}}",
+                         "parent1_wages": "{{dana.w2_wages}}"})
+    assert "maya" in res.approvers and res.recipients == ["dana"]
+    rows = formfill.forms_for(cfg, "maya")
+    text = json.dumps(rows)
+    assert "4320" not in text and "4321" not in text and "refs" not in rows[0] and "sources" not in rows[0]
+    assert "parent1_ssn: Dana's SSN (hidden)" in rows[0]["fields"]
+    assert "student_ssn: your SSN ending 4322" in rows[0]["fields"]
+    dana_lines = formfill.forms_for(cfg, "dana")[0]["fields"]
+    assert "parent1_ssn: your SSN ending 4320" in dana_lines and "parent2_ssn: Sam's SSN ending 4321" in dana_lines
+
+    maya, _ = _web_sign_in(cfg, "maya")
+    page = maya.get("/forms").text
+    assert res.form_id in page and "4320" not in page and "4321" not in page and "(hidden)" in page
+    assert cli.main(["forms", "mine", "--as", "maya"]) == 0
+    out = capsys.readouterr().out
+    assert res.form_id in out and "4320" not in out and "4321" not in out
+
+
+def test_approval_question_maps_fields_and_held_text_fits_the_owner(cfg, capsys):
+    from familybox import cli
+    res = formfill.fill(cfg, "dana", "student_aid_info", "maya",
+                        {"student_ssn": "{{maya.ssn}}", "parent1_ssn": "{{dana.ssn}}"})
+    item = Approvals(cfg).pending("maya")[0]
+    assert "student_ssn gets your SSN ending 4322" in item["question"]
+    assert "4320" not in item["question"] and "Dana can download it" in item["question"]
+    data = Approvals(cfg)._load()
+    assert data[f"form-{res.form_id}-maya"]["value"].startswith("Approved. Dana can download it")
+    assert data[f"form-{res.form_id}-dana"]["value"].startswith("Approved. Download it")
+    assert cli.main(["forms", "approve", "--as", "dana", res.form_id]) == 0
+    capsys.readouterr()
+    assert cli.main(["forms", "approve", "--as", "maya", res.form_id]) == 0
+    out = capsys.readouterr().out
+    assert "Dana can download" in out and "you can download" not in out
+
+
+def test_reference_must_fit_the_field_kind(cfg):
+    with pytest.raises(formfill.FormError, match="student_name: this field doesn't take a SSN"):
+        formfill.fill(cfg, "maya", "student_aid_info", "maya", {"student_name": "{{maya.ssn}}"})
+    with pytest.raises(formfill.FormError, match="school_year"):
+        formfill.fill(cfg, "maya", "student_aid_info", "maya", {"school_year": "{{maya.date_of_birth}}"})
+    assert not list((cfg.runtime / "forms").glob("*.pdf"))
+
+
+def test_expired_and_orphaned_pdfs_are_swept_without_anyone_looking(cfg):
+    from familybox import plugins
+    from familybox.box import Box
+    old = formfill.fill(cfg, "maya", "sports_medical", "maya", {"allergies": "{{maya.allergies}}"})
+    new = formfill.fill(cfg, "maya", "sports_medical", "maya", {"allergies": "{{maya.allergies}}"})
+    d = cfg.runtime / "forms"
+    orphan = d / "orphanpdfx.pdf"
+    orphan.write_bytes(b"%PDF-1.4 left over")
+    with formfill._locked(cfg):
+        data = formfill._load(cfg)
+        data[old.form_id]["created"] -= formfill.FORM_TTL_S + 60
+        formfill._save(cfg, data)
+    Box(cfg)                                                   # box start runs the sweep
+    assert not orphan.exists() and not formfill.pdf_path(cfg, old.form_id).exists()
+    assert formfill.pdf_path(cfg, new.form_id).exists()
+    assert Approvals(cfg)._load()[f"form-{old.form_id}-maya"]["status"] == "denied"
+    assert plugins  # imported for the side effect of loading the forms plugin
+
+
+def test_damaged_index_is_moved_aside_and_its_pdfs_removed(cfg):
+    res = formfill.fill(cfg, "maya", "sports_medical", "maya", {"allergies": "{{maya.allergies}}"})
+    idx = cfg.runtime / "forms" / "index.json"
+    idx.write_text("{ not json")
+    formfill.sweep(cfg)
+    aside = list(idx.parent.glob("index.damaged-*.json"))
+    assert len(aside) == 1 and aside[0].read_text() == "{ not json"
+    assert stat.S_IMODE(aside[0].stat().st_mode) == 0o600
+    assert not formfill.pdf_path(cfg, res.form_id).exists()
+    assert Approvals(cfg).pending("maya") == []                # its approval can't lead anywhere: closed
+    idx.write_text("[1, 2]")
+    assert formfill.forms_for(cfg, "maya") == [] and len(list(idx.parent.glob("index.damaged-*.json"))) == 2
+
+
+def test_too_many_waiting_forms_are_refused(cfg, monkeypatch):
+    for _ in range(formfill.MAX_WAITING):
+        formfill.fill(cfg, "maya", "sports_medical", "maya", {"allergies": "{{maya.allergies}}"})
+    with pytest.raises(formfill.FormError, match="Too many forms are waiting"):
+        formfill.fill(cfg, "maya", "sports_medical", "maya", {"allergies": "{{maya.allergies}}"})
+    assert len(list((cfg.runtime / "forms").glob("*.pdf"))) == formfill.MAX_WAITING
+    formfill.fill(cfg, "dana", "student_aid_info", "dana", {"parent1_ssn": "{{dana.ssn}}"})   # others unaffected
+    more = formfill.MAX_FILLS_PER_HOUR - formfill.MAX_WAITING
+    monkeypatch.setattr(formfill, "MAX_WAITING", 100)
+    for _ in range(more):
+        formfill.fill(cfg, "maya", "sports_medical", "maya", {"allergies": "{{maya.allergies}}"})
+    with pytest.raises(formfill.FormError, match="in the last hour"):
+        formfill.fill(cfg, "maya", "sports_medical", "maya", {"allergies": "{{maya.allergies}}"})
+
+
+@pytest.mark.parametrize("side", ["[1, 2]", '{"fields": [1]}', '{"fields": {"allergies": "x"}}', "not json"])
+def test_odd_sidecar_does_not_break_the_list(cfg, side):
+    (cfg.home / "forms" / "sports_medical.json").write_text(side)
+    ts = {t.slug: t for t in formfill.list_templates(cfg)}
+    assert set(ts) == {"student_aid_info", "sports_medical"}
+    assert ts["sports_medical"].fields["allergies"] == {"label": "allergies", "hint": "", "kinds": None}
+
+
+def test_mcp_fill_hides_unexpected_errors(cfg, monkeypatch):
+    from familybox import mcp_server
+
+    def boom(*a, **k):
+        raise OSError("disk path /secret/thing")
+    monkeypatch.setattr(formfill, "fill", boom)
+    server = mcp_server.build_server("dana", "replay")
+    got = asyncio.run(server.call_tool("fill_family_form", {"form": "x", "for_person": "dana", "fields": {"a": "b"}}))
+    assert got.content[0].text == "The box couldn't fill that form. Ask the person who runs the box to check it."
+
+
+def test_approvals_and_audit_files_are_private(cfg):
+    formfill.fill(cfg, "maya", "sports_medical", "maya", {"allergies": "{{maya.allergies}}"})
+    assert stat.S_IMODE((cfg.runtime / "approvals.json").stat().st_mode) == 0o600
+    assert stat.S_IMODE((cfg.runtime / "audit" / "maya.jsonl").stat().st_mode) == 0o600
+
+
+def test_concurrent_approval_writers_lose_nothing(cfg):
+    import threading
+    appr = Approvals(cfg)
+
+    def add(i):
+        appr.add("maya", "q", [gate.Held(f"item-{i}", "ssn", "l", "v", "maya", "p")])
+    ts = [threading.Thread(target=add, args=(i,)) for i in range(20)]
+    for t in ts:
+        t.start()
+    for t in ts:
+        t.join()
+    assert len(appr._load()) == 20
