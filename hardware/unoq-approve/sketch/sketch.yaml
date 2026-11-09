@@ -1,0 +1,9 @@
+# UNTESTED ON HARDWARE. App Lab normally writes this file itself; if it complains, create a new app in
+# App Lab and paste sketch.ino into it instead. Arduino_LED_Matrix and Arduino_RouterBridge come with the
+# UNO Q board package (arduino:zephyr), so no extra libraries are listed.
+profiles:
+  default:
+    fqbn: arduino:zephyr:unoq
+    platforms:
+      - platform: arduino:zephyr
+default_profile: default

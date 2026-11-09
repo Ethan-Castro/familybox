@@ -124,7 +124,9 @@ def main(argv: list[str] | None = None) -> int:
         for item in Approvals(cfg).pending(args.person):
             print(json.dumps(item))
     elif args.cmd in ("approve", "deny"):
-        print(json.dumps(Approvals(cfg).decide(args.person, args.id, args.cmd == "approve")))
+        result = Approvals(cfg).decide(args.person, args.id, args.cmd == "approve")
+        result.pop("decision", None)
+        print(json.dumps(result))
     elif args.cmd == "log" and args.action == "verify":
         return _log_verify(cfg, args)
     elif args.cmd == "log":

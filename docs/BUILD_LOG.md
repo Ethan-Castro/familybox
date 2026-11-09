@@ -306,3 +306,53 @@ What stayed the same and what changed:
 - **Low:** the key must be limited to exactly `["anchor"]` (an empty list means any method); damaged `anchor_id.json` or `near_key.json` gives a plain error; network errors become plain errors; `anchor check` says when the box id is registered to another account; ANCHOR.md says the first dry run makes the box's anchor id. Borsh: added the transfer transaction vector from near-api-js's own tests as a reference fixture for the transaction layout (the FunctionCall action itself still has no outside vector).
 - **Still not done:** the contract is still not compiled and `cargo test` was still not run (no Rust toolchain here). No live NEAR calls.
 - **Tests:** 185 passed. No live calls were made.
+
+## 2026-11-08: Approve button on the Arduino UNO Q (branch feat/unoq)
+
+- **What:** a physical Approve button for held items. `familybox device add --as dana` makes an approver
+  device token (shown once, only its SHA-256 is stored, scope "approve"). The device polls a small JSON API on
+  the box's web server (`GET /api/device/v1/pending`, `POST /api/device/v1/items/<id>/approve|deny`, bearer
+  token only) and scrolls "Maya's ChatGPT wants Dana's passport number" on the UNO Q's LED matrix. Press to
+  approve the oldest item, hold to deny. Plugin: `src/familybox/plugins/approver_devices.py`, store:
+  `src/familybox/devices.py`, app: `hardware/unoq-approve/`.
+- **Never sends values:** the API returns who asked, which assistant, whose detail and what kind; never the
+  value, the question or a file path. Health details are only called "health detail" on the matrix. A
+  button-approved value can be seen once on the owner's signed-in Devices page, within a day.
+- **Security:** the token only works on the device API (not a cookie, so no CSRF; requests with an Origin
+  header are refused), it can only decide its own person's items, and 10 wrong tokens lock an address out
+  for 10 minutes. The device pins the box's self-signed certificate by SHA-256 and checks it before sending
+  the token. A press only counts once the item has been on screen for 1.5 seconds.
+- **Core change:** held items now record the question's source (`Approvals.add(..., source=)`), so the
+  button can say which assistant asked. Today's sources do not name the assistant (mcp-stdio, mcp-remote),
+  so real requests read "Maya's assistant wants ..." until a connection reports its client name.
+- **Run on this laptop:** the box's page on 127.0.0.1 with a copy of the demo household, a replayed question
+  that held two of Maya's health details, a real device token, and the simulator over pinned HTTPS: one
+  approved, one denied, both recorded in the approvals file and Maya's audit log.
+- **Not run on hardware:** the UNO Q (ArduinoQ-01) is offline and was not contacted. The sketch has not been
+  compiled. The README lists what to check on the board.
+- **Tests:** 178 passed (113 before, 27 for the device API and CLI, 38 for the button app). No NEAR calls.
+
+## 2026-11-08: Approve button review fixes (branch feat/unoq)
+
+- **Correction to "never sends values" above:** the first version sent the box's own held-item id to the
+  button. That id is `sha256(path|kind|value)[:10]` with no key, so anyone holding the button's token (or a
+  log of its traffic) could brute-force the value back out (an SSN is about a billion guesses). Now each
+  waiting item gets a random handle (`secrets.token_urlsafe(12)`), kept in `<runtime>/devices/handles.json`
+  (0600). Only the handle leaves the box; the Devices page uses it too. A detail held again gets a new handle.
+- **No lost or cut-off approvals:** `Approvals` now takes one lock (`<runtime>/.approvals.lock`) around every
+  read-modify-write and writes atomically (temp file, fsync, rename), with the file kept 0600. The button
+  decides through one locked step (`decide_if_waiting`). Tested with a hold and a button press running at
+  the same time, and a reader polling while 60 holds are written.
+- **Shown once means once:** every decision gets a random stamp. The Devices page shows a button-approved
+  value only while the item still carries that stamp, so a detail held again, or approved on /approvals,
+  can't be shown a second time there.
+- **Assistant names:** the MCP server now records the client's own name from the MCP handshake
+  (`clientInfo.name`) as `mcp-remote:<name>` or `mcp-stdio:<name>`. Tested in-process with a client that calls
+  itself "OpenAI-MCP": the button text reads "Maya's ChatGPT wants Dana's passport number". Not yet checked
+  against the real ChatGPT, Claude, Codex or Cursor clients, so which names they send is unverified; with no
+  name it still reads "Maya's assistant wants ...".
+- **Button keeps going:** an unexpected error in a poll or send now shows THE BOX HAD A PROBLEM and the
+  loop keeps running (before, the network thread could die and leave SENDING on screen). A lockout has its
+  own message (TOO MANY WRONG TRIES. WAIT 10 MINUTES), and after "not set up" or a lockout the button checks
+  once a minute instead of every 3 seconds, so a removed button can't lock out its own address.
+- **Lockout memory is bounded:** empty entries are dropped and at most 1000 addresses are remembered.

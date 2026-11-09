@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import sys
 from typing import Annotated
 
@@ -40,6 +41,23 @@ def connection_of(ctx) -> str:
     return str(scope.get("familybox_connection", ""))[:40]
 
 
+def client_name(ctx: Context | None) -> str:
+    """The assistant's own name from the MCP handshake (clientInfo.name), cleaned to a short lowercase
+    word like "openai-mcp" or "claude-ai". Empty when the client did not say. Only used for labels such as
+    "Maya's ChatGPT wants ...", never for deciding who may read what (that is FAMILYBOX_PERSON)."""
+    try:
+        params = ctx.session.client_params if ctx is not None else None
+        name = params.client_info.name if params is not None and params.client_info is not None else ""
+    except Exception:   # noqa: BLE001  no session details: just leave the name out
+        return ""
+    return re.sub(r"[^a-z0-9._-]", "", str(name or "").lower())[:40]
+
+
+def source_for(base: str, ctx: Context | None) -> str:
+    name = client_name(ctx)
+    return f"{base}:{name}" if name else base
+
+
 def build_server(person_id: str, mode: str = "auto", source: str = "mcp-stdio", *,
                  cfg: config.Config | None = None, box: Box | None = None) -> MCPServer:
     """cfg and box default to FAMILYBOX_HOME and a new Box; the remote /mcp route passes the web app's own."""
@@ -57,7 +75,8 @@ def build_server(person_id: str, mode: str = "auto", source: str = "mcp-stdio", 
                                        description="The question, in plain language.")],
         ctx: Context,
     ) -> str:
-        ans = await box.ask_async(person.id, question, source=source, connection=connection_of(ctx))
+        ans = await box.ask_async(person.id, question, source=source_for(source, ctx),
+                                  connection=connection_of(ctx))
         e = ans.enclave or {}
         lines = [ans.text, "", "---"]
         if ans.outcome == "error":

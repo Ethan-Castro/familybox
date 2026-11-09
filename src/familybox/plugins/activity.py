@@ -193,7 +193,7 @@ def web_routes(ctx):
         rows = []
         for s in act.list_activity(cfg, viewer, who):
             person = cfg.people[s.person].display if s.person in cfg.people else s.person
-            src = act.SOURCE_SHORT.get(s.source, s.source or "Unknown")
+            src = act.source_short(s.source)
             q = text_for(sess, s.person, s.qid)
             label = esc(q[:80] + ("..." if len(q) > 80 else "")) if q else "(question text is not kept)"
             rows.append(f'<tr><td><a href="/activity/{esc(s.qid)}">{act.when_html(s.started)}</a>'

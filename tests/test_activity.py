@@ -514,3 +514,11 @@ def test_times_name_their_zone_and_can_be_localized(cfg):
     zone = dt.datetime.fromtimestamp(1_790_000_000).astimezone().tzname()
     assert act.when(1_790_000_000).endswith(zone)
     assert "Live updates stopped. Reload the page." in plugin.JS and "r.status === 401" in plugin.JS
+
+
+def test_source_labels_keep_the_assistant_name_from_the_handshake():
+    from familybox import activity as act
+    assert act.source_short("mcp-remote:openai-mcp") == "Web assistant (ChatGPT)"
+    assert act.source_short("mcp-stdio") == "Assistant app"
+    assert act.source_label("mcp-stdio:claude-ai").endswith("which said it is Claude")
+    assert act.source_short("mcp-http-local:some-tool") == "Local assistant (some-tool)"

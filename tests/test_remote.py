@@ -236,7 +236,7 @@ async def test_full_oauth_flow_then_mcp_over_http(http, cfg):
     assert "held for Maya's approval" in out and "Albuterol" not in out
 
     last = [e for e in audit(cfg, "maya") if "source" in e][-1]
-    assert last["source"] == "mcp-remote"
+    assert last["source"].partition(":")[0] == "mcp-remote"   # ":<client name>" is a label (feat/unoq)
     assert last["question_sha256"] == hashlib.sha256(MAYA_Q.encode()).hexdigest()
     linked = [e for e in audit(cfg, "maya") if e.get("event") == "assistant_linked"]
     assert linked and linked[0]["assistant"] == "Claude" and linked[0]["returns_to"] == "claude.ai"
@@ -287,7 +287,7 @@ async def test_maya_token_cannot_act_as_dana(http, cfg):
     assert "987-65-" not in out
     assert len(audit(cfg, "dana")) == before
     dana_q = hashlib.sha256(DANA_Q.encode()).hexdigest()
-    assert [e for e in audit(cfg, "maya") if e.get("question_sha256") == dana_q][-1]["source"] == "mcp-remote"
+    assert [e for e in audit(cfg, "maya") if e.get("question_sha256") == dana_q][-1]["source"].partition(":")[0] == "mcp-remote"
 
     # Maya's session id with Dana's token: the session isn't found for her credential.
     hijack = await http.post("/mcp", json={"jsonrpc": "2.0", "id": 9, "method": "tools/list"},
@@ -834,7 +834,7 @@ async def test_questions_record_which_connection_asked(http, cfg):
     await m.initialize()
     await m.call("ask_family_box", {"question": MAYA_Q})
     asked = [e for e in audit(cfg, "maya") if e.get("qid")]
-    assert asked[-1]["source"] == "mcp-remote" and asked[-1]["connection"] == conn
+    assert asked[-1]["source"].partition(":")[0] == "mcp-remote" and asked[-1]["connection"] == conn
     tid, api = remote.RemoteStore(cfg).new_api_token("maya", "Cursor")
     m2 = Mcp(http, api)
     await m2.initialize()

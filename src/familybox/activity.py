@@ -46,6 +46,28 @@ SOURCE_LABELS = {
 }
 SOURCE_SHORT = {"web": "Web page", "cli": "Command line", "mcp-stdio": "Assistant app", "mcp-remote": "Web assistant",
                 "mcp-http-local": "Local assistant"}
+
+
+def _split_source(src: str) -> tuple[str, str | None]:
+    """'mcp-stdio:claude-ai' -> ('mcp-stdio', 'Claude'). The part after ':' is the assistant's own name
+    from the MCP handshake (feat/unoq); it is only a label, never used to decide who may read what."""
+    base, _, client = (src or "").partition(":")
+    if not client:
+        return base, None
+    from .devices import assistant_name
+    return base, assistant_name(client) or client
+
+
+def source_label(src: str) -> str:
+    base, name = _split_source(src)
+    how = SOURCE_LABELS.get(base, base or "an unknown connection")
+    return f"{how}, which said it is {name}" if name else how
+
+
+def source_short(src: str) -> str:
+    base, name = _split_source(src)
+    short = SOURCE_SHORT.get(base, base or "Unknown")
+    return f"{short} ({name})" if name else short
 OUTCOME_LABELS = {
     "pass": "Answered", "masked": "Answered, numbers removed", "held": "Answered, details held",
     "refused": "Blocked", "error": "Stopped", "running": "Running", "unfinished": "Did not finish",
@@ -442,7 +464,7 @@ def render_detail(view: View, events: list[dict], audit: dict | None, status: st
         key = f"ev-{n}"
         if step == "question":
             src = str(ev.get("source", ""))
-            how = SOURCE_LABELS.get(src, src or "an unknown connection")
+            how = source_label(src)
             mode = ev.get("mode")
             mode_txt = {"live": "Live: the question goes to the NEAR AI enclave model.",
                         "record": "Live, and recorded for the demo.",

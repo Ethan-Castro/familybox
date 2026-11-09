@@ -1,0 +1,6 @@
+name: Family box Approve button
+description: "Shows who wants one of your private details from the family box. Press to approve, hold to deny."
+icon: 🔐
+version: "0.1.0"
+ports: []
+bricks: []
