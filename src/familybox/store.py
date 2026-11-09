@@ -170,8 +170,8 @@ class Store:
         return hits[:limit]
 
     def read(self, person: Person, rel_path: str, max_chars: int = 12000) -> str | None:
-        rel_path = rel_path.strip().lstrip("/")
-        if not access.can_read(person, rel_path):
+        rel_path = access.canonical(rel_path)
+        if not rel_path or not access.can_read(person, rel_path):
             return None
         target = (self.cfg.files / rel_path).resolve()
         if self.cfg.files.resolve() not in target.parents or not target.is_file():

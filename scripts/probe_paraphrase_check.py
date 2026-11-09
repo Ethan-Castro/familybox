@@ -2,7 +2,8 @@
 
 Fictional demo data only. Two answers per model (one reworded leak, one clean), so 2 calls per model.
 Run:  uv run --env-file .env python scripts/probe_paraphrase_check.py [--models a,b] [--format json_schema]
-Prints only verdict shapes, timings, signature kinds and token counts.
+Prints only verdict shapes, timings, signature kinds and token counts, and appends the same JSON lines to
+eval/results/<date>/probe_paraphrase.jsonl (no answer text, spans or fact values) so they can be committed.
 """
 
 from __future__ import annotations
@@ -11,6 +12,7 @@ import argparse
 import asyncio
 import json
 import sys
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -63,6 +65,10 @@ async def main() -> int:
                 row.update(error=str(e))
             print(json.dumps(row), flush=True)
             out.append(row)
+    outdir = ROOT / "eval" / "results" / time.strftime("%Y-%m-%d")
+    outdir.mkdir(parents=True, exist_ok=True)
+    with (outdir / "probe_paraphrase.jsonl").open("a") as f:
+        f.writelines(json.dumps(r) + "\n" for r in out)
     return 0
 
 

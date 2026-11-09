@@ -123,7 +123,7 @@ class FileTools:
             if text is None:
                 ctx.files_denied.append(path)
                 return json.dumps({"error": "not found or not yours to read"})
-            ctx.files_read.append(path)
+            ctx.files_read.append(access.canonical(path))   # one spelling, so post checks find its facts
             return text
         return None
 

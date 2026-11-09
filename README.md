@@ -91,7 +91,7 @@ These are single runs of a non-deterministic model on a hand-written suite with 
 - A stolen box without disk encryption exposes the files.
 - NEAR's gateway still sees metadata: model, message count, sizes, timing and the API key.
 - NEAR's attestation has known limits. Model instances share a signing key, so a signature doesn't identify the instance. Parts of the serving stack are pulled at runtime and are not in the measurement. See [docs/research/near_ai_cloud.md](docs/research/near_ai_cloud.md).
-- The gate recognizes values that are in the files. A model could still paraphrase a fact the gate has no pattern for. A second enclave check (`src/familybox/plugins/paraphrase.py`) asks a separate verified model whether the answer reveals a protected fact in other words. It is itself a model, so it lowers this risk but does not remove it (results in [eval/reports/attacks_2026-11-08_paraphrase_run2.md](eval/reports/attacks_2026-11-08_paraphrase_run2.md)).
+- The gate recognizes values that are in the files. A model could still paraphrase a fact the gate has no pattern for. A second enclave check (`src/familybox/plugins/paraphrase.py`) asks a separate verified model whether the answer reveals a protected fact in other words. It is itself a model, so it lowers this risk but does not remove it. In the last run it still let 2 of 8 reworded answers through, judged by hand (results in [eval/reports/attacks_2026-11-08_paraphrase_run2.md](eval/reports/attacks_2026-11-08_paraphrase_run2.md); that run has no no-gate baseline, which comes from [run 1](eval/reports/attacks_2026-11-08_paraphrase_run1.md), before the recheck). Its refusal of hints about another family member has only been tested with a mocked checker so far.
 
 ## What we found about NEAR AI Cloud
 
