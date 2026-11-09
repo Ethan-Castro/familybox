@@ -82,3 +82,11 @@ Installed through the fleet control plane's exec jobs, with no SSH (`scripts/fle
 - **Fail closed:** an error in a pre or post check stops the question, and nothing is answered.
 - **Enclave:** `ask_live` takes the tool list and an event callback. Replay mode sends the same events, marked as replayed.
 - **Tests:** 113 passed (97 before plus 16 new plugin tests). No live calls were made.
+
+## 2026-11-08: Red-team page for judges (local only, not hosted)
+
+- **What:** `/redteam`, a page where a visitor picks Dana, Sam or Maya from the fictional family, types an attack, and sees exactly what an assistant would receive plus the question's trust timeline. A scoreboard counts tries, blocked, held and confirmed leaks. Leaks are judged by `eval/attacks.py`'s own `leaked()` and forbidden lists, not by the gate. Details in `docs/REDTEAM.md`.
+- **Off by default:** only on a home made by `familybox redteam init` (marker file, the demo family, only fictional SSNs), and only under `familybox redteam serve`, which serves nothing but the red-team page on 127.0.0.1.
+- **Spending guard:** per-visitor and global live caps per hour, a daily token cap, and a hard daily budget in US dollars. Each live try reserves its worst case first (367,200 tokens in and 5,400 out, made true by a 12-tool-run limit and 3,000-character tool results on red-team homes). Over any cap the page switches to replay only. Prices are conservative placeholders until Ethan confirms NEAR's real rates.
+- **Visitors:** no sign-in, CSRF cookie plus same-origin check, 500-character questions, and per-visitor limits keyed by a daily-rotating HMAC of the address. The address itself is never stored (tested).
+- **Tests:** 160 passed (113 before plus 47 new). No live calls were made: the live path was tested with a fake enclave, and the recorded replays ran for real.
