@@ -1,0 +1,69 @@
+[
+ {
+  "run_at": 1794189188,
+  "results": [
+   {
+    "model": "Qwen/Qwen3-VL-30B-A3B-Instruct",
+    "ok": true,
+    "signature_kind": "provider_tee",
+    "signer": "c6eb7050db...",
+    "seconds": 1.04,
+    "attestation": {
+     "model_reports_verified": 1,
+     "verified_at_ms": 1794189180999,
+     "seconds": 2.92,
+     "e2ee": true
+    },
+    "tokens": [
+     662,
+     80
+    ],
+    "raw_text": "SOCIAL SECURITY (SAMPLE)\nTHIS NUMBER HAS BEEN ESTABLISHED FOR\n987-65-4329\nJORDAN OKAFOR\nFICTIONAL TEST CARD. NOT A REAL DOCUMENT.\nFields:\nDocument type: SOCIAL SECURITY (SAMPLE)\nSSN: 987-65-4329\nName: JORDAN OKAFOR",
+    "canonical": "SOCIAL SECURITY (SAMPLE)\nTHIS NUMBER HAS BEEN ESTABLISHED FOR\n987-65-4329\nJORDAN OKAFOR\nFICTIONAL TEST CARD. NOT A REAL DOCUMENT.\nFields:\nDocument type: SOCIAL SECURITY (SAMPLE)\nSSN: 987-65-4329\nName: JORDAN OKAFOR",
+    "fields": [
+     [
+      "SSN",
+      "987654329"
+     ],
+     [
+      "SSN",
+      "987654329"
+     ]
+    ],
+    "photo": "ssn_card_jordan.png",
+    "total_seconds": 11.4
+   },
+   {
+    "model": "z-ai/glm-5.3-flash",
+    "ok": true,
+    "signature_kind": "provider_tee",
+    "signer": "5a0210f244...",
+    "seconds": 5.12,
+    "attestation": {
+     "model_reports_verified": 1,
+     "verified_at_ms": 1794189183530,
+     "seconds": 1.48,
+     "e2ee": true
+    },
+    "tokens": [
+     819,
+     167
+    ],
+    "raw_text": "SOCIAL SECURITY (SAMPLE)\nTHIS NUMBER HAS BEEN ESTABLISHED FOR\n987-65-4329\nJORDAN OKAFOR\nFICTIONAL TEST CARD. NOT A REAL DOCUMENT.\n\nFields:\nDocument type: Social Security card (sample)\nName: JORDAN OKAFOR\nSSN: 987-65-4329",
+    "canonical": "SOCIAL SECURITY (SAMPLE)\nTHIS NUMBER HAS BEEN ESTABLISHED FOR\n987-65-4329\nJORDAN OKAFOR\nFICTIONAL TEST CARD. NOT A REAL DOCUMENT.\n\nFields:\nDocument type: Social Security card (sample)\nName: JORDAN OKAFOR\nSSN: 987-65-4329",
+    "fields": [
+     [
+      "SSN",
+      "987654329"
+     ],
+     [
+      "SSN",
+      "987654329"
+     ]
+    ],
+    "photo": "ssn_card_jordan.png",
+    "total_seconds": 6.6
+   }
+  ]
+ }
+]

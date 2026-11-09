@@ -42,7 +42,7 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 from . import access
 from .approvals import Approvals
 from .config import Config, Person
-from .store import Store
+from .store import TRANSCRIPT_SUFFIX, Store, photo_of
 
 CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"   # no 0/O, 1/I/L
 CODE_LEN = 8
@@ -85,8 +85,9 @@ def _write_private(path: Path, data: bytes) -> None:
 
 def _audit(cfg: Config, person_id: str, entry: dict) -> None:
     log = cfg.runtime / "audit" / f"{person_id}.jsonl"
-    log.parent.mkdir(parents=True, exist_ok=True)
-    with log.open("a") as f:
+    log.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    fd = os.open(log, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+    with os.fdopen(fd, "a") as f:
         f.write(json.dumps({"time": int(time.time())} | entry) + "\n")
 
 
@@ -324,6 +325,8 @@ button.danger { background: transparent; color: var(--bad); border: 1px solid va
 .value { font: 600 22px/1.3 ui-monospace, Menlo, Consolas, monospace; word-break: break-all;
   padding: 12px; border: 2px dashed var(--accent); border-radius: 8px; margin: 8px 0; }
 ul.files { list-style: none; padding: 0; margin: 0; }
+main img { max-width: 100%; height: auto; display: block; }
+pre.value { white-space: pre-wrap; font-size: 16px; }
 ul.files li { padding: 10px 0; border-bottom: 1px solid var(--line); }
 ul.files li:last-child { border-bottom: 0; }
 .name { word-break: break-all; }
@@ -397,6 +400,10 @@ def safe_filename(raw: str) -> str:
         raise UploadError("That file type isn't allowed. Use .txt, .md, .pdf, .json or .csv.")
     stem = re.sub(r"[^A-Za-z0-9._ -]+", "_", stem)
     stem = re.sub(r"[ _]{2,}", "_", stem).strip(" ._-")[:100] or "file"
+    if (stem + suffix).lower().endswith(TRANSCRIPT_SUFFIX):
+        # Only the box writes a photo's text. An upload with this name could pass itself off as one.
+        raise UploadError("Names ending in .transcript.txt are kept for the text the box reads from photos. "
+                          "Rename the file and try again.")
     return stem + suffix
 
 
@@ -482,6 +489,12 @@ def _reindex(cfg: Config) -> None:
         store.reindex()
     finally:
         store.db.close()
+
+
+def photo_text_of(cfg: Config, rel: str) -> str | None:
+    """The photo this file's text was read from, if that photo is still on the box."""
+    photo = photo_of(rel)
+    return photo if photo and (cfg.files / photo).is_file() else None
 
 
 def readable_files(cfg: Config, person: Person) -> list[tuple[str, int]]:
@@ -708,7 +721,11 @@ def create_app(cfg: Config, *, port: int = 8443, remote_only: bool = False, box=
         rows = []
         for rel, size in readable_files(cfg, sess.person):
             delete = ""
-            if can_delete(sess.person, rel):
+            photo = photo_text_of(cfg, rel)
+            if photo:
+                delete = (f'<span class="muted">Text read from the photo {esc(PurePosixPath(photo).name)}. '
+                          f'To remove it, remove the photo on the <a href="/photos">Photos page</a>.</span>')
+            elif can_delete(sess.person, rel):
                 delete = (f'<form method="post" action="/files/delete">{_csrf_field(sess.csrf)}'
                           f'<input type="hidden" name="path" value="{esc(rel)}">'
                           f'<button class="danger" type="submit">Remove</button></form>')
@@ -735,6 +752,9 @@ def create_app(cfg: Config, *, port: int = 8443, remote_only: bool = False, box=
         if (not can_delete(sess.person, rel) or root not in target.parents or not target.is_file()
                 or target.relative_to(root).as_posix() != rel):
             return forbidden("You can only remove your own files.")
+        if photo_text_of(cfg, rel):
+            return forbidden("This is the text read from a photo. Remove the photo on the Photos page, "
+                             "and its text goes with it.")
         data = target.read_bytes()
         target.unlink()
         _audit(cfg, sess.person.id, {"event": "delete", "folder": PurePosixPath(rel).parent.as_posix(),

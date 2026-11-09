@@ -65,6 +65,24 @@ def new_qid() -> str:
     return secrets.token_hex(6)
 
 
+def scrub_list(values: list[Sensitive]) -> list[Sensitive]:
+    """The protected values worth scrubbing from event logs (long enough not to hit ordinary text)."""
+    return [s for s in values if len(gate.normalize(s.value)) >= (8 if s.kind == "health" else 4)]
+
+
+def scrub_value(v, values: list[Sensitive]):
+    """Replace any protected value inside v (str, dict, list) with "[protected]"."""
+    if isinstance(v, str):
+        for s in values:
+            v = gate.loose_pattern(s.value).sub("[protected]", v)
+        return v
+    if isinstance(v, dict):
+        return {k: scrub_value(x, values) for k, x in v.items()}
+    if isinstance(v, (list, tuple)):
+        return [scrub_value(x, values) for x in v]
+    return v
+
+
 class Question:
     """Per-question context handed to tool providers, checks and the enclave's emit callback."""
 
@@ -87,18 +105,9 @@ class Question:
         return self.box.cfg.runtime / "events" / self.person.id / f"{self.qid}.jsonl"
 
     def _scrub_value(self, v):
-        if isinstance(v, str):
-            if self._scrub is None:
-                self._scrub = [s for s in self.box.store.sensitive_values()
-                               if len(gate.normalize(s.value)) >= (8 if s.kind == "health" else 4)]
-            for s in self._scrub:
-                v = gate.loose_pattern(s.value).sub("[protected]", v)
-            return v
-        if isinstance(v, dict):
-            return {k: self._scrub_value(x) for k, x in v.items()}
-        if isinstance(v, (list, tuple)):
-            return [self._scrub_value(x) for x in v]
-        return v
+        if self._scrub is None:
+            self._scrub = scrub_list(self.box.store.sensitive_values())
+        return scrub_value(v, self._scrub)
 
     def emit(self, step: str, **data) -> dict:
         """Record one step. Never pass file text or answer text; protected values are scrubbed anyway."""

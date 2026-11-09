@@ -129,3 +129,36 @@ Installed through the fleet control plane's exec jobs, with no SSH (`scripts/fle
 - Merge note: this branch and feat/remote both change the `Box.ask_async` area of box.py. Whichever merges second should be rebased on the other, then the full suite rerun.
 - **Tests:** 147 passed (140 before plus 7 new), all in replay mode. No live calls were made.
 
+
+## 2026-11-08: Photo transcription, both copies kept
+
+- **What:** `familybox add --as <person> photo.jpg [--folder ids]` and a Photos page on the box. Built as a plugin (`src/familybox/plugins/photos.py`) plus `src/familybox/vision.py`. Core edits: `store.py` (reading a photo returns its transcript, never the image bytes; search hits from a transcript name their photo) and two CSS rules in `web.py`.
+- **How a photo leaves the box:** Pillow checks the size, turns it upright and re-encodes it as a JPEG without EXIF, so location and camera data stay home. Then the SDK verifies attestation, the request is E2EE to the attested key, and the reply must carry a verified `provider_tee` signature. Any failure keeps the photo, writes no transcript and indexes nothing. It can be retried later.
+- **Both copies:** the original (0600, byte for byte) and `<photo>.transcript.txt` (0600). The transcript header holds model, signer, signature kind, time and the photo's SHA-256; the box page warns when the transcript no longer matches the photo. Model output is cleaned into labeled lines the store indexes (`SSN:`, `Member ID:`, `Passport number:`, ...). Ruler lines are dropped so the model cannot fake the header.
+- **Which model reads images under E2EE (live, one fictional SSN card each):**
+
+| Model | Result | Signature | Time (attestation + reply) | Tokens in/out |
+|---|---|---|---|---|
+| Qwen/Qwen3-VL-30B-A3B-Instruct | correct, word for word | provider_tee, verified | 2.9 s + 1.0 s | 662 / 80 |
+| z-ai/glm-5.3-flash | correct, word for word | provider_tee, verified | 1.5 s + 5.1 s | 819 / 167 |
+
+  Both work. Qwen3-VL is the default (faster reply, fewer tokens); `vision_model` in family.toml or `FAMILYBOX_VISION_MODEL` switches it. Image content parts are sent inside the encrypted message content (the SDK JSON-encodes list content before encrypting it), and both enclaves decoded them. Raw output: `spikes/vision_probe_results.json`.
+- **Live end to end (scratch copy of the demo household):**
+  - Maya added `insurance_card_maya.png` to her health folder. Qwen3-VL read it in about 4 s; the transcript has `Member ID: BPF-5530-2178` and `Group number: 77120`. The CLI printed only "Member Id ending 2178, Group Number ending 7120".
+  - Maya then asked for the full member ID (DeepSeek, 3 turns, all `provider_tee`). The model read the transcript and gave only "ends in 2178", so the gate passed it.
+  - Dana added `passport_page_dana.jpg`; the passport number was read correctly and indexed.
+  - The optional live test (`tests/test_vision_live.py`) passed once. Total spend for all live calls: under $0.02.
+- **Tests:** 158 passed, 1 skipped (the live test without a key). 45 new tests in `tests/test_vision.py` with the enclave mocked: fail-closed cases (no attestation, gateway signature, SDK errors, no key, empty reply), EXIF removal, size limits, label clean-up, header forgery, no-overwrite names, owner-only viewing, the gate holding and refusing numbers read from photos, CLI and web flows.
+- **Evidence note:** the `fields` column in `spikes/vision_probe_results.json` came from an earlier build. It lists `SSN 987654329` twice; the committed `labeled_fields` removes repeats and gives it once for the same text. The model output in that file (`raw_text`) is unchanged by this. The DeepSeek end to end run and the one live test pass above were not saved as files, so they are reported here only, without a saved artifact.
+
+### Review fixes (photo transcription)
+
+- **Fake transcripts:** uploads (web page and `familybox add`) now refuse any name ending in `.transcript.txt`, so only the box writes a photo's text. Each transcript the box writes also carries a "Box seal": an HMAC over the photo name, model, signer, signature kind, time, photo SHA-256 and the text, made with a key in `runtime/photo_seal.key` (0600, outside `files/`). The Photos page says "Checked" only when the seal and the photo both match. Text without a valid seal is shown as "not made by the box", and its model and signature lines are marked "not checked".
+- **Who can see a photo:** the view page and the CLI now say "Everyone in the family can see this photo" for the shared folder and "Only you" for your own folders. README fixed to match.
+- **Photo events:** they are scrubbed the same way as question events (shared `box.scrub_value`), and values just read from the photo are scrubbed before they are indexed. A non-SDK error is recorded as its type name only. Event and audit files are created 0600.
+- **IDs with mixed separators:** "BPF-5530 2178" becomes "BPF-55302178" and "X3098 1455 (US)" becomes "X30981455", so the whole number is protected. Words like "PPO Plan" are not glued on.
+- **More card labels:** "Account", "Acct" and a bare "ID" / "ID #" are now recognized. A bare ID is a Member ID on an insurance card, otherwise an "ID number", which the store now protects too.
+- **Reading again:** once a photo has text, only someone who could remove it (its owner, or the admin for shared photos) can read it again. The audit line records who did it.
+- **Files page:** a photo's text is labeled "Text read from the photo X" and can only be removed with its photo, on the Photos page.
+- **Speed and display:** photo hashes are remembered until the file changes. Labels shown to people are tidy ("Member ID"), and a short value like a 5 digit group number shows only its last 2 characters.
+- **Tests:** 182 passed, 1 skipped (`uv run pytest -q tests`). No live calls were made for these fixes.
