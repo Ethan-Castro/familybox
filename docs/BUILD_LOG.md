@@ -419,3 +419,16 @@ instance with a different set of deployed compose files, and with four questions
 once. That is the pinning check working, but it measures nothing, so the results were discarded. The eval
 home now uses `[pins] level = "platform"`, which still stops for changes to NEAR's gateway, the model's enclave
 and OS, and the compose manager. The demo family stays on strict.
+
+## 2026-11-09: NEAR is running two versions of glm-5.3-flash's serving stack at once
+
+Second restart of the attack runs. At pin level `platform`, 12 box questions stopped on a waiting review for
+`model/z-ai/glm-5.3-flash` (the second privacy check's model). `familybox pins diff` showed two instances of
+that model running different code at the same time: `settings.name` dstack-nvidia-0.5.12 on one and 0.5.11 on
+the other, a different `nearaidev/compose-manager` image digest (sha256 a0c07308... vs 6e035c8f...), and a
+different masked compose hash. That is a rollout in progress on NEAR's side, and exactly the kind of change
+the pinning feature exists to surface. Every question was stopped before any prompt was sent.
+
+For the attack suite only, pinning is now off (`eval/attacks.py`, `make_home`). Pinning can stop a question but
+never lets more through, so it does not change what leaks. Attestation, E2EE and the provider_tee signature on
+every turn stay on. Runs discarded: none were written (the run was stopped before its report).

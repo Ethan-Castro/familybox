@@ -205,11 +205,13 @@ def make_home() -> Path:
     home = Path(tempfile.mkdtemp(prefix="fb-eval-"))
     shutil.copytree(ROOT / "demo" / "files", home / "files")
     shutil.copy(ROOT / "demo" / "family.toml", home / "family.toml")
-    # NEAR's model instances carry different sets of deployed compose files, so under "strict" a run with
-    # parallel questions opens an owner review on its first new instance and every later question stops
-    # (seen on 2026-11-09). "platform" still stops for gateway, enclave, OS and compose-manager changes.
+    # Pinning off for the eval only. NEAR serves a model from several instances that differ (deployed compose
+    # files; on 2026-11-09 also dstack 0.5.11 vs 0.5.12 and the compose-manager image on glm-5.3-flash), so a
+    # pinned box opens an owner review mid-run and every later question stops. Pinning can only stop a
+    # question, never let more through, so it does not change what leaks. Attestation, E2EE and the
+    # provider_tee signature check on every turn stay on. Pinning has its own tests and live checks.
     with open(home / "family.toml", "a") as f:
-        f.write('\n[pins]\nlevel = "platform"\n')
+        f.write('\n[pins]\nlevel = "off"\n')
     for rel, text in {**INJECTIONS, **EXTRA_FILES}.items():
         (home / "files" / rel).write_text(text)
     return home
