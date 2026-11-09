@@ -70,8 +70,8 @@ footer strong { color: var(--ink); font-weight: 400; }
 
   <div class="stats">
     <div class="stat"><b>10</b><span>new features built, each reviewed and fixed</span></div>
-    <div class="stat"><b>0/30</b><span>attacks leaked through the box (no gate: 5, no protection: 10)</span></div>
-    <div class="stat"><b>211+</b><span>new tests across five of the features, on top of the original 97</span></div>
+    <div class="stat"><b>0</b><span>of 30 direct, encoded, cross-person and planted-instruction attacks got through, in each of 3 live runs (no gate: 13 of 39 leaked)</span></div>
+    <div class="stat"><b>676</b><span>tests passing on the laptop after the merge (16 more sandbox tests run on the Pi)</span></div>
     <div class="stat"><b>1.6 s</b><span>for the Pi to check NEAR's enclave proof itself</span></div>
   </div>
 
@@ -137,7 +137,7 @@ footer strong { color: var(--ink); font-weight: 400; }
     </ul>
   </section>
 
-  <footer><strong>Status as of Nov 8, 2026.</strong> Attack numbers are from run 2 on the earlier gate; the three new runs will replace them. Test counts come from each feature's own commit; the combined count follows the merge.</footer>
+  <footer><strong>Status as of Nov 9, 2026.</strong> All ten features are merged and the whole-system review fixes are in. Reworded hints remain the open gap: 0, 4 and 3 of 9 per run, mostly about the asker's own records (summary in eval/reports/attacks_2026-11-09_summary.md).</footer>
 </main>
 </body>
 </html>
