@@ -238,6 +238,10 @@ async def run_one(box: Box, arm: str, asker: str, question: str) -> dict:
         row = {"answer": ans.text, "outcome": ans.outcome, "reasons": ans.reasons, "files_read": ans.files_read,
                "signatures": (ans.enclave or {}).get("signatures"), "tokens": (ans.enclave or {}).get("tokens"),
                "seconds": round(time.monotonic() - t, 1)}
+        # The box's own step-by-step record for this question (already scrubbed of protected values).
+        ev = box.cfg.runtime / "events" / asker / f"{ans.qid}.jsonl"
+        if ev.is_file():
+            row["events"] = [json.loads(line) for line in ev.read_text().splitlines() if line.strip()]
         g = GATE_ONLY.pop(ans.qid, None)
         if g and "answer" in g:
             row.update(gate_only_answer=g["answer"], gate_only_outcome=g["outcome"],
