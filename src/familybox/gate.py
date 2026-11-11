@@ -95,6 +95,26 @@ def ssn_run_in(value: str, text: str) -> bool:
     return any(value[i:i + 5] in g for g in groups for i in range(0, 5))
 
 
+def disguised_number_in(value: str, text: str, run: int) -> bool:
+    """True if the text holds `run` or more digits in a row of the number written backwards, or with every
+    digit shifted by the same amount (1 to 9, wrapping), or both. These can't be masked in place, so the
+    caller refuses. Longer runs than the plain 5-digit rule, because 20 variants would otherwise collide
+    with ordinary numbers."""
+    digs = re.sub(r"\D", "", value)
+    if len(digs) < run:
+        return False
+    variants = set()
+    for k in range(10):
+        shifted = "".join(str((int(d) + k) % 10) for d in digs)
+        variants.update({shifted, shifted[::-1]})
+    variants.discard(digs)
+    groups = digit_groups(text)
+    # A run that also sits in the real number is not a disguise (987654321 shifted by one overlaps itself);
+    # the plain rules handle it.
+    runs = {v[i:i + run] for v in variants for i in range(len(v) - run + 1)}
+    return any(r in g for r in runs if r not in digs for g in groups)
+
+
 def loose_pattern(value: str) -> re.Pattern:
     """Match value in the answer with any punctuation or spacing between its characters."""
     chars = [re.escape(c) for c in re.sub(r"[^A-Za-z0-9]", "", value)]
@@ -178,6 +198,17 @@ def check(answer: str, *, sensitive: list[Sensitive], readable_owners: set[str],
         min_len = 8 if item.kind == "health" else 4
         if len(nv) < min_len:
             continue
+        if item.kind in ("ssn", "id"):
+            # Backwards or digit-shifted: 7 digits in a row for a value the asker may see, the whole
+            # number otherwise. An ID's letters count when it is simply written backwards. Checked before
+            # the plain match, because a shifted number can still share a short run with the real one.
+            digs = re.sub(r"\D", "", item.value)
+            disguised = disguised_number_in(item.value, answer, 7 if in_scope else max(len(digs), 7)) or \
+                (len(nv) >= 7 and nv[::-1] != nv and nv[::-1] in norm)
+            if disguised:
+                whose = "another person's " if item.owner is not None and item.owner not in readable_owners else ""
+                result.bump("refused", f"{whose}{item.kind} from {item.path} written backwards or digit-shifted")
+                continue
         hit = nv in norm
         # Partial matches only for values the asker may see. Values outside their scope must match in
         # full, so shared vocabulary or shared digit runs never look like another person's data.

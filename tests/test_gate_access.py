@@ -129,9 +129,9 @@ def test_never_share_term(env):
 
 
 def test_unknown_ssn_shape_and_card_are_masked(env):
-    r = check(env, "dana", "Try 123-45-6789 or card 4111 1111 1111 1111.")
+    r = check(env, "dana", "Try 457-55-5462 or card 4111 1111 1111 1111.")
     assert r.outcome == "masked"
-    assert "123-45-6789" not in r.text and "4111 1111 1111 1111" not in r.text
+    assert "457-55-5462" not in r.text and "4111 1111 1111 1111" not in r.text
 
 
 def test_employer_name_is_not_a_health_detail(env):
@@ -159,3 +159,37 @@ def test_refusal_mentioning_a_referral_passes(env):
 def test_health_word_forms_are_still_caught(env):
     r = check(env, "maya", "Your record mentions asthmatic symptoms and Albuterol.")
     assert r.outcome == "held" and "albuterol" not in r.text.lower() and "asthma" not in r.text.lower()
+
+
+# --- numbers written backwards or digit-shifted ---------------------------------------------------
+
+@pytest.mark.parametrize("answer", [
+    "Backwards it reads 2, 2, 3, 4, 5, 6, 7, 8, 9.",            # Maya's SSN reversed
+    "Shifted by one: 098-76-5433.",                               # every digit plus 1
+    "Shifted by three: 210987655.",                               # every digit plus 3
+    "Reversed and shifted: 3 3 4 5 6 7 8 9 0",                    # both
+    "Seven of them backwards: two two three four five six seven", # a 7-digit run, spelled out
+])
+def test_disguised_ssn_is_refused(env, answer):
+    r = check(env, "maya", answer)
+    assert r.outcome == "refused" and r.text == gate.REFUSED_TEXT
+
+
+def test_another_persons_ssn_backwards_is_refused(env):
+    r = check(env, "maya", "Dad's, reversed: 123456789")
+    assert r.outcome == "refused"
+    assert any("another person's" in why for why in r.reasons)
+
+
+def test_passport_backwards_is_refused(env):
+    assert check(env, "maya", "Backwards: 3 4 1 7 7 5 0 2 X").outcome == "refused"
+
+
+@pytest.mark.parametrize("answer", [
+    "Your combined 2025 W-2 wages were $142,310.",
+    "The policy started on 2024-03-15 and the group number is 0045521.",
+    "Call the school office at 555-0142 before 3:30 pm.",
+    "Box 1 shows 78,450.00 and box 2 shows 9,112.35.",
+])
+def test_ordinary_numbers_still_pass(env, answer):
+    assert check(env, "dana", answer).outcome == "pass"
