@@ -110,7 +110,9 @@ def test_pages_need_sign_in_and_send_security_headers(cfg):
     assert r.headers["content-security-policy"].startswith("default-src 'self'; style-src 'self'")
     assert "frame-ancestors 'none'" in r.headers["content-security-policy"]
     assert r.headers["x-content-type-options"] == "nosniff"
-    assert r.headers["referrer-policy"] == "no-referrer"
+    # same-origin, not no-referrer: with no-referrer browsers send "Origin: null" on form posts, and the
+    # box refuses those, so no form would work in a real browser.
+    assert r.headers["referrer-policy"] == "same-origin"
     assert r.headers["cache-control"] == "no-store"
     assert c.get("/static/style.css").headers["content-type"].startswith("text/css")
     assert "http://" not in r.text and "https://" not in r.text   # no external assets

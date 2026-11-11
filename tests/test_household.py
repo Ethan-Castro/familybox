@@ -1029,3 +1029,19 @@ def test_reset_reopens_the_shared_index_for_the_new_family(empty, monkeypatch):
     paths = [h.get("path") for h in b.store.search(empty.person("jo"), "New family")]
     assert "shared/new.txt" in paths
     assert not b.store.search(empty.person("jo"), "Zebracorn")
+
+
+def test_browser_style_sign_in(cfg):
+    """A real browser sends Origin on form posts. With the page's referrer policy it is the page's own origin,
+    and that must work; "Origin: null" (what no-referrer made browsers send) is still refused."""
+    household.set_pin(web.WebState(cfg), "maya", PIN)
+    cl = client(cfg)
+    r = cl.get("/signin")
+    assert r.headers["referrer-policy"] == "same-origin"
+    r = cl.post("/signin", data={"person": "maya", "pin": PIN, "csrf": csrf(r)},
+                headers={"origin": "https://testserver"})
+    assert r.status_code == 200 and web.COOKIE in cl.cookies
+    cl2 = client(cfg)
+    r = cl2.post("/signin", data={"person": "maya", "pin": PIN, "csrf": csrf(cl2.get("/signin"))},
+                 headers={"origin": "null"})
+    assert r.status_code == 403 and web.COOKIE not in cl2.cookies

@@ -339,7 +339,7 @@ class SecurityHeaders:
                 headers += [
                     (b"content-security-policy", CSP.encode()),
                     (b"x-content-type-options", b"nosniff"),
-                    (b"referrer-policy", b"no-referrer"),
+                    (b"referrer-policy", b"same-origin"),
                     (b"x-frame-options", b"DENY"),
                     (b"cross-origin-opener-policy", b"same-origin"),
                     (b"strict-transport-security", b"max-age=31536000"),
@@ -521,7 +521,7 @@ def _page(cfg: Config, title: str, body: str, sess: Sess | None = None, here: st
                  f'<nav>{"".join(links)}</nav>')
     doc = (f'<!doctype html><html lang="en"><head><meta charset="utf-8">'
            f'<meta name="viewport" content="width=device-width, initial-scale=1">'
-           f'<meta name="referrer" content="no-referrer">'
+           f'<meta name="referrer" content="same-origin">'
            + (f'<meta http-equiv="refresh" content="{esc(refresh)}">' if refresh else "") +
            f'<title>{esc(title)} | {esc(cfg.name)}</title><link rel="stylesheet" href="/static/style.css">'
            f'</head><body><header>{head}</header><main>{body}</main></body></html>')

@@ -174,7 +174,7 @@ class RedTeam:
     def doc(self, title: str, body: str, status: int = 200) -> HTMLResponse:
         page = (f'<!doctype html><html lang="en"><head><meta charset="utf-8">'
                 f'<meta name="viewport" content="width=device-width, initial-scale=1">'
-                f'<meta name="referrer" content="no-referrer"><title>{esc(title)} | familybox</title>'
+                f'<meta name="referrer" content="same-origin"><title>{esc(title)} | familybox</title>'
                 f'<link rel="stylesheet" href="/static/style.css"><link rel="stylesheet" href="/redteam/redteam.css">'
                 f'</head><body><header><div class="box">{esc(self.cfg.name)}: red-team demo</div>'
                 f'<div class="who">A made-up family. Every name and number here is fake.</div></header>'
@@ -380,7 +380,7 @@ class OnlyRedTeam:
 
     HEADERS = [(b"content-security-policy", b"default-src 'none'; frame-ancestors 'none'"),
                (b"x-content-type-options", b"nosniff"), (b"cache-control", b"no-store"),
-               (b"referrer-policy", b"no-referrer")]
+               (b"referrer-policy", b"same-origin")]
 
     def __init__(self, app):
         self.app = app
