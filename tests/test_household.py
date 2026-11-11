@@ -322,6 +322,22 @@ def test_pin_sign_in_needs_csrf(cfg):
     assert cl.post("/signin", data={"person": "maya", "pin": PIN}).status_code == 403
 
 
+def test_stale_sign_in_tab_gets_a_fresh_form(cfg):
+    """Two sign-in tabs: the older one's token no longer matches the cookie. The box shows a fresh form
+    (nothing done) instead of a dead end, and signing in from it works."""
+    household.set_pin(web.WebState(cfg), "maya", PIN)
+    cl = client(cfg)
+    old = csrf(cl.get("/signin"))
+    cl.get("/signin")                                            # a second tab resets the cookie
+    r = cl.post("/signin", data={"person": "maya", "pin": PIN, "csrf": old})
+    assert r.status_code == 403 and "out of date" in r.text and web.COOKIE not in cl.cookies
+    r = cl.post("/signin", data={"person": "maya", "pin": PIN, "csrf": csrf(r)})
+    assert r.status_code == 200 and web.COOKIE in cl.cookies     # signed in, sent on to the home page
+    r = client(cfg).post("/signin", data={"person": "maya", "pin": PIN, "csrf": old},
+                         headers={"origin": "https://evil.example"})
+    assert r.status_code == 403 and "out of date" not in r.text  # other sites still get the plain refusal
+
+
 # --- Family page ----------------------------------------------------------------------------------
 
 def test_family_pages_are_admin_only(cfg):

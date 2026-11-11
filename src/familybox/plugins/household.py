@@ -123,8 +123,8 @@ def _disk(n: int) -> str:
 
 def web_routes(ctx):
     from .. import enclave
-    from ..web import (COOKIE, INVITE_TTL_S, _audit, _page, origin_ok, pre_ok, readable_files, set_pre_cookie,
-                       signed_in)
+    from ..web import (COOKIE, INVITE_TTL_S, STALE_FORM, _audit, _page, origin_ok, pre_ok, readable_files,
+                       set_pre_cookie, signed_in)
 
     cfg, esc, state = ctx.cfg, ctx.esc, ctx.state
     csrf = ctx.csrf_field
@@ -167,9 +167,11 @@ def web_routes(ctx):
     async def setup_post(request: Request):
         if cfg.people:
             return ctx.forbidden("This box is already set up.")
+        if not origin_ok(request):
+            return ctx.forbidden()
         form = await request.form()
         if not pre_ok(request, form):
-            return ctx.forbidden()
+            return setup_page(STALE_FORM, 403)        # a fresh form, nothing saved
         if not household.setup_open(cfg):
             return setup_page(status=403)
         pin = str(form.get("pin", ""))
@@ -374,7 +376,7 @@ def web_routes(ctx):
             return ctx.forbidden()
         form = await request.form()
         if not pre_ok(request, form):
-            return ctx.forbidden()
+            return join_page(state.normalize(str(form.get("code", "")))[:12], STALE_FORM, 403)
         code = str(form.get("code", ""))
         pin = str(form.get("pin", ""))
         keep = state.normalize(code)[:12]

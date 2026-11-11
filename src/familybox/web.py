@@ -60,6 +60,7 @@ LOCKOUT_WINDOW_S = 10 * 60
 SESSION_TTL_S = 12 * 60 * 60
 COOKIE = "__Host-familybox"
 PRE_COOKIE = "__Host-familybox-signin"
+STALE_FORM = "This page was out of date, maybe from another tab. Nothing was saved. Try again here."
 
 MAX_UPLOAD = 25 * 1024 * 1024           # one file
 MAX_TOTAL_UPLOAD = 200 * 1024 * 1024    # one upload of many files, all together
@@ -857,7 +858,9 @@ def create_app(cfg: Config, *, port: int = 8443, remote_only: bool = False, box=
             return forbidden()
         form = await request.form()
         if not pre_ok(request, form):
-            return forbidden()
+            # Same page, old token (another tab or an old page reset the cookie): show a fresh form,
+            # with nothing done, instead of a dead end. Cross-site posts were refused above.
+            return signin_page(secrets.token_urlsafe(24), STALE_FORM, status=403)
         if "pin" in form:
             from . import household
             person_id = str(form.get("person", ""))
