@@ -44,34 +44,39 @@ nav .links a:hover { color: var(--graphite); }
 nav .right { margin-left: auto; display: flex; gap: 8px; align-items: center; }
 @media (max-width: 860px) { nav .links, nav .soft { display: none; } }
 
-/* hero: a lot of air, one question box */
-.hero { min-height: calc(100svh - 60px); display: flex; align-items: center; padding: 64px 0 88px; text-align: center; }
-.hero > .wrap { width: 100%; }
-.hero h1 { font-size: clamp(24px, 2.5vw, 30px); line-height: 1.2; letter-spacing: -0.02em; font-weight: 600; text-wrap: balance; }
-.hero .sub { color: var(--graphite); max-width: 35em; margin: 12px auto 0; font-size: 16px; }
-.ask { max-width: 660px; margin: 32px auto 0; text-align: left; }
-.box { border: 1px solid var(--hair); border-radius: 28px; padding: 18px 14px 12px 22px; min-height: 248px; display: flex; flex-direction: column; background: var(--paper); box-shadow: 0 0 90px 40px rgba(0,0,0,.022); transition: border-color .2s; }
-.box.live { border-color: rgba(0,0,0,.28); }
-.box .q { font-size: 17px; line-height: 1.4; min-height: 1.4em; margin-bottom: 10px; }
-.box .q:empty::before { content: "Ask about your family's papers"; color: var(--smoke); }
-.box .q.typing::after { content: ""; display: inline-block; width: 1.5px; height: 1.05em; background: var(--ink); margin-left: 1px; vertical-align: -0.15em; animation: caret 1s steps(1) infinite; }
+/* hero: a chat screen. Idle: one line and a centered composer. Sent: the composer slides down, the chat fills the screen. */
+.hero { height: calc(100svh - 60px); min-height: 540px; padding: 24px 0 40px; }
+.hero > .wrap { height: 100%; }
+.ask { height: 100%; max-width: 760px; margin: 0 auto; display: flex; flex-direction: column; justify-content: center; }
+.intro { text-align: center; margin-bottom: 34px; transition: opacity .3s; }
+.hero h1 { font-size: clamp(24px, 2.4vw, 30px); line-height: 1.25; letter-spacing: -0.02em; font-weight: 500; text-wrap: balance; }
+.thread { display: none; flex-direction: column; gap: 26px; padding: 28px 6px 24px; overflow: hidden; transition: opacity .3s; }
+.ask.chatting { justify-content: flex-end; }
+.ask.chatting .intro, .ask.chatting .sub { display: none; }
+.ask.chatting .thread { display: flex; flex: 1; }
+.thread.out, .intro.out { opacity: 0; }
+.dock { will-change: transform; }
+.composer { display: flex; align-items: center; gap: 12px; border: 1px solid var(--hair); border-radius: 9999px; padding: 9px 9px 9px 20px; background: var(--paper); box-shadow: 0 1px 2px rgba(0,0,0,.04), 0 0 110px 50px rgba(0,0,0,.024); transition: border-color .2s; }
+.composer.live { border-color: rgba(0,0,0,.26); }
+.composer .plus { flex: none; width: 20px; height: 20px; }
+.composer .q { flex: 1; min-width: 0; font-size: 17px; line-height: 1.4; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.composer .q:empty::before { content: "Ask about your family's papers"; color: var(--smoke); }
+.composer .q.typing::after { content: ""; display: inline-block; width: 1.5px; height: 1.05em; background: var(--ink); margin-left: 1px; vertical-align: -0.15em; animation: caret 1s steps(1) infinite; }
 @keyframes caret { 50% { opacity: 0; } }
-.box .foot { display: flex; align-items: center; justify-content: space-between; }
-.asker { font-size: 13px; font-weight: 500; color: var(--graphite); }
-.go { width: 36px; height: 36px; border-radius: 50%; background: var(--ash); display: grid; place-items: center; flex: none; transition: background .2s, transform .15s; }
+.asker { flex: none; font-size: 14px; font-weight: 500; color: var(--graphite); }
+.go { width: 40px; height: 40px; border-radius: 50%; background: var(--ash); display: grid; place-items: center; flex: none; transition: background .2s, transform .15s; }
 .go.on { background: var(--ink); transform: scale(1.06); } .go.on svg { stroke: var(--paper); }
-.chips { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; margin-top: 20px; }
-.thread { display: flex; flex-direction: column; justify-content: flex-end; gap: 10px; flex: 1; min-height: 132px; padding: 2px 4px 14px 0; }
-.thread.out { opacity: 0; transition: opacity .3s; }
-.msg { max-width: 86%; font-size: 16px; line-height: 1.42; opacity: 0; transform: translateY(6px); transition: opacity .35s, transform .35s; }
+.chips { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; margin-top: 18px; }
+.hero .sub { color: var(--graphite); max-width: 34em; margin: 22px auto 0; font-size: 14.5px; text-align: center; }
+.msg { font-size: 17px; line-height: 1.5; opacity: 0; transform: translateY(6px); transition: opacity .35s, transform .35s; }
 .msg.show { opacity: 1; transform: none; }
-.msg.me { align-self: flex-end; background: var(--ash); border-radius: 18px 18px 6px 18px; padding: 9px 15px; }
-.msg.ai { align-self: flex-start; }
-.msg.note { align-self: flex-start; font-size: 13px; color: var(--graphite); margin-top: -4px; }
+.msg.me { align-self: flex-end; max-width: 72%; background: #ecf2fd; color: #13233d; border-radius: 22px; padding: 10px 18px; }
+.msg.ai { align-self: flex-start; max-width: 88%; }
+.msg.note { align-self: flex-start; font-size: 13.5px; color: var(--graphite); margin-top: -16px; }
 .dots3 i { display: inline-block; width: 5px; height: 5px; border-radius: 50%; background: var(--smoke); margin-right: 3px; animation: blink3 1.2s infinite; }
 .dots3 i:nth-child(2) { animation-delay: .2s; } .dots3 i:nth-child(3) { animation-delay: .4s; }
 @keyframes blink3 { 0%, 80%, 100% { opacity: .25; } 40% { opacity: 1; } }
-@media (max-width: 620px) { .hero { padding: 48px 0 64px; } .msg { max-width: 94%; } }
+@media (max-width: 620px) { .composer .plus { display: none; } .asker { font-size: 12.5px; } .msg.me { max-width: 88%; } .hero h1 { font-size: 22px; } }
 
 /* feature tiles: one wide, one narrow */
 .feature { display: grid; grid-template-columns: 3.15fr 1fr; gap: var(--gap); }
@@ -204,7 +209,7 @@ footer p { max-width: 30em; }
 .js .rv.d1 { transition-delay: .08s; } .js .rv.d2 { transition-delay: .16s; }
 @media (prefers-reduced-motion: reduce) {
   .js .rv { opacity: 1; transform: none; transition: none; }
-  .key-slide, .key-lock, .win, .dots3 i, .thumb, .thumb *, .narrow .img, .ph .tapdot, .box .q.typing::after { animation: none !important; }
+  .key-slide, .key-lock, .win, .dots3 i, .thumb, .thumb *, .narrow .img, .ph .tapdot, .composer .q.typing::after { animation: none !important; }
   .key-lock { opacity: 1; } .a-draw { stroke-dashoffset: 0; } .meter { transition: none; }
   .zoom, .thumb svg { transition: none; }
 }
@@ -231,19 +236,22 @@ footer p { max-width: 30em; }
 <main id="top">
   <section class="hero">
     <div class="wrap">
-      <h1>Get help with your family's paperwork. Keep it private.</h1>
-      <p class="sub">familybox is a small box that lives at your home. An AI helper like ChatGPT can answer questions about your family's papers, without ever being handed the papers.</p>
-
       <div class="ask" id="ask" aria-label="Example: a family member asks a question. The AI helper gets a safe answer. A full private number shows only on the owner's phone.">
-        <div class="box">
-          <div class="thread"></div>
-          <div class="q"></div>
-          <div class="foot"><span class="asker"></span><span class="go" aria-hidden="true"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#000" stroke-width="2"><path d="M12 19V5M6 11l6-6 6 6"/></svg></span></div>
-        </div>
-        <div class="chips">
-          <button type="button" class="btn" data-i="0">My Social Security number</button>
-          <button type="button" class="btn" data-i="1">What we earned last year</button>
-          <button type="button" class="btn" data-i="2">Mom's medicine</button>
+        <div class="intro"><h1>Get help with your family's paperwork. Keep it private.</h1></div>
+        <div class="thread"></div>
+        <div class="dock">
+          <div class="composer">
+            <svg class="plus" viewBox="0 0 24 24" fill="none" stroke="#0d0d0d" stroke-width="1.8" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+            <div class="q"></div>
+            <span class="asker"></span>
+            <span class="go" aria-hidden="true"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#000" stroke-width="2"><path d="M12 19V5M6 11l6-6 6 6"/></svg></span>
+          </div>
+          <div class="chips">
+            <button type="button" class="btn" data-i="0">My Social Security number</button>
+            <button type="button" class="btn" data-i="1">What we earned last year</button>
+            <button type="button" class="btn" data-i="2">Mom's medicine</button>
+          </div>
+          <p class="sub">familybox is a small box that lives at your home. An AI helper like ChatGPT can answer questions about your family's papers, without ever being handed the papers.</p>
         </div>
       </div>
     </div>
@@ -419,37 +427,55 @@ footer p { max-width: 30em; }
     try { for (const ch of text) { el.textContent += ch; await wait(per); } } finally { el.classList.remove("typing"); }
   }
 
-  // 1. The question box.
+  // 1. The chat. Idle: a line and a centered composer. On send the composer slides down and the chat fills the screen.
   (() => {
-    const root = $("#ask"), box = $(".box", root), asker = $(".asker", root), q = $(".q", root), go = $(".go", root), chips = [...root.querySelectorAll(".chips .btn")],
-          thread = $(".thread", root);
-    const say = (cls, html) => { const m = document.createElement("div"); m.className = "msg " + cls; m.innerHTML = html; thread.append(m); requestAnimationFrame(() => m.classList.add("show")); return m; };
+    const root = $("#ask"), intro = $(".intro", root), thread = $(".thread", root), dock = $(".dock", root),
+          composer = $(".composer", root), asker = $(".asker", root), q = $(".q", root), go = $(".go", root),
+          chips = [...root.querySelectorAll(".chips .btn")];
     const cases = [
       { who: "Maya asks", q: "What's my Social Security number? I need it for my college aid form.", a: "It ends in 4322. The full number is waiting on your phone.", note: "The full number shows only on Maya's phone, after she taps." },
       { who: "Mom asks", q: "How much did we earn last year?", a: "Together you earned $142,310 in wages.", note: "No private number in that answer, so nothing to approve." },
       { who: "Maya asks", q: "What medicine is Mom taking?", a: "I can't share that. Mom's health records are hers alone.", note: "The box never read Mom's file. It isn't Maya's to see." },
     ];
+    const say = (cls, text) => { const m = document.createElement("div"); m.className = "msg " + cls; m.textContent = text; thread.append(m); m.getBoundingClientRect(); setTimeout(() => m.classList.add("show"), 30); return m; };
+    // Move the dock between its two places with a slide (measure, switch layout, animate from the old spot).
+    const slide = change => {
+      const before = dock.getBoundingClientRect().top;
+      change();
+      const after = dock.getBoundingClientRect().top;
+      if (reduce || !before || !after) return;
+      dock.style.transition = "none"; dock.style.transform = `translateY(${before - after}px)`;
+      dock.getBoundingClientRect();
+      dock.style.transition = "transform .55s cubic-bezier(.2,.7,.2,1)"; dock.style.transform = "";
+    };
     let idx = 0, st;
     chips.forEach(b => b.onclick = () => { idx = +b.dataset.i; st.skip = true; });
     st = scene(root, async wait => {
       const c = cases[idx];
+      if (root.classList.contains("chatting")) {
+        thread.classList.add("out");
+        await new Promise(r => setTimeout(r, 300));
+        slide(() => { root.classList.remove("chatting"); thread.textContent = ""; thread.classList.remove("out"); });
+      }
+      thread.textContent = ""; intro.classList.remove("out");
       chips.forEach(b => b.classList.toggle("on", +b.dataset.i === idx));
-      asker.textContent = c.who; q.textContent = ""; go.classList.remove("on"); box.classList.add("live");
-      thread.textContent = ""; thread.classList.remove("out");
-      await wait(500);
+      asker.textContent = c.who; q.textContent = ""; go.classList.remove("on"); composer.classList.add("live");
+      await wait(700);
       await type(q, c.q, wait);
       await wait(350); go.classList.add("on"); await wait(300);
-      q.textContent = ""; go.classList.remove("on"); box.classList.remove("live");
-      say("me", "");
-      thread.lastChild.textContent = c.q;
-      await wait(450);
-      const ai = say("ai", '<span class="dots3"><i></i><i></i><i></i></span>');
+      intro.classList.add("out");
+      await wait(250);
+      q.textContent = ""; go.classList.remove("on"); composer.classList.remove("live");
+      slide(() => root.classList.add("chatting"));
+      say("me", c.q);
+      await wait(600);
+      const ai = say("ai", "");
+      ai.innerHTML = '<span class="dots3"><i></i><i></i><i></i></span>';
       await wait(1300);
       ai.textContent = c.a;
       await wait(900);
-      say("note", "").textContent = c.note;
-      await wait(4800);
-      thread.classList.add("out"); await wait(320);
+      say("note", c.note);
+      await wait(5200);
       idx = (idx + 1) % cases.length;
     });
   })();
