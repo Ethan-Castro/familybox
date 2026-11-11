@@ -156,13 +156,37 @@ def test_upload_to_shared(cfg):
     assert (cfg.files / "shared/wifi.md").exists()
 
 
-@pytest.mark.parametrize("name", ["../../family.toml.txt", "..\\..\\evil.txt", "/etc/passwd.txt", ".hidden.txt"])
+@pytest.mark.parametrize("name", ["../../family.toml.txt", "..\\..\\evil.txt", "/etc/passwd.txt",
+                                  "a/../../evil.txt"])
 def test_upload_filename_cannot_escape(cfg, name):
+    # Block F refuses names with ".." or an absolute path (before, it kept only the last part). A
+    # whole-folder upload sends paths, so a path that climbs out is now left out, not quietly renamed.
     c, token = sign_in(cfg, "maya")
-    assert upload(c, token, "other", name, b"hello").status_code == 200
+    r = upload(c, token, "other", name, b"hello")
+    assert r.status_code == 400 and "outside the folder" in r.text
+    assert not (cfg.files / "people/maya/other").exists()
+    assert not (cfg.home / "family.toml.txt").exists() and not (cfg.home / "evil.txt").exists()
+
+
+@pytest.mark.parametrize("raw", ["C:\\Users\\evil.txt", "c:/x.txt", "\\\\server\\share\\x.txt", "..", "a/./../b.txt"])
+def test_flatten_name_refuses_paths_that_climb_out(raw):
+    # (The multipart parser already cuts Windows drive paths down to the last part, so this checks
+    # the helper itself.)
+    with pytest.raises(web.UploadError):
+        web.flatten_name(raw)
+
+
+def test_flatten_name_joins_subfolders():
+    assert web.flatten_name("Taxes/2025/w2.pdf") == "2025_w2.pdf"
+    assert web.flatten_name("w2.pdf") == "w2.pdf"
+    assert web.flatten_name("./Taxes//w2.pdf") == "w2.pdf"
+
+
+def test_upload_hidden_name_is_made_visible(cfg):
+    c, token = sign_in(cfg, "maya")
+    assert upload(c, token, "other", ".hidden.txt", b"hello").status_code == 200
     created = [p for p in (cfg.files / "people/maya/other").iterdir()]
     assert len(created) == 1 and not created[0].name.startswith(".")
-    assert not (cfg.home / "family.toml.txt").exists() and not (cfg.home / "evil.txt").exists()
 
 
 @pytest.mark.parametrize("folder", ["../dana/ids", "people/dana/ids", "ids/../../dana", "", "tls"])
@@ -182,7 +206,10 @@ def test_upload_bad_type_is_rejected(cfg, name, data):
     assert not (cfg.files / "people/maya/other").exists()
 
 
-def test_upload_oversize_is_rejected(cfg):
+def test_upload_oversize_is_rejected(cfg, monkeypatch):
+    # Block F raised the route's body limit to the 200 MB total, so the 413 is now checked against a
+    # total cap set to one file's size (sending 200 MB in a test would be slow).
+    monkeypatch.setattr(web, "MAX_TOTAL_UPLOAD", web.MAX_UPLOAD)
     c, token = sign_in(cfg, "maya")
     r = upload(c, token, "other", "big.txt", b"a" * (web.MAX_UPLOAD + 1))
     assert r.status_code == 400 and "25 MB" in r.text
@@ -430,3 +457,192 @@ def test_cli_code_command(cfg, monkeypatch, capsys):
     assert code
     assert web.WebState(cfg).redeem(code.group(0))[0] == "maya"
     assert cli.main(["code", "--as", "nobody"]) == 2
+
+
+# --- Block F: a whole family's papers in one sitting --------------------------------------------
+
+def upload_many(c, token, folder, files):
+    return c.post("/upload", data={"folder": folder, "csrf": token},
+                  files=[("file", (name, data)) for name, data in files])
+
+
+def png_bytes() -> bytes:
+    import io
+    from PIL import Image
+    out = io.BytesIO()
+    Image.new("RGB", (64, 40), "white").save(out, "PNG")
+    return out.getvalue()
+
+
+def test_upload_page_offers_many_files_and_a_whole_folder(cfg):
+    c, _ = sign_in(cfg, "maya")
+    text = c.get("/upload").text
+    assert 'name="file"' in text and " multiple" in text and "webkitdirectory" in text
+    assert "<script" not in text and "style=" not in text
+    assert "\u2014" not in text
+
+
+def test_many_files_each_get_a_result(cfg):
+    c, token = sign_in(cfg, "maya")
+    r = upload_many(c, token, "school", [("a.txt", b"alpha kiwibird"), ("b.md", b"# beta"),
+                                         ("run.sh", b"echo hi"), ("fake.pdf", b"nope")])
+    assert r.status_code == 200
+    assert "Uploaded 2 files, 2 left out" in r.text
+    assert r.text.count("Saved in My School") == 2
+    assert "That file type isn" in r.text and "real PDF" in r.text
+    assert (cfg.files / "people/maya/school/a.txt").exists() and (cfg.files / "people/maya/school/b.md").exists()
+    assert Store(cfg).search(cfg.person("maya"), "kiwibird")
+    log = (cfg.runtime / "audit/maya.jsonl").read_text()
+    assert log.count('"event": "upload"') == 2 and "a.txt" not in log
+
+
+def test_whole_folder_is_flattened_and_climbing_out_is_refused(cfg):
+    c, token = sign_in(cfg, "maya")
+    r = upload_many(c, token, "other", [
+        ("Papers/2025/w2.txt", b"w2"), ("Papers/notes.txt", b"notes"),
+        ("Papers/.git/config.txt", b"hidden"), ("Papers/../../evil.txt", b"evil"),
+        ("/etc/passwd.txt", b"root"), ("Papers\\sub\\win.txt", b"win")])
+    assert r.status_code == 200
+    names = sorted(p.name for p in (cfg.files / "people/maya/other").iterdir())
+    assert names == ["2025_w2.txt", "notes.txt", "sub_win.txt"]
+    assert r.text.count("outside the folder") == 2 and "hidden system file" in r.text
+    assert not list(cfg.home.rglob("evil.txt")) and not list(cfg.home.rglob("passwd.txt"))
+
+
+def test_too_many_files_and_total_cap(cfg, monkeypatch):
+    c, token = sign_in(cfg, "maya")
+    r = upload_many(c, token, "other", [(f"f{i}.txt", b"x") for i in range(web.MAX_FILES + 1)])
+    assert r.status_code == 400 and f"up to {web.MAX_FILES}" in r.text
+    r = upload_many(c, token, "other", [(f"f{i}.txt", b"x") for i in range(web.MAX_FILES + 5)])
+    assert r.status_code == 400 and f"up to {web.MAX_FILES}" in r.text
+    assert not (cfg.files / "people/maya/other").exists()
+    monkeypatch.setattr(web, "MAX_TOTAL_UPLOAD", 10)
+    r = upload_many(c, token, "other", [("one.txt", b"12345678"), ("two.txt", b"12345678")])
+    assert r.status_code == 200 and "in total" in r.text
+    assert [p.name for p in (cfg.files / "people/maya/other").iterdir()] == ["one.txt"]
+
+
+def test_no_file_chosen(cfg):
+    c, token = sign_in(cfg, "maya")
+    r = c.post("/upload", data={"folder": "other", "csrf": token}, files=[("file", ("", b""))])
+    assert r.status_code == 400 and "Choose a file" in r.text
+
+
+def test_can_file_is_separate_from_can_read(cfg):
+    from familybox import access
+    dana, sam, maya = cfg.person("dana"), cfg.person("sam"), cfg.person("maya")
+    assert access.can_file(dana, "people/maya/ids/x.txt") and access.can_read(dana, "people/maya/ids/x.txt")
+    # Health: the admin may drop off, but still can't read.
+    assert access.can_file(dana, "people/maya/health/x.txt")
+    assert not access.can_read(dana, "people/maya/health/x.txt")
+    # Not for folders she doesn't look after, not for a non-admin, not by climbing out.
+    assert not access.can_file(dana, "people/maya/other/x.txt")
+    assert not access.can_file(sam, "people/maya/health/x.txt")
+    assert not access.can_file(maya, "people/dana/health/x.txt")
+    assert not access.can_file(dana, "people/maya/health/../../dana/x.txt")
+    assert not access.can_file(dana, "people/maya/ids/../health/x.txt")
+    assert not access.can_file(dana, "../people/maya/ids/x.txt")
+    assert not access.can_file(dana, "people/maya/health")       # a folder, not a file in it
+
+
+def test_parent_files_into_childs_folder_and_both_logs_show_it(cfg):
+    c, token = sign_in(cfg, "dana")
+    text = c.get("/upload").text
+    assert 'value="people/maya/ids"' in text and "Maya&#x27;s IDs" in text
+    assert 'value="people/maya/health"' in text and "only they can open it" in text
+    assert 'value="people/maya/other"' not in text
+    r = upload_many(c, token, "people/maya/ids", [("ssn card.txt", b"SSN card for Maya pangolin")])
+    assert r.status_code == 200 and "Saved in Maya&#x27;s IDs" in r.text
+    assert (cfg.files / "people/maya/ids/ssn card.txt").exists()
+    assert Store(cfg).search(cfg.person("maya"), "pangolin")
+    dana_log = (cfg.runtime / "audit/dana.jsonl").read_text()
+    maya_log = (cfg.runtime / "audit/maya.jsonl").read_text()
+    assert '"for": "maya"' in dana_log and '"by": "dana"' in maya_log
+    assert "ssn card" not in dana_log + maya_log and "pangolin" not in dana_log + maya_log
+    # Sam isn't an admin: no health drop-off for him, and the server refuses it too.
+    c2, token2 = sign_in(cfg, "sam")
+    assert 'value="people/maya/health"' not in c2.get("/upload").text
+    assert upload(c2, token2, "people/maya/health", "x.txt", b"hi").status_code == 400
+    # Maya can't file into Dana's folders.
+    c3, token3 = sign_in(cfg, "maya")
+    assert upload(c3, token3, "people/dana/ids", "x.txt", b"hi").status_code == 400
+    assert not list((cfg.files / "people/dana").rglob("x.txt"))
+
+
+def test_health_drop_off_is_file_only_never_read(cfg):
+    c, token = sign_in(cfg, "dana")
+    r = upload_many(c, token, "people/maya/health", [("flu shot.txt", b"Flu shot 2026 okapivaccine"),
+                                                    ("dentist.txt", b"Dentist visit")])
+    assert r.status_code == 200 and "Only Maya can open it" in r.text
+    assert (cfg.files / "people/maya/health/flu shot.txt").exists()
+    files = c.get("/files").text
+    assert "2 files filed for Maya" in files
+    assert "flu shot" not in files and "dentist" not in files and "people/maya/health" not in files
+    assert not Store(cfg).search(cfg.person("dana"), "okapivaccine")
+    assert Store(cfg).search(cfg.person("maya"), "okapivaccine")
+    c2, _ = sign_in(cfg, "maya")
+    assert "people/maya/health/flu shot.txt" in c2.get("/files").text
+    # Dana still can't delete it.
+    assert c.post("/files/delete", data={"path": "people/maya/health/flu shot.txt", "csrf": token}).status_code == 403
+    maya_log = (cfg.runtime / "audit/maya.jsonl").read_text()
+    assert maya_log.count('"by": "dana"') == 2 and "flu" not in maya_log
+    # Once Maya removes one, the count goes down.
+    (cfg.files / "people/maya/health/dentist.txt").unlink()
+    assert "1 file filed for Maya" in c.get("/files").text
+
+
+class _FakeReader:
+    def __init__(self, text="SSN: 987-65-4329"):
+        self.text, self.calls = text, 0
+
+    async def __call__(self, prep, *, api_key, model, emit=None, attestation_max_age_s=300, client_options=None):
+        from familybox import vision
+        self.calls += 1
+        return vision.Transcription(self.text, model, "0xabcdef0123456789abcdef", "provider_tee", 0.1,
+                                    {"model_reports_verified": 1}, 10, 20)
+
+
+@pytest.fixture
+def reader(monkeypatch):
+    from familybox import vision
+    f = _FakeReader()
+    monkeypatch.setattr(vision, "TRANSCRIBER", [f])
+    monkeypatch.setenv("FAMILYBOX_PIN_LEVEL", "off")
+    return f
+
+
+def test_photo_on_upload_page_waits_without_a_key(cfg, reader, monkeypatch):
+    monkeypatch.delenv("NEAR_AI_CLOUD_API_KEY", raising=False)
+    monkeypatch.delenv("NEARAI_API_KEY", raising=False)
+    c, token = sign_in(cfg, "maya")
+    r = upload_many(c, token, "ids", [("card.png", png_bytes()), ("note.txt", b"a note")])
+    assert r.status_code == 200 and "not read yet" in r.text and "AI key" in r.text
+    assert reader.calls == 0
+    assert (cfg.files / "people/maya/ids/card.png").exists()
+    assert not (cfg.files / "people/maya/ids/card.png.transcript.txt").exists()
+    assert "card.png" in c.get("/photos").text
+
+
+def test_photo_on_upload_page_is_read_with_a_key(cfg, reader, monkeypatch):
+    monkeypatch.setenv("NEAR_AI_CLOUD_API_KEY", "test-key-not-real")
+    c, token = sign_in(cfg, "maya")
+    r = upload_many(c, token, "ids", [("card.png", png_bytes()), ("scan.heic", b"\x00\x00\x00\x18ftypheic....")])
+    assert r.status_code == 200 and "Photo saved and read" in r.text and "ending 4329" in r.text
+    assert "987-65-4329" not in r.text
+    assert "HEIC" in r.text and not (cfg.files / "people/maya/ids/scan.heic").exists()
+    assert (cfg.files / "people/maya/ids/card.png.transcript.txt").exists()
+    assert reader.calls == 1
+
+
+def test_photo_drop_off_into_health_is_read_but_not_shown(cfg, reader, monkeypatch):
+    monkeypatch.setenv("NEAR_AI_CLOUD_API_KEY", "test-key-not-real")
+    c, token = sign_in(cfg, "dana")
+    r = upload_many(c, token, "people/maya/health", [("zzcard.png", png_bytes())])
+    assert r.status_code == 200 and "Only Maya can open it" in r.text
+    assert "4329" not in r.text and "SSN" not in r.text
+    assert (cfg.files / "people/maya/health/zzcard.png.transcript.txt").exists()
+    files = c.get("/files").text
+    assert "1 file filed for Maya" in files and "zzcard" not in files
+    assert "zzcard" not in c.get("/photos").text
+    maya_log = (cfg.runtime / "audit/maya.jsonl").read_text()
+    assert '"event": "photo_upload"' in maya_log and '"by": "dana"' in maya_log

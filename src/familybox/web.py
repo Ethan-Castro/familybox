@@ -13,8 +13,12 @@ What is stored in <runtime>/web/ (all 0600, folder 0700):
   pins.json        scrypt hashes of PINs, and pin_failures.json, wrong PINs per person
                    (see familybox.household). Invites are codes that last 30 minutes.
 
+  filed.json       files a person filed into a folder they can't read (a health drop-off), so the
+                   Files page can say "1 file filed for Maya" without ever showing the name.
+
 Nothing here prints file contents or file names. Uploads and deletes append one line to the person's
-audit log with the folder, a SHA-256 and the size.
+audit log with the folder, a SHA-256 and the size. A file put into someone else's folder is logged
+on both people's logs.
 """
 
 from __future__ import annotations
@@ -56,7 +60,9 @@ SESSION_TTL_S = 12 * 60 * 60
 COOKIE = "__Host-familybox"
 PRE_COOKIE = "__Host-familybox-signin"
 
-MAX_UPLOAD = 25 * 1024 * 1024
+MAX_UPLOAD = 25 * 1024 * 1024           # one file
+MAX_TOTAL_UPLOAD = 200 * 1024 * 1024    # one upload of many files, all together
+MAX_FILES = 50                          # files in one upload
 FORM_SLACK = 64 * 1024
 ALLOWED_SUFFIXES = {".txt", ".md", ".pdf", ".json", ".csv"}
 PERSON_FOLDERS = ("ids", "taxes", "health", "school", "other")
@@ -213,6 +219,25 @@ class WebState:
             sessions = self._load("sessions.json", {})
             sessions.pop(self._sid_hash(sid), None)
             self._save("sessions.json", sessions)
+
+    # Files a person put where they can't read them (health drop-off). Only the count is ever shown.
+    def note_filed(self, uploader_id: str, rel: str) -> None:
+        with self._lock():
+            filed = self._load("filed.json", {})
+            mine = filed.setdefault(uploader_id, [])
+            if rel not in mine:
+                mine.append(rel)
+            self._save("filed.json", filed)
+
+    def filed_counts(self, uploader_id: str) -> dict[str, int]:
+        """owner id -> how many files this person filed for them that are still on the box."""
+        out: dict[str, int] = {}
+        root = self.cfg.files
+        for rel in self._load("filed.json", {}).get(uploader_id, []):
+            owner = access.owner_of(rel)
+            if owner and (root / rel).is_file():
+                out[owner] = out.get(owner, 0) + 1
+        return out
 
 
 def issue_code(cfg: Config, person_id: str) -> str:
@@ -475,10 +500,11 @@ def safe_filename(raw: str) -> str:
     name = name.lstrip(". ")
     stem, dot, suffix = name.rpartition(".")
     if not dot:
-        raise UploadError("That file has no type. Use .txt, .md, .pdf, .json or .csv.")
+        raise UploadError("That file has no type. Use .txt, .md, .pdf, .json, .csv or a photo.")
     suffix = "." + suffix.lower()
     if suffix not in ALLOWED_SUFFIXES:
-        raise UploadError("That file type isn't allowed. Use .txt, .md, .pdf, .json or .csv.")
+        raise UploadError("That file type isn't allowed. Use .txt, .md, .pdf, .json, .csv or a photo "
+                          "(.jpg, .png, .webp).")
     stem = re.sub(r"[^A-Za-z0-9._ -]+", "_", stem)
     stem = re.sub(r"[ _]{2,}", "_", stem).strip(" ._-")[:100] or "file"
     if (stem + suffix).lower().endswith(TRANSCRIPT_SUFFIX):
@@ -506,22 +532,82 @@ def check_content(suffix: str, data: bytes) -> None:
             raise UploadError("That .json file can't be read. Check that it's valid JSON.") from None
 
 
-def upload_folder(cfg: Config, person: Person, choice: str) -> str:
-    """Folder (relative to files/) for an upload choice, or raise."""
+PHOTO_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif"}   # sent to the photo reader
+OUTSIDE_MSG = "That file's name points outside the folder you picked, so it was left out."
+
+
+def flatten_name(raw: str) -> str:
+    """One plain file name from what the browser sent. A whole-folder upload sends paths such as
+    "Taxes/2025/w2.pdf": the top folder is dropped and the rest joined, so it becomes "2025_w2.pdf".
+    Paths with "..", absolute paths and hidden parts (".git/...") are refused."""
+    s = (raw or "").replace("\\", "/")
+    if s.startswith("/") or re.match(r"^[A-Za-z]:/", s):
+        raise UploadError(OUTSIDE_MSG)
+    parts = [p for p in s.split("/") if p not in ("", ".")]
+    if ".." in parts:
+        raise UploadError(OUTSIDE_MSG)
+    if not parts:
+        raise UploadError("That file has no name.")
+    if len(parts) > 1:
+        if any(p.startswith(".") for p in parts):
+            raise UploadError("That is a hidden system file, so it was left out.")
+        parts = parts[1:]
+    return "_".join(parts)
+
+
+def upload_folder(cfg: Config, person: Person, choice: str, *, others: bool = False) -> str:
+    """Folder (relative to files/) for an upload choice, or raise.
+
+    others=True also takes "people/<id>/<folder>" for another person's folder the uploader may file
+    into (access.can_file): the upload page offers those. Other callers keep to the person's own."""
     if choice == "shared":
         return "shared"
     if choice in PERSON_FOLDERS:
         return f"people/{person.id}/{choice}"
+    if others:
+        rel = access.canonical(choice)
+        parts = PurePosixPath(rel).parts
+        if (len(parts) == 3 and parts[0] == "people" and parts[1] in cfg.people and parts[1] != person.id
+                and parts[2] in PERSON_FOLDERS and access.can_file(person, f"{rel}/x")):
+            return rel
     raise UploadError("Pick one of the folders in the list.")
 
 
-def save_upload(cfg: Config, person: Person, choice: str, filename: str, data: bytes) -> str:
-    """Write the file atomically with 0600 perms and no overwrite. Returns its path relative to files/."""
+def filing_choices(cfg: Config, person: Person) -> list[tuple[str, str, bool]]:
+    """(value, label, drop_off) for every other person's folder this person may file into.
+    drop_off: they can put a file there but can't open it afterwards (a health folder)."""
+    out = []
+    for other in sorted(cfg.people.values(), key=lambda p: p.display.lower()):
+        if other.id == person.id:
+            continue
+        for f in PERSON_FOLDERS:
+            probe = f"people/{other.id}/{f}/x"
+            if access.can_file(person, probe):
+                out.append((f"people/{other.id}/{f}", f"{other.display}'s {FOLDER_LABELS[f]}",
+                            not access.can_read(person, probe)))
+    return out
+
+
+def audit_filing(cfg: Config, person: Person, rel_folder: str, event: str, data: bytes) -> None:
+    """One audit line for a new file. Filed into someone else's folder: a line on both logs."""
+    entry = {"event": event, "folder": rel_folder, "sha256": hashlib.sha256(data).hexdigest(), "bytes": len(data)}
+    owner = access.owner_of(rel_folder + "/x")
+    if owner and owner != person.id:
+        _audit(cfg, person.id, entry | {"for": owner})
+        _audit(cfg, owner, entry | {"by": person.id})
+    else:
+        _audit(cfg, person.id, entry)
+
+
+def save_upload(cfg: Config, person: Person, choice: str, filename: str, data: bytes, *,
+                others: bool = False) -> str:
+    """Write the file atomically with 0600 perms and no overwrite. Returns its path relative to files/.
+    others: see upload_folder."""
     if len(data) > MAX_UPLOAD:
         raise UploadError("That file is too big. The limit is 25 MB.")
     if not data:
         raise UploadError("That file is empty.")
-    rel_folder = upload_folder(cfg, person, choice)
+    rel_folder = upload_folder(cfg, person, choice, others=others)
     name = safe_filename(filename)
     check_content(Path(name).suffix, data)
     root = cfg.files.resolve()
@@ -550,8 +636,7 @@ def save_upload(cfg: Config, person: Person, choice: str, filename: str, data: b
         with contextlib.suppress(FileNotFoundError):
             tmp.unlink()
     os.chmod(target, 0o600)
-    _audit(cfg, person.id, {"event": "upload", "folder": rel_folder,
-                            "sha256": hashlib.sha256(data).hexdigest(), "bytes": len(data)})
+    audit_filing(cfg, person, rel_folder, "upload", data)
     return target.relative_to(root).as_posix()
 
 
@@ -803,18 +888,32 @@ def create_app(cfg: Config, *, port: int = 8443, remote_only: bool = False, box=
         return page(sess, "Home", body, "/")
 
     # ---- upload
-    def upload_form(sess: Sess, msg: str = "", ok: bool = False, status: int = 200) -> HTMLResponse:
+    def upload_form(sess: Sess, msg: str = "", ok: bool = False, status: int = 200, results: str = "") -> HTMLResponse:
         note = f'<p class="{"ok" if ok else "bad"}">{esc(msg)}</p>' if msg else ""
         opts = "".join(f'<option value="{f}">My {FOLDER_LABELS[f]}</option>' for f in PERSON_FOLDERS)
         opts += f'<option value="shared">{FOLDER_LABELS["shared"]}</option>'
-        body = (f'<h1>Upload a file</h1>{note}'
+        theirs = filing_choices(cfg, sess.person)
+        for value, label, drop_off in theirs:
+            extra = " (you can file here, but only they can open it)" if drop_off else ""
+            opts += f'<option value="{esc(value)}">{esc(label + extra)}</option>'
+        for_others = ("<p class=\"muted\">You can also file papers into the family folders you look after. "
+                      "Health papers you file for someone else can only be opened by that person.</p>"
+                      if theirs else "")
+        accept = ",".join(sorted(ALLOWED_SUFFIXES | PHOTO_SUFFIXES))
+        body = (f'<h1>Upload files</h1>{note}{results}'
                 f'<form method="post" action="/upload" enctype="multipart/form-data" class="card">'
                 f'{_csrf_field(sess.csrf)}'
-                f'<label for="folder">Where should it go?</label><select id="folder" name="folder">{opts}</select>'
-                f'<label for="file">File</label>'
-                f'<input type="file" id="file" name="file" accept=".txt,.md,.pdf,.json,.csv" required>'
-                f'<p class="muted">Text, Markdown, PDF, JSON or CSV. Up to 25 MB. '
-                f'Files in your folders are only for you. Shared files can be read by everyone in the family.</p>'
+                f'<label for="folder">Where should they go?</label><select id="folder" name="folder">{opts}</select>'
+                f'{for_others}'
+                f'<label for="file">Pick files</label>'
+                f'<input type="file" id="file" name="file" accept="{accept}" multiple>'
+                f'<label for="whole-folder">Or pick a whole folder</label>'
+                f'<input type="file" id="whole-folder" name="file" webkitdirectory multiple>'
+                f'<p class="muted">Text, Markdown, PDF, JSON, CSV, or photos and scans (JPG, PNG, WEBP). '
+                f'Up to {MAX_FILES} files at once, each up to 25 MB, '
+                f'{MAX_TOTAL_UPLOAD // (1024 * 1024)} MB in all. Photos go to the photo reader, which '
+                f'writes down the text on them. Files in your folders are only for you. Shared files can be read '
+                f'by everyone in the family.</p>'
                 f'<button class="main" type="submit">Upload</button></form>')
         return page(sess, "Upload", body, "/upload", status)
 
@@ -822,25 +921,120 @@ def create_app(cfg: Config, *, port: int = 8443, remote_only: bool = False, box=
     async def upload_get(request: Request, sess: Sess):
         return upload_form(sess)
 
+    def where_label(person: Person, rel_folder: str) -> str:
+        owner = access.owner_of(rel_folder + "/x")
+        kind = PurePosixPath(rel_folder).name
+        if rel_folder == "shared":
+            return FOLDER_LABELS["shared"]
+        if owner == person.id:
+            return f"My {FOLDER_LABELS.get(kind, kind)}"
+        return f"{cfg.people[owner].display}'s {FOLDER_LABELS.get(kind, kind)}"
+
+    async def read_photo(person: Person, rel: str) -> tuple[str, str]:
+        """Send a just-saved photo to the photo reader. Returns (status, words)."""
+        from . import enclave, vision
+        owner_id = access.owner_of(rel)
+        owner = cfg.people[owner_id] if owner_id and owner_id != person.id else person
+        drop_off = not access.can_read(person, rel)
+        if not enclave.api_key():
+            who = "you" if owner is person else owner.display
+            return "later", (f"Photo saved, not read yet. Once the AI key is saved, {who} can have it read "
+                             f"from the Photos page.")
+        res = await vision.transcribe_photo(cfg, owner, rel, source="web",
+                                            by=person.id if owner is not person else None)
+        if not res.ok:
+            return "later", ("Photo saved, but the box couldn't read it right now. Nothing was shared. "
+                             "It can be read again from the Photos page.")
+        if drop_off:
+            return "photo", "Photo saved and read. Only its owner can see what it says."
+        found = (", ".join(f"{label} {vision.masked(v)}" for label, v in res.fields) if res.fields
+                 else "no ID numbers")
+        return "photo", f"Photo saved and read. Found: {found}."
+
     async def upload_post(request: Request):
-        got = await guarded_form(request, max_files=1, max_fields=8, max_part_size=4096)
+        from starlette.exceptions import HTTPException
+        try:
+            # One more part than MAX_FILES: a browser sends an empty part for a file box left blank.
+            got = await guarded_form(request, max_files=MAX_FILES + 1, max_fields=8, max_part_size=4096)
+        except HTTPException:
+            sess = session_of(request)
+            if sess is None:
+                raise
+            return upload_form(sess, f"That was too many files. Upload up to {MAX_FILES} at a time.", status=400)
         if isinstance(got, Response):
             return got
         sess, form = got
+        person = sess.person
+        results: list[tuple[str, str, str]] = []     # (name as sent, status, words)
+        changed = False
         try:
-            f = form.get("file")
-            if f is None or isinstance(f, str):
-                raise UploadError("Choose a file first.")
-            if f.size is not None and f.size > MAX_UPLOAD:
-                raise UploadError("That file is too big. The limit is 25 MB.")
-            data = await f.read(MAX_UPLOAD + 1)
-            save_upload(cfg, sess.person, str(form.get("folder", "")), f.filename or "", data)
-        except UploadError as e:
-            return upload_form(sess, str(e), status=400)
+            choice = str(form.get("folder", ""))
+            try:
+                rel_folder = upload_folder(cfg, person, choice, others=True)
+            except UploadError as e:
+                return upload_form(sess, str(e), status=400)
+            parts = [f for f in form.getlist("file") if not isinstance(f, str) and (f.filename or f.size)]
+            if not parts:
+                return upload_form(sess, "Choose a file or a folder first.", status=400)
+            if len(parts) > MAX_FILES:
+                return upload_form(sess, f"That was too many files. Upload up to {MAX_FILES} at a time.",
+                                   status=400)
+            drop_off = not access.can_read(person, rel_folder + "/x")
+            where = where_label(person, rel_folder)
+            total = 0
+            for f in parts:
+                shown = (f.filename or "").replace("\\", "/")[-120:] or "(no name)"
+                try:
+                    name = flatten_name(f.filename or "")
+                    if f.size is not None and f.size > MAX_UPLOAD:
+                        raise UploadError("That file is too big. The limit is 25 MB.")
+                    if total + (f.size or 0) > MAX_TOTAL_UPLOAD:
+                        raise UploadError(f"The upload went over {MAX_TOTAL_UPLOAD // (1024 * 1024)} MB in total, "
+                                          f"so this file was left out. Upload it again on its own.")
+                    data = await f.read(MAX_UPLOAD + 1)
+                    total += len(data)
+                    if total > MAX_TOTAL_UPLOAD:
+                        raise UploadError(f"The upload went over {MAX_TOTAL_UPLOAD // (1024 * 1024)} MB in total, "
+                                          f"so this file was left out. Upload it again on its own.")
+                    if PurePosixPath(name).suffix.lower() in PHOTO_SUFFIXES:
+                        from . import vision
+                        try:
+                            rel = vision.save_photo(cfg, person, choice, name, data, others=True)
+                        except vision.PhotoError as e:
+                            raise UploadError(str(e)) from None
+                        changed = True
+                        if drop_off:
+                            state.note_filed(person.id, rel)
+                        status, words = await read_photo(person, rel)
+                    else:
+                        rel = save_upload(cfg, person, choice, name, data, others=True)
+                        changed = True
+                        if drop_off:
+                            state.note_filed(person.id, rel)
+                        status, words = "saved", f"Saved in {where}."
+                    if drop_off:
+                        owner = cfg.people[access.owner_of(rel)].display
+                        words += f" Filed for {owner}. Only {owner} can open it."
+                    results.append((shown, status, words))
+                except UploadError as e:
+                    results.append((shown, "skipped", f"Left out: {e}"))
         finally:
             await form.close()
-        _reindex(cfg)
-        return upload_form(sess, "Uploaded. Your assistant can use it now.", ok=True)
+        if changed:
+            _reindex(cfg)
+        done = sum(1 for _, st, _ in results if st != "skipped")
+        left = len(results) - done
+        rows = "".join(f'<li><div class="name">{esc(n)}</div>'
+                       f'<div class="{"bad" if st == "skipped" else "ok" if st != "later" else "muted"}">'
+                       f'{esc(w)}</div></li>' for n, st, w in results)
+        listing = f'<div class="card"><h2>What happened to each file</h2><ul class="files">{rows}</ul></div>'
+        if done:
+            msg = (f"Uploaded {done} file{'s' if done != 1 else ''}"
+                   + (f", {left} left out" if left else "") + ". Your assistant can use "
+                   + ("it" if done == 1 else "them") + " now.")
+        else:
+            msg = "Nothing was uploaded. See why below."
+        return upload_form(sess, msg, ok=bool(done), status=200 if done else 400, results=listing)
 
     # ---- files
     def files_page(sess: Sess, msg: str = "", ok: bool = True) -> HTMLResponse:
@@ -859,8 +1053,17 @@ def create_app(cfg: Config, *, port: int = 8443, remote_only: bool = False, box=
                         f'<div class="row"><span class="muted">{_size(size)}</span>{delete}</div></li>')
         note = f'<p class="{"ok" if ok else "bad"}">{esc(msg)}</p>' if msg else ""
         listing = f'<ul class="files">{"".join(rows)}</ul>' if rows else '<p class="muted">No files yet.</p>'
+        # Files this person filed where they can't read them: a count per person, never the names.
+        filed = []
+        for owner, n in sorted(state.filed_counts(sess.person.id).items()):
+            if owner in cfg.people and owner != sess.person.id:
+                who = cfg.people[owner].display
+                filed.append(f'<li>{n} file{"s" if n != 1 else ""} filed for {esc(who)}. '
+                             f'Only {esc(who)} can open {"them" if n != 1 else "it"}.</li>')
+        filed_card = (f'<div class="card"><h2>Filed for others</h2><ul>{"".join(filed)}</ul></div>'
+                      if filed else "")
         body = (f'<h1>Your files</h1>{note}<p class="muted">These are the files your assistant can use when you ask '
-                f'a question. You can remove your own files.</p><div class="card">{listing}</div>')
+                f'a question. You can remove your own files.</p><div class="card">{listing}</div>{filed_card}')
         return page(sess, "Files", body, "/files")
 
     @need_signin
@@ -1092,7 +1295,7 @@ def create_app(cfg: Config, *, port: int = 8443, remote_only: bool = False, box=
         Route("/signout", signout, methods=["POST"]),
         Route("/", home),
         Route("/upload", upload_get, methods=["GET"]),
-        Route("/upload", upload_post, methods=["POST"], max_body_size=MAX_UPLOAD + FORM_SLACK),
+        Route("/upload", upload_post, methods=["POST"], max_body_size=MAX_TOTAL_UPLOAD + FORM_SLACK),
         Route("/files", files_get),
         Route("/files/delete", files_delete, methods=["POST"]),
         Route("/approvals", approvals_get),

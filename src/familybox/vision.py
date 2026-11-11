@@ -591,13 +591,15 @@ def masked(value: str) -> str:
     return "(hidden)"
 
 
-def save_photo(cfg: Config, person: Person, folder_choice: str, filename: str, data: bytes) -> str:
-    """Keep the original photo (0600, never overwrites). Returns its path relative to files/."""
-    from .web import upload_folder, UploadError
+def save_photo(cfg: Config, person: Person, folder_choice: str, filename: str, data: bytes, *,
+               others: bool = False) -> str:
+    """Keep the original photo (0600, never overwrites). Returns its path relative to files/.
+    others: also allow another person's folder this person may file into (see web.upload_folder)."""
+    from .web import upload_folder, UploadError, audit_filing
     name = safe_photo_name(filename)
     check_photo(Path(name).suffix, data)
     try:
-        rel_folder = upload_folder(cfg, person, folder_choice)
+        rel_folder = upload_folder(cfg, person, folder_choice, others=others)
     except UploadError as e:
         raise PhotoError(str(e)) from None
     root = cfg.files.resolve()
@@ -607,8 +609,7 @@ def save_photo(cfg: Config, person: Person, folder_choice: str, filename: str, d
     folder.mkdir(parents=True, exist_ok=True, mode=0o700)
     target = _write_new(folder, name, data, also_free=transcript_path)
     rel = target.relative_to(root).as_posix()
-    _audit(cfg, person.id, {"event": "photo_upload", "folder": rel_folder,
-                            "sha256": hashlib.sha256(data).hexdigest(), "bytes": len(data)})
+    audit_filing(cfg, person, rel_folder, "photo_upload", data)
     return rel
 
 
@@ -645,8 +646,11 @@ def resolve_photo(cfg: Config, rel_path: str) -> Path | None:
     return target
 
 
-async def transcribe_photo(cfg: Config, person: Person, rel_photo: str, *, source: str = "cli") -> PhotoResult:
-    """Send one stored photo to the enclave and write its transcript. Never raises for model failures."""
+async def transcribe_photo(cfg: Config, person: Person, rel_photo: str, *, source: str = "cli",
+                           by: str | None = None) -> PhotoResult:
+    """Send one stored photo to the enclave and write its transcript. Never raises for model failures.
+    person is the photo's owner. by: who asked, when that was someone else (a parent filing a child's
+    photo); it goes on the audit line."""
     if not can_view(person, rel_photo):
         raise PhotoError("You can only read your own photos.")
     target = resolve_photo(cfg, rel_photo)
@@ -682,7 +686,7 @@ async def transcribe_photo(cfg: Config, person: Person, rel_photo: str, *, sourc
     if res.error:
         ev.emit("transcript", ok=False, message=res.error)
         _audit(cfg, person.id, {"event": "photo_transcribe", "qid": ev.qid, "source": source, "ok": False,
-                                "again": retry, "by": person.id, "photo_sha256": sha, "model": model,
+                                "again": retry, "by": by or person.id, "photo_sha256": sha, "model": model,
                                 "error": ev.events[-1]["message"]})
         return res
     sidecar = transcript_path(target)
@@ -695,7 +699,7 @@ async def transcribe_photo(cfg: Config, person: Person, rel_photo: str, *, sourc
     ev.emit("transcript", ok=True, lines=body.count("\n") + 1, fields=[k for k, _ in res.fields],
             tokens=[t.tokens_in, t.tokens_out])
     _audit(cfg, person.id, {"event": "photo_transcribe", "qid": ev.qid, "source": source, "ok": True,
-                            "again": retry, "by": person.id,
+                            "again": retry, "by": by or person.id,
                             "photo_sha256": sha, "model": t.model, "signer": short_signer(t.signer),
                             "signature_kind": t.signature_kind, "fields": [k for k, _ in res.fields],
                             "tokens": [t.tokens_in, t.tokens_out]})
