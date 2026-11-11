@@ -527,4 +527,9 @@ without changing a system security setting. Not changed. Documented in docs/WORK
 - Public site (familybox-five.vercel.app): the hero is now a chat screen (one line and a centered composer;
   on send the composer slides down and the chat fills the screen). "How it works" has a four-step animation of
   one question. A nine-step version is in `docs/how-it-works-animation.html`. The results line says five runs.
+- New look pushed to the Pi and the service restarted. First live question on the Pi (Dana, Maya's passport) was
+  **stopped by the code pin**: NEAR changed its gateway's compose file on November 11
+  (`compose_sha256_masked` ff3492cc... to 12ec6fac..., review id 6be958dd5c7e). The laptop's
+  `familybox pins check` sees the same change. Nothing was sent. The box answers again once the owner
+  accepts the change on the NEAR code page. I did not accept it: that review is the owner's.
 
