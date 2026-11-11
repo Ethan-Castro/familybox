@@ -107,7 +107,23 @@ anchoring client are written and run as a dry run until a testnet account is set
 The UNO Q button uses an approve-only device token (hashed at rest). The device API never returns values.
 After a button approval, the value shows once on the owner's own screen.
 
-### 11. Red-team page (enforced)
+### 11. Setup, PINs and reset on the box page (enforced)
+
+- **Setup window:** the setup page works only while the box has no family and for 15 minutes after it
+  starts. After the first person exists it cannot be run again. Someone on the home Wi-Fi in that window
+  could set up the box first; the owner would see a family they did not create and reset it.
+- **PINs:** 6 to 12 digits, not all the same, stored as scrypt hashes with a per-person salt, never logged.
+  5 wrong tries in 10 minutes locks that person's PIN sign-in only, so a child cannot lock a parent out.
+- **Invites:** one-time codes that last 30 minutes and only set a first PIN; they cannot change an existing one.
+- **Showing a held value:** the owner types their PIN again, and the value page goes back to the list after 30
+  seconds. It covers approvals on the box page, not the UNO Q button or forms.
+- **AI key:** pasted once on an admin-only page, stored 0600 on the box, never shown again.
+- **Reset:** admin only, PIN plus the family name typed out. It wipes files, logs and the family list, so
+  the reset itself leaves no log entry.
+- **Not covered:** a sole admin who forgets their PIN needs a terminal on the box to recover.
+- None of these pages are on the internet-facing listener.
+
+### 12. Red-team page (enforced)
 
 Runs only on a dedicated fictional demo home, bound to 127.0.0.1 until hosting is approved. Per-visitor
 and global caps, a daily token cap and a hard daily dollar budget with worst-case reservations; past the

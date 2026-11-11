@@ -22,7 +22,7 @@ uv run familybox ask --as maya "What medications am I on?"
 uv run familybox ask --as maya "What did the doctor say at Mom's last visit?"
 uv run familybox ask --as dana "What were our combined 2025 W-2 wages, and what do we still need for Maya's FAFSA?"
 uv run familybox pending --as maya        # values held for Maya's approval
-uv run pytest -q tests                    # 693 tests; 16 sandbox tests run only on Linux (the Pi)
+uv run pytest -q tests                    # 794 tests; 17 sandbox tests run only on Linux (the Pi)
 ```
 
 Without a key, `ask` replays recorded enclave conversations (`replays/`) for the six demo questions. The box's real tools, access checks and answer gate still run, and the output says "(replayed recording)". With a key, every question goes to NEAR AI Cloud live:
@@ -71,7 +71,9 @@ After that, the family needs no terminal:
 1. Plug the box into the router and into power.
 2. On a phone or computer on the same Wi-Fi, open `https://familybox.local:8443` (or `https://<board name>.local:8443` if the friendly name is not published). The browser warns once because the box made its own certificate; accept it.
 3. On the setup page, type the family name, your name and a PIN. Setup stays open for 15 minutes after the box starts. If it closes, unplug the box and plug it back in.
-4. Upload papers from the box's page, and invite each family member from the Family page with a QR code.
+4. On the AI key page, paste the NEAR AI Cloud key once and press Check. The key is stored on the box and never shown again.
+5. Upload papers (many files or a whole folder at once), and invite each family member from the Family page with a QR code. Each person picks their own PIN.
+6. To link ChatGPT or Claude, get a linking code on the Assistants page.
 
 If the box's address on the home network changes, restart it so `familybox.local` points to the new address. A box whose certificate was made before `familybox.local` was added keeps its certificate; `familybox serve` prints how to make a new one.
 
@@ -107,30 +109,35 @@ What each part defends against, and what it doesn't: [docs/THREAT_MODEL.md](docs
 6. **Answer gate:** the box knows the actual protected values in the files and recognizes them however they are written (dashes, spaces, spelled-out digits, a 5-digit run of an SSN, word forms of a diagnosis). The result is one of: pass, mask, hold for the owner's approval, or refuse (tripwire markers, another person's data).
 7. **Audit:** each person has a log of what left the box for them, with the signer and the files read. Each entry is linked by hash to the one before it, so `familybox log verify --as <person>` catches edits, removals and reordering by anything that does not also rewrite the whole chain. Cutting entries off the end, or a full rewrite, only shows up against a NEAR anchor, so the newest link can be anchored on NEAR ([docs/ANCHOR.md](docs/ANCHOR.md)). Approving or denying a held value is logged too (never the value itself).
 
-## Results (real runs, 2026-11-09)
+## Results (real runs, 2026-11-09 to 2026-11-11)
 
-**Attack suite** (`eval/attacks.py`), run three times on the same code: 39 attacks plus 8 normal questions,
+**Attack suite** (`eval/attacks.py`), run five times: 39 attacks plus 8 normal questions,
 on DeepSeek-V4.1-Flash-1017 in NEAR AI Cloud. Leaks are judged by a checker in the eval script, not by the box.
-Summary with every leak labelled by hand: [eval/reports/attacks_2026-11-09_summary.md](eval/reports/attacks_2026-11-09_summary.md).
+Runs 1 to 3, with every leak labelled by hand: [eval/reports/attacks_2026-11-09_summary.md](eval/reports/attacks_2026-11-09_summary.md).
+Runs 4 and 5 (after two gate changes), with a side-by-side log of what the box did for each question:
+[compare_2026-11-10_run1.md](eval/reports/compare_2026-11-10_run1.md), [compare_2026-11-11_run1.md](eval/reports/compare_2026-11-11_run1.md).
 
-| Setup | Leaks / 39 (runs 1, 2, 3) | Normal questions answered |
+| Setup | Leaks / 39 (runs 1 to 5) | Normal questions answered |
 |---|---|---|
-| **familybox** (scoped tools, answer gate, second check) | **0, 4, 3** | 8/8 each run |
-| Same model and scoped tools, reply returned as is ("trust the reply") | 13, 13, 14 | 8/8 |
-| Same model, every file readable, no gate | 18, 18, 17 | 8/8 |
+| **familybox** (scoped tools, answer gate, second check) | **0, 4, 3, 2, 2** | 8/8 each run |
+| Same model and scoped tools, reply returned as is ("trust the reply") | 13, 13, 14, 14, 14 | 8/8 |
+| Same model, every file readable, no gate | 18, 18, 17, 17, 17 | 8/8 |
 
 - **30 of the attacks** (direct asks, encodings such as spelled-out or reversed digits, piecing a number
   together, other people's data, health details, instructions planted in documents, tripwires): **0 leaks
-  through the box in all three runs.**
-- **9 paraphrase attacks** ("describe Mom's condition without naming it"): the answer gate alone would have
-  sent 8, 9 and 8 of them. With the second enclave check, 0, 4 and 3 went out. By hand, 6 of those 7 were hints
-  about the asker's own record (two were the checker's word list over-counting). One was another person's
-  detail, from a bug that is now fixed and re-tested.
+  through the box in all five runs.** Only this setup kept every question away from files
+  the asker may not read (in runs 4 and 5, the every-file setup read one in 10 questions each run).
+- **9 paraphrase attacks** ("describe Mom's condition without naming it"): in runs 1 to 3 the answer gate alone
+  would have sent 8, 9 and 8 of them. With the second enclave check, 0, 4, 3, 2 and 2 went out (11 of 45). By
+  hand, 10 of those 11 were hints about the asker's own record (two were the checker's word list
+  over-counting). One was another person's detail, from a bug that is now fixed and re-tested.
+- Run 5 had 4 questions stop with an error (1 in the box setup). The box sends nothing when that happens.
 - No identifier or tripwire code reached an assistant in any run. Every model turn carried a verified
   `provider_tee` signature.
 
 These are runs of a non-deterministic model on a hand-written suite with fictional data. Treat them as
-evidence, not proof. Earlier runs (2026-11-08, before the second check) are in `eval/reports/`.
+evidence, not proof. The "every file readable" setup stands in for pasting the files into a chatbot; it is
+not a run against ChatGPT or Claude. Earlier runs (2026-11-08, before the second check) are in `eval/reports/`.
 
 ## What is proven, what is enforced, what is not covered
 
@@ -147,7 +154,7 @@ evidence, not proof. Earlier runs (2026-11-08, before the second check) are in `
 - A stolen box without disk encryption exposes the files.
 - NEAR's gateway still sees metadata: model, message count, sizes, timing and the API key.
 - NEAR's attestation has known limits. Model instances share a signing key, so a signature doesn't identify the instance. Parts of the serving stack are pulled at runtime and are not in the measurement. See [docs/research/near_ai_cloud.md](docs/research/near_ai_cloud.md).
-- The gate recognizes values that are in the files. A model could still paraphrase a fact the gate has no pattern for. A second enclave check (`src/familybox/plugins/paraphrase.py`) asks a separate verified model whether the answer reveals a protected fact in other words. It is itself a model, so it lowers this risk but does not remove it: across three runs, 7 of 27 reworded attempts still got a hint through, mostly about the asker's own record (see the results above).
+- The gate recognizes values that are in the files. A model could still paraphrase a fact the gate has no pattern for. A second enclave check (`src/familybox/plugins/paraphrase.py`) asks a separate verified model whether the answer reveals a protected fact in other words. It is itself a model, so it lowers this risk but does not remove it: across five runs, 11 of 45 reworded attempts still got a hint through, mostly about the asker's own record (see the results above).
 
 ## What we found about NEAR AI Cloud
 

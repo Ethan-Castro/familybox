@@ -5,9 +5,11 @@ without Ethan's yes. The real payload is never committed (it holds personal data
 
 ## Checklist
 
-- [x] Final attack report numbers in README, DEMO_SCRIPT and the X post (three runs, show the range)
+- [x] Final attack report numbers in README, DEMO_SCRIPT and the X post (five runs, show the range)
 - [x] Pi run on the merged build: 691 passed, 2 skipped, sandbox tests included, workbench ready (2026-11-09)
-- [ ] Live answers on the Pi (needs the NEAR key on the board; Ethan's OK)
+- [ ] Box service and terminal-free setup on the Pi (`scripts/pi_service.sh` through fleet exec; Pi unreachable on 2026-11-11)
+- [ ] Ethan's phone run on the Pi: setup, invite by QR, upload, paste the NEAR key on the AI key page, approve a held number
+- [ ] Live answers on the Pi (needs the NEAR key on the board; Ethan pastes it on the box page)
 - [x] Clean-install check from a fresh clone, following the README word for word, replay mode, no key (2026-11-09: 675 passed, 17 skipped)
 - [x] No keys or fleet tokens in git history (grep for `sk-` and `jpt_`; a dedicated scanner is still worth running)
 - [x] `docs/private/` and `.env` still untracked (checked before the first push)
@@ -48,11 +50,11 @@ turn. It fails closed.
 
 The box then decides what may leave. It knows the real SSNs, IDs and diagnoses in the files and checks every
 answer against them, however they are written, before the assistant gets it. Full values go only to the
-owner's own phone after they approve. Each person reaches only their own files; health records are
+owner's own phone after they approve with their PIN, and hide again after 30 seconds. Each person reaches only their own files; health records are
 owner-only. A second enclave check catches facts given away in other words, and the box pins NEAR's serving
 code and pauses if it changes.
 
-In a 39-attack suite run three times on NEAR, 0 of the 30 direct, encoded, cross-person and planted-instruction attacks got through the box in every run, and no SSN or ID number ever did; with the model's reply trusted as is, 13 to 14 of 39 leaked. Reworded hints remain the open gap (0 to 4 per run, mostly about the asker's own records; one cross-person hint came from a bug since fixed). Includes a live trust timeline, photo transcription,
+A family sets it up from a phone: a setup page, a PIN per person, invites by QR code, bulk upload, and the NEAR key pasted once. No terminal. In a 39-attack suite run five times on NEAR, 0 of the 30 direct, encoded, cross-person and planted-instruction attacks got through the box in every run, and no SSN or ID number ever did; with the model's reply trusted as is, 13 to 14 of 39 leaked, and with every file given to the same model, 17 to 18. Reworded hints remain the open gap (0 to 4 per run, mostly about the asker's own records; one cross-person hint came from a bug since fixed). Includes a live trust timeline, photo transcription,
 form filling, a sandboxed analysis workbench and a red-team page.
 
 ## X post (draft, Ethan posts)
@@ -64,6 +66,6 @@ form filling, a sandboxed analysis workbench and a red-team page.
 > A @NEARProtocol AI Cloud model reads them in a verified TEE. The box checks every answer against the real
 > numbers before the assistant sees it.
 >
-> 39 attacks, 3 runs: no SSN or ID number got out through the box. Trust the model's reply instead and 13 leak. Repo + video: [link]
+> 39 attacks, 5 runs: no SSN or ID number got out through the box. Trust the model's reply instead and 13 leak. Repo + video: [link]
 >
 > What would you trust it with? #NEARHackathon
