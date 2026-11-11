@@ -74,7 +74,21 @@ table.fb-table { width: 100%; border-collapse: collapse; font-size: 15px; }
 .fb-filter a { margin-right: 10px; }
 .fb-filter a.here { font-weight: 700; text-decoration: none; color: var(--fg); }
 @media (max-width: 520px) { .fb-table .fb-hide { display: none; } }
-@media (min-width: 1000px) { body { font-size: 18px; } .fb-body, .fb-list { font-size: 16px; } }
+/* a question as a chat: the question on the right, the checked answer on the left, then the steps */
+.fb-chat { display: flex; flex-direction: column; gap: 24px; }
+.fb-me { align-self: flex-end; max-width: 80%; background: var(--soft); color: var(--ink); border-radius: 22px;
+  padding: 10px 18px; white-space: pre-wrap; word-break: break-word; }
+.fb-answer { font-size: 16px; line-height: 1.6; white-space: pre-wrap; word-break: break-word; color: var(--fg); }
+.fb-cap { color: var(--smoke); font-size: 12px; margin: 8px 0 0; }
+.fb-typing { display: inline-flex; gap: 4px; vertical-align: middle; margin-right: 8px; }
+.fb-typing i { width: 6px; height: 6px; border-radius: 50%; background: var(--smoke); animation: fbblink 1.2s infinite; }
+.fb-typing i:nth-child(2) { animation-delay: .2s; } .fb-typing i:nth-child(3) { animation-delay: .4s; }
+@keyframes fbblink { 0%, 80%, 100% { opacity: .25; } 40% { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .fb-typing i { animation: none; } }
+.fb-how { border-top: 1px solid var(--line); padding-top: 20px; margin-top: 8px; }
+.fb-how > h2 { font-size: 14px; font-weight: 500; color: var(--muted); margin: 0 0 12px; }
+.fb-next { position: sticky; bottom: 0; background: linear-gradient(transparent, var(--bg) 28%); padding: 24px 0 16px; }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 """
 
 JS = r"""(function () {
@@ -176,14 +190,11 @@ def web_routes(ctx):
         return got[1] if got and got[0] == owner == sess.person.id else None
 
     def ask_form(sess, msg: str = "", value: str = "") -> str:
+        from familybox.web import composer
         note = f'<p class="bad">{esc(msg)}</p>' if msg else ""
-        return (f'<form method="post" action="/activity/ask" class="card">{ctx.csrf_field(sess.csrf)}'
-                f'<label for="q">Ask the box</label>{note}'
-                f'<textarea id="q" name="question" class="fb-ask" maxlength="{MAX_QUESTION}" required '
-                f'placeholder="For example: When does the car registration renew?">{esc(value)}</textarea>'
-                f'<button class="main" type="submit">Ask and watch it work</button>'
-                f'<p class="muted">The model only sees files you are allowed to read. Every answer is checked by the box before you '
-                f'see it, and you can follow each step here.</p></form>')
+        return (f'{note}{composer(sess.csrf, "Ask your family box", value, maxlength=MAX_QUESTION)}'
+                f'<p class="muted">The model only sees files you are allowed to read. Every answer is checked by the '
+                f'box before you see it, and you can follow each step.</p>')
 
     def list_page(sess, request: Request, msg: str = "", value: str = "", status: int = 200):
         viewer = sess.person
@@ -261,13 +272,18 @@ def web_routes(ctx):
         view = act.View(cfg, sess.person, owner, text_for(sess, owner, qid))
         live = act.render_detail(view, events, audit, status)
         who = "You" if view.full else esc(view.owner_name())
-        body = (f'{assets()}<div class="fb-wide"><p><a href="/activity">Back to activity</a></p>'
-                f'<h1>How the box handled this question</h1>'
-                f'<p class="muted">{who}, {act.when_html(time.time() if not events else _started(events, owner, qid))}.'
-                f' Each step below was recorded by the box as it happened.</p>'
+        from familybox.web import composer
+        text = view.question_text
+        asked = (f'<div class="fb-me">{esc(text)}</div>' if text is not None else
+                 f'<p class="muted">{who} asked a question. The box does not keep question text.</p>')
+        again = (f'<div class="fb-next">{composer(sess.csrf, "Ask another question", maxlength=MAX_QUESTION)}</div>'
+                 if view.full else "")
+        body = (f'{assets()}<div class="fb-wide fb-chat"><h1 class="sr">Question</h1>{asked}'
                 f'<div id="fb-live" aria-live="polite" data-poll="/activity/{esc(qid)}/live" '
                 f'data-status="{esc(status)}" data-version="{esc(act.version(events, audit, status))}">{live}</div>'
-                f'<noscript><p class="muted">Reload the page to see new steps.</p></noscript></div>')
+                f'<noscript><p class="muted">Reload the page to see new steps.</p></noscript>'
+                f'<p class="fb-cap">{who}, {act.when_html(time.time() if not events else _started(events, owner, qid))}.'
+                f' Each step was recorded by the box as it happened.</p>{again}</div>')
         return ctx.page(sess, "Activity", body, "/activity")
 
     def _started(events, owner, qid) -> float:

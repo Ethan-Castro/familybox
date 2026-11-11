@@ -648,3 +648,20 @@ def test_photo_drop_off_into_health_is_read_but_not_shown(cfg, reader, monkeypat
     assert "zzcard" not in c.get("/photos").text
     maya_log = (cfg.runtime / "audit/maya.jsonl").read_text()
     assert '"event": "photo_upload"' in maya_log and '"by": "dana"' in maya_log
+
+
+def test_home_is_a_question_box_and_the_menu_is_grouped(cfg):
+    """Signed in, the home page is one question box that posts to the Activity plugin, with a side menu:
+    everyday pages first, the rest under "Box settings"."""
+    c, _ = sign_in(cfg, "maya")
+    r = c.get("/")
+    t = r.text
+    assert '<body class="app">' in t and '<aside class="side">' in t and "Signed in as Maya" in t
+    assert 'action="/activity/ask" class="composer"' in t and 'name="question"' in t and "autofocus" in t
+    assert t.count('<input type="hidden" name="question"') == len(web.SUGGESTIONS)
+    assert '<a href="/" class="here">New question</a>' in t
+    menu = t[t.index("<nav>"):t.index("</nav>")]
+    assert menu.index('href="/approvals"') < menu.index("Box settings") < menu.index('href="/cloud"')
+    assert "<script" not in t and "style=" not in t and "—" not in t
+    out = client(cfg).get("/signin").text                        # signed out: no menu
+    assert '<body class="plain">' in out and "<aside" not in out

@@ -117,7 +117,8 @@ def test_ask_from_the_web_and_see_the_timeline(cfg):
 
     audit = json.loads((cfg.runtime / "audit" / "maya.jsonl").read_text().splitlines()[-1])
     assert audit["qid"] == qid and audit["source"] == "web"
-    assert web.esc(audit["sent_to_assistant"]) in t
+    from familybox.activity import answer_html
+    assert answer_html(audit["sent_to_assistant"]) in t   # the same words, with bold and bullets drawn
     # The question text is never written to disk.
     for f in cfg.runtime.rglob("*"):
         if f.is_file() and f.name != "approvals.json":   # Approvals keeps the question by design
@@ -522,3 +523,9 @@ def test_source_labels_keep_the_assistant_name_from_the_handshake():
     assert act.source_short("mcp-stdio") == "Assistant app"
     assert act.source_label("mcp-stdio:claude-ai").endswith("which said it is Claude")
     assert act.source_short("mcp-http-local:some-tool") == "Local assistant (some-tool)"
+
+
+def test_answer_text_is_escaped_before_bold_and_bullets():
+    from familybox.activity import answer_html
+    out = answer_html("- **Dose** <script>x</script>\nplain - text")
+    assert out == "• <strong>Dose</strong> &lt;script&gt;x&lt;/script&gt;\nplain - text"

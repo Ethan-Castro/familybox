@@ -585,7 +585,7 @@ def test_stored_key_is_used_after_a_restart(cfg, no_key):
 def test_status_page_in_plain_words(cfg, no_key):
     cl, token = sign_in(cfg, "dana")
     home = cl.get("/")
-    assert '<a href="/status">Box status</a>' in home.text
+    assert '<a href="/status">Status</a>' in home.text          # in the side menu
     r = cl.get("/status")
     assert r.status_code == 200
     for words in ("The box is <span class=\"ok\">on</span>", "AI key: <span class=\"bad\">missing</span>",
@@ -818,12 +818,12 @@ def test_home_shows_first_steps(cfg, no_key):
 
 def test_box_look_is_plain_and_local():
     css = web.CSS
-    for want in ("#0d0d0d", "rgba(0,0,0,.13)", "9999px", "6px", "system-ui"):
+    for want in ("#0d0d0d", "#ededed", "#f9f9f9", "9999px", "8px", "system-ui"):
         assert want in css, want
-    assert "box-shadow: none" in css and "url(" not in css and "@import" not in css and "—" not in css
+    assert "url(" not in css and "@import" not in css and "—" not in css
     for cls in (".card", "button.main", ".button", "button.quiet", "button.danger", ".row", ".muted", ".ok", ".bad",
                 ".value", "ul.files", ".name", "label.check", "fieldset", "legend", ".qr", "nav a.here",
-                "header .box", "header .who", "input.code"):
+                "header .box", ".side .who", "input.code", "body.app", ".side", ".composer", ".suggest", ".hero"):
         assert cls in css, cls
 
 

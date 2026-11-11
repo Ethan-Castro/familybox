@@ -407,76 +407,142 @@ def signed_in(state: "WebState", person_id: str, to: str = "/") -> RedirectRespo
 # --- HTML ----------------------------------------------------------------------------------------
 
 CSS = """
-:root { color-scheme: light; --bg: #ffffff; --fg: #0d0d0d; --muted: #5e5e5e; --card: #ffffff;
-  --line: rgba(0,0,0,.13); --soft: #f4f4f4; --accent: #0d0d0d; --accent-fg: #ffffff; --ok: #17723d;
-  --bad: #b3261e; --radius: 6px; --pill: 9999px; }
+:root { color-scheme: light; --bg: #ffffff; --fg: #181818; --ink: #0d0d0d; --text: #282828; --muted: #5d5d5d;
+  --smoke: #8f8f8f; --card: #f9f9f9; --hover: #f3f3f3; --line: #ededed; --edge: #d9d9d9; --soft: #f3f3f3;
+  --accent: #000000; --accent-fg: #ffffff; --ok: #17723d; --bad: #b3261e; --radius: 8px; --pill: 9999px; }
 * { box-sizing: border-box; }
 html { -webkit-text-size-adjust: 100%; }
-body { margin: 0; background: var(--bg); color: var(--fg);
-  font: 17px/1.55 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial,
-  sans-serif; -webkit-font-smoothing: antialiased; }
-a { color: var(--fg); text-underline-offset: 3px; text-decoration-thickness: 1px; }
-header { padding: 16px 20px 14px; border-bottom: 1px solid var(--line); background: var(--bg); }
-header .box { font-weight: 650; letter-spacing: -0.01em; }
-header .who { color: var(--muted); font-size: 15px; margin-top: 2px; }
-nav { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; align-items: center; }
-nav a, nav button { padding: 6px 14px; border-radius: var(--pill); text-decoration: none; color: var(--fg);
-  border: 1px solid var(--line); background: transparent; font: inherit; font-size: 15px; cursor: pointer; }
-nav a:hover, nav button:hover { background: var(--soft); }
-nav a.here { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
-nav form { margin: 0; }
-main { padding: 28px 20px 48px; max-width: 680px; margin: 0 auto; }
-h1 { font-size: 30px; line-height: 1.2; letter-spacing: -0.02em; font-weight: 650; margin: 4px 0 18px; }
-h2 { font-size: 19px; letter-spacing: -0.01em; font-weight: 650; margin: 4px 0 10px; }
-p { margin: 10px 0; }
-.card { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 20px;
-  margin: 16px 0; box-shadow: none; }
+body { margin: 0; background: var(--bg); color: var(--fg); letter-spacing: -0.008em;
+  font: 16px/1.5 ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue",
+  Arial, sans-serif; -webkit-font-smoothing: antialiased; }
+a { color: var(--text); text-underline-offset: 3px; text-decoration-thickness: 1px; }
+
+/* signed in: a quiet sidebar on the left, the page on the right */
+body.app { display: grid; grid-template-columns: 260px minmax(0, 1fr); min-height: 100vh; }
+.side { background: var(--card); border-right: 1px solid var(--line); padding: 8px; display: flex;
+  flex-direction: column; position: sticky; top: 0; height: 100vh; overflow-y: auto; }
+.side .box { font-weight: 600; font-size: 16px; letter-spacing: -0.01em; color: var(--ink); padding: 12px 12px 14px; }
+.side nav { display: flex; flex-direction: column; gap: 2px; }
+.side nav a { display: block; padding: 8px 12px; border-radius: var(--radius); font-size: 14px; color: var(--text);
+  text-decoration: none; line-height: 1.4; }
+.side nav a:hover { background: var(--line); }
+.side nav a.here { background: var(--line); color: var(--ink); font-weight: 500; }
+.side .group { font-size: 12px; color: var(--smoke); padding: 18px 12px 6px; }
+.side .me { margin-top: auto; padding: 10px 4px 4px; border-top: 1px solid var(--line); display: flex;
+  align-items: center; justify-content: space-between; gap: 8px; }
+.side .who { color: var(--muted); font-size: 13px; padding-left: 8px; }
+.side .me form { margin: 0; }
+.side .me button { padding: 6px 12px; border-radius: var(--pill); border: 1px solid var(--line); background: var(--bg);
+  color: var(--text); font: inherit; font-size: 13px; font-weight: 500; cursor: pointer; white-space: nowrap; }
+.side .me button:hover { background: var(--hover); }
+main { padding: 40px 24px 64px; min-width: 0; }
+.col { max-width: 720px; margin: 0 auto; }
+/* signed out: one narrow column */
+body.plain header { padding: 20px 24px 0; }
+body.plain header .box { font-weight: 600; letter-spacing: -0.01em; color: var(--ink); }
+body.plain .col { max-width: 440px; }
+
+h1 { font-size: 30px; line-height: 1.2; letter-spacing: -0.02em; font-weight: 600; margin: 0 0 20px; }
+h2 { font-size: 18px; line-height: 1.4; letter-spacing: -0.01em; font-weight: 600; margin: 4px 0 8px; }
+p { margin: 8px 0; }
+.card { background: var(--bg); border: 1px solid var(--line); border-radius: var(--radius); padding: 24px;
+  margin: 16px 0; box-shadow: rgba(0,0,0,.08) 0 1px 2px -1px; }
 .card > :first-child { margin-top: 0; }
 .card > :last-child { margin-bottom: 0; }
-label { display: block; font-weight: 600; margin: 16px 0 6px; }
-input[type=text], input[type=password], input[type=file], select, textarea { width: 100%; padding: 11px 14px;
-  font: inherit; border-radius: var(--radius); border: 1px solid var(--line); background: var(--bg);
+label { display: block; font-weight: 500; font-size: 14px; margin: 16px 0 6px; }
+input[type=text], input[type=password], input[type=file], select, textarea { width: 100%; padding: 10px 12px;
+  font: inherit; border-radius: var(--radius); border: 1px solid var(--edge); background: var(--bg);
   color: var(--fg); }
 input:focus, select:focus, textarea:focus, button:focus-visible, a:focus-visible {
-  outline: 2px solid var(--fg); outline-offset: 2px; }
+  outline: 2px solid var(--ink); outline-offset: 2px; }
 input.code { letter-spacing: 4px; text-transform: uppercase; font-size: 22px; text-align: center; }
-button.main, .button { display: inline-block; margin-top: 16px; padding: 11px 22px; border-radius: var(--pill);
+button.main, .button { display: inline-block; margin-top: 16px; padding: 10px 16px; border-radius: var(--pill);
   border: 1px solid var(--accent); background: var(--accent); color: var(--accent-fg); font: inherit;
-  font-weight: 600; cursor: pointer; text-decoration: none; line-height: 1.3; }
+  font-size: 14px; font-weight: 500; cursor: pointer; text-decoration: none; line-height: 1.4; }
 button.main:hover, .button:hover { background: #2b2b2b; border-color: #2b2b2b; }
-button.quiet, button.main.quiet { background: transparent; color: var(--fg); border: 1px solid var(--line); }
-button.quiet:hover, button.main.quiet:hover { background: var(--soft); border-color: var(--line); }
-button.danger { display: inline-block; margin-top: 12px; padding: 9px 18px; border-radius: var(--pill);
-  background: transparent; color: var(--bad); border: 1px solid var(--bad); font: inherit; font-weight: 600;
-  cursor: pointer; }
+button.quiet, button.main.quiet { background: var(--bg); color: var(--text); border: 1px solid var(--edge); }
+button.quiet:hover, button.main.quiet:hover { background: var(--hover); border-color: var(--edge); }
+button.danger { display: inline-block; margin-top: 12px; padding: 10px 16px; border-radius: var(--pill);
+  background: var(--bg); color: var(--bad); border: 1px solid var(--bad); font: inherit; font-size: 14px;
+  font-weight: 500; cursor: pointer; }
 button.danger:hover { background: #fbeceb; }
-.row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+.row { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
 .row form { margin: 0; }
-.muted { color: var(--muted); font-size: 15px; }
-.ok { color: var(--ok); font-weight: 600; }
-.bad { color: var(--bad); font-weight: 600; }
+.muted { color: var(--muted); font-size: 14px; }
+.ok { color: var(--ok); font-weight: 500; }
+.bad { color: var(--bad); font-weight: 500; }
 .value { font: 600 22px/1.3 ui-monospace, "SF Mono", Menlo, Consolas, monospace; word-break: break-all;
-  padding: 14px 16px; border: 1px dashed var(--fg); border-radius: var(--radius); background: var(--soft);
-  margin: 10px 0; }
+  padding: 16px; border: 1px solid var(--edge); border-radius: var(--radius); background: var(--card);
+  margin: 12px 0; }
 main img { max-width: 100%; height: auto; display: block; border-radius: var(--radius); }
 pre.value { white-space: pre-wrap; font-size: 16px; }
 ul.files { list-style: none; padding: 0; margin: 0; }
-ul.files li { padding: 12px 0; border-bottom: 1px solid var(--line); }
+ul.files li { padding: 14px 0; border-bottom: 1px solid var(--line); }
 ul.files li:first-child { padding-top: 0; }
 ul.files li:last-child { border-bottom: 0; padding-bottom: 0; }
-ol.steps { margin: 0; padding-left: 22px; }
-ol.steps li { padding: 10px 0; border-bottom: 1px solid var(--line); }
+ol.steps { margin: 0; padding-left: 20px; }
+ol.steps li { padding: 12px 0; border-bottom: 1px solid var(--line); }
 ol.steps li:last-child { border-bottom: 0; padding-bottom: 0; }
 ol.steps .row { justify-content: space-between; }
-ol.steps .ok { font-size: 14px; padding: 2px 10px; border: 1px solid var(--line); border-radius: var(--pill); }
+ol.steps .ok { font-size: 13px; padding: 2px 10px; border: 1px solid var(--line); border-radius: var(--pill); }
 .name { word-break: break-all; }
-label.check { display: flex; gap: 10px; align-items: center; font-weight: 400; margin: 8px 0; }
+label.check { display: flex; gap: 10px; align-items: center; font-weight: 400; font-size: 16px; margin: 8px 0; }
 fieldset { border: 1px solid var(--line); border-radius: var(--radius); margin: 16px 0; padding: 10px 16px 14px; }
-legend { font-weight: 600; padding: 0 6px; }
+legend { font-weight: 500; font-size: 14px; padding: 0 6px; }
+details.steps-card > summary { cursor: pointer; font-weight: 600; font-size: 16px; }
+details.steps-card[open] > summary { margin-bottom: 12px; }
 .qr svg { display: block; max-width: 100%; height: auto; margin: 10px 0; }
+
+/* home: one line and a question box in the middle of the screen */
+.hero { min-height: calc(100vh - 260px); display: flex; flex-direction: column; justify-content: center; gap: 20px;
+  padding: 24px 0; }
+.hero h1 { text-align: center; font-weight: 500; font-size: 28px; margin: 0; }
+.composer { display: flex; align-items: center; gap: 8px; border: 1px solid var(--edge); border-radius: 28px;
+  padding: 8px 8px 8px 12px; background: var(--bg); margin: 0;
+  box-shadow: rgba(0,0,0,.05) 0 2px 8px, rgba(0,0,0,.03) 0 0 60px 24px; }
+.composer:focus-within { border-color: #b4b4b4; }
+.composer .plus { flex: none; width: 36px; height: 36px; border-radius: 50%; display: grid; place-items: center;
+  color: var(--ink); text-decoration: none; }
+.composer .plus:hover { background: var(--hover); }
+.composer svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round;
+  stroke-linejoin: round; display: block; }
+.composer input[type=text] { flex: 1; min-width: 0; border: 0; padding: 8px 4px; background: transparent; font-size: 16px; }
+.composer input[type=text]:focus { outline: none; }
+.composer .send { flex: none; width: 40px; height: 40px; border-radius: 50%; border: 0; background: var(--accent);
+  color: var(--accent-fg); display: grid; place-items: center; cursor: pointer; padding: 0; margin: 0; }
+.composer .send:hover { background: #2b2b2b; }
+.suggest { display: flex; flex-direction: column; }
+.suggest form { margin: 0; border-bottom: 1px solid var(--line); }
+.suggest form:last-child { border-bottom: 0; }
+.suggest button { width: 100%; text-align: left; background: transparent; border: 0; padding: 12px; font: inherit;
+  color: var(--muted); cursor: pointer; border-radius: var(--radius); }
+.suggest button:hover { background: var(--card); color: var(--ink); }
+.center { text-align: center; }
+.fine { text-align: center; color: var(--smoke); font-size: 12px; margin-top: 24px; }
+
+@media (max-width: 820px) {
+  body.app { display: block; }
+  .side { position: static; height: auto; border-right: 0; border-bottom: 1px solid var(--line); padding: 8px 8px 6px; }
+  .side .box { padding: 6px 8px 8px; }
+  .side nav { flex-direction: row; overflow-x: auto; gap: 4px; padding-bottom: 4px; }
+  .side nav a { white-space: nowrap; padding: 6px 12px; border-radius: var(--pill); border: 1px solid var(--line);
+    background: var(--bg); }
+  .side .group { display: none; }
+  .side .me { margin-top: 6px; border-top: 0; padding: 0 0 2px; }
+  main { padding: 24px 16px 48px; }
+  .hero { min-height: 0; padding: 32px 0 8px; }
+  .hero h1 { font-size: 24px; }
+}
 """
 
-NAV = [("/", "Home"), ("/upload", "Upload"), ("/files", "Files"), ("/approvals", "Approvals"), ("/cloud", "Cloud")]
+# The menu: these come first, in this order; every other page goes under "Box settings".
+NAV_FIRST = ("/", "/activity", "/approvals", "/files", "/upload", "/photos", "/forms")
+NAV_SETTINGS = ("/family", "/assistants", "/devices", "/status", "/cloud", "/log", "/pins", "/workbench")
+ICON_PLUS = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>'
+ICON_SEND = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5M6 11l6-6 6 6"/></svg>'
+SUGGESTIONS = ("What papers do I have here?", "When does my passport expire?", "What were my wages last year?")
+
+NAV = [("/", "New question"), ("/upload", "Upload"), ("/files", "Files"), ("/approvals", "Approvals"), ("/cloud", "Cloud")]
 
 
 def esc(s) -> str:
@@ -506,26 +572,46 @@ def _page(cfg: Config, title: str, body: str, sess: Sess | None = None, here: st
           pending: int | None = None, nav: list[tuple[str, str]] | None = None,
           refresh: str = "") -> HTMLResponse:
     """refresh, when set, is a meta refresh such as "30;url=/approvals" (no script, so the CSP holds)."""
-    head = f'<div class="box">{esc(cfg.name)}</div>'
+    brand = f'<div class="box">{esc(cfg.name)}</div>'
     if sess:
-        links = []
-        for href, label in (nav or NAV):
-            text = label
-            if href == "/approvals" and pending:
-                text = f"{label} ({pending})"
+        items = list(nav or NAV)
+        order = {href: n for n, href in enumerate(NAV_FIRST)}
+        first = sorted((i for i in items if i[0] in order), key=lambda i: order[i[0]])
+        later = {href: n for n, href in enumerate(NAV_SETTINGS)}
+        rest = sorted((i for i in items if i[0] not in order), key=lambda i: later.get(i[0], len(later)))
+
+        def link(href: str, label: str) -> str:
+            text = f"{label} ({pending})" if href == "/approvals" and pending else label
             cls = ' class="here"' if href == here else ""
-            links.append(f'<a href="{href}"{cls}>{esc(text)}</a>')
-        links.append(f'<form method="post" action="/signout">{_csrf_field(sess.csrf)}'
-                     f'<button type="submit">Sign out</button></form>')
-        head += (f'<div class="who">Signed in as {esc(sess.person.display)}</div>'
-                 f'<nav>{"".join(links)}</nav>')
+            return f'<a href="{href}"{cls}>{esc(text)}</a>'
+        links = "".join(link(h, l) for h, l in first)
+        if rest:
+            links += '<div class="group">Box settings</div>' + "".join(link(h, l) for h, l in rest)
+        shell = (f'<body class="app"><aside class="side">{brand}<nav>{links}</nav>'
+                 f'<div class="me"><span class="who">Signed in as {esc(sess.person.display)}</span>'
+                 f'<form method="post" action="/signout">{_csrf_field(sess.csrf)}'
+                 f'<button type="submit">Sign out</button></form></div></aside>'
+                 f'<main><div class="col">{body}</div></main></body>')
+    else:
+        shell = f'<body class="plain"><header>{brand}</header><main><div class="col">{body}</div></main></body>'
     doc = (f'<!doctype html><html lang="en"><head><meta charset="utf-8">'
            f'<meta name="viewport" content="width=device-width, initial-scale=1">'
            f'<meta name="referrer" content="same-origin">'
            + (f'<meta http-equiv="refresh" content="{esc(refresh)}">' if refresh else "") +
            f'<title>{esc(title)} | {esc(cfg.name)}</title><link rel="stylesheet" href="/static/style.css">'
-           f'</head><body><header>{head}</header><main>{body}</main></body></html>')
+           f'</head>{shell}</html>')
     return HTMLResponse(doc, status_code=status)
+
+
+def composer(csrf: str, placeholder: str = "Ask your family box", value: str = "", autofocus: bool = False,
+             maxlength: int = 1000) -> str:
+    """The question box: a plus (add a file), one line to type in, and a round send button. Posts to the
+    Activity plugin's /activity/ask, which runs the question and shows it as a chat with the live steps."""
+    return (f'<form method="post" action="/activity/ask" class="composer">{_csrf_field(csrf)}'
+            f'<a class="plus" href="/upload" title="Add a file" aria-label="Add a file">{ICON_PLUS}</a>'
+            f'<input type="text" name="question" aria-label="Your question" placeholder="{esc(placeholder)}" '
+            f'value="{esc(value)}" maxlength="{maxlength}" autocomplete="off" required{" autofocus" if autofocus else ""}>'
+            f'<button class="send" type="submit" aria-label="Ask" title="Ask">{ICON_SEND}</button></form>')
 
 
 # --- uploads ------------------------------------------------------------------------------------
@@ -813,6 +899,9 @@ def create_app(cfg: Config, *, port: int = 8443, remote_only: bool = False, box=
         wrapped.__name__ = handler.__name__
         return wrapped
 
+    async def no_icon(request: Request):
+        return Response(status_code=204)                 # the box has no icon; say so, not "not found"
+
     # ---- sign in / out
     async def css(request: Request):
         return Response(CSS, media_type="text/css")
@@ -925,28 +1014,34 @@ def create_app(cfg: Config, *, port: int = 8443, remote_only: bool = False, box=
                          "to be on the internet first, which isn't set up yet.")
         steps.append(("/assistants", "Connect an assistant", link_what, False))
         items = []
+        todo = False
         for href, title, what, done in steps:
             if href not in have:
                 continue
+            todo = todo or (not done and href in ("/settings/key", "/upload"))
             mark = '<span class="ok">Done</span>' if done else ""
             items.append(f'<li><div class="row"><a href="{href}"><strong>{esc(title)}</strong></a>{mark}</div>'
                          f'<div class="muted">{esc(what)}</div></li>')
-        return (f'<div class="card"><h2>First steps</h2><ol class="steps">{"".join(items)}</ol></div>'
-                if items else "")
+        # Open while the box still needs its key or its first papers; after that it folds away under the question box.
+        return (f'<details class="card steps-card"{" open" if todo else ""}><summary>First steps</summary>'
+                f'<ol class="steps">{"".join(items)}</ol></details>' if items else "")
 
     @need_signin
     async def home(request: Request, sess: Sess):
         n = pending_count(sess.person)
-        waiting = (f'<p><a class="button" href="/approvals">{n} waiting for you to approve</a></p>' if n
-                   else '<p class="muted">Nothing is waiting for your approval.</p>')
-        body = (f'<h1>Hi, {esc(sess.person.display)}</h1>{waiting}{first_steps(sess.person)}'
-                f'<div class="card"><h2>What you can do here</h2><ul>'
-                f'<li><a href="/upload">Upload a file</a> into your folders or the family\'s shared folder.</li>'
-                f'<li><a href="/files">See your files</a> and remove ones you no longer want on the box.</li>'
-                f'<li><a href="/approvals">Approve or deny</a> details an assistant asked for.</li>'
-                f'<li><a href="/cloud">Cloud</a>: bring files in from Google Drive, and back up the box.</li>'
-                f'<li><a href="/status">Box status</a>: is the box working, and is the AI key saved.</li>'
-                f'</ul></div><p class="muted">This page only works on your home network.</p>')
+        waiting = (f'<p class="center"><a class="button" href="/approvals">{n} waiting for you to approve</a></p>'
+                   if n else "")
+        if any(href == "/activity" for href, _ in nav):
+            tries = "".join(f'<form method="post" action="/activity/ask">{_csrf_field(sess.csrf)}'
+                            f'<input type="hidden" name="question" value="{esc(q)}">'
+                            f'<button type="submit">{esc(q)}</button></form>' for q in SUGGESTIONS)
+            ask = (f'<div class="hero"><h1>What do you need from your papers, {esc(sess.person.display)}?</h1>'
+                   f'{composer(sess.csrf, autofocus=True)}{waiting}<div class="suggest">{tries}</div></div>')
+        else:
+            ask = f'<h1>Hi, {esc(sess.person.display)}</h1>{waiting}'
+        body = (f'{ask}{first_steps(sess.person)}'
+                f'<p class="fine">Answers are checked on this box before you see them. '
+                f'This page only works on your home network.</p>')
         return page(sess, "Home", body, "/")
 
     # ---- upload
@@ -1371,6 +1466,7 @@ def create_app(cfg: Config, *, port: int = 8443, remote_only: bool = False, box=
 
     routes = [
         Route("/static/style.css", css),
+        Route("/favicon.ico", no_icon),
         Route("/signin", signin_get, methods=["GET"]),
         Route("/signin", signin_post, methods=["POST"]),
         Route("/signout", signout, methods=["POST"]),

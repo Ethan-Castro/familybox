@@ -59,7 +59,7 @@ def reason_words(why: str) -> str:
 
 
 def web_nav():
-    return [("Family", "/family")]
+    return [("Family", "/family"), ("Status", "/status")]
 
 
 def _qr_svg(link: str) -> str:

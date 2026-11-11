@@ -560,13 +560,18 @@ def render_detail(view: View, events: list[dict], audit: dict | None, status: st
         items.append('<li class="fb-step s-info fb-wait"><div class="fb-head"><span class="fb-dot"></span>'
                      '<strong>Working...</strong></div></li>')
 
-    parts = [f'<div class="fb-chips">{badge(status)}{chip_html}</div>']
-    parts.append(f'<ol class="fb-timeline">{"".join(items)}</ol>')
+    # The reply first, like a chat. While the question runs, three dots and the step it is on.
     if audit:
-        parts.append(_files_and_reasons(view, audit))
-        parts.append(_sent(view, audit, first.get("source")))
+        parts = [_sent(view, audit, first.get("source"))]
     elif status == "unfinished":
-        parts.append('<p class="bad">This question stopped before it finished. Nothing was answered.</p>')
+        parts = ['<p class="bad">This question stopped before it finished. Nothing was answered.</p>']
+    else:
+        parts = ['<div class="fb-answer"><span class="fb-typing"><i></i><i></i><i></i></span>'
+                 '<span class="muted">Working on it. The steps appear below as they happen.</span></div>']
+    how = [f'<div class="fb-chips">{badge(status)}{chip_html}</div>', f'<ol class="fb-timeline">{"".join(items)}</ol>']
+    if audit:
+        how.append(_files_and_reasons(view, audit))
+    parts.append(f'<section class="fb-how"><h2>How the box handled it</h2>{"".join(how)}</section>')
     return "".join(parts)
 
 
@@ -585,18 +590,24 @@ def _files_and_reasons(view: View, audit: dict) -> str:
     return "".join(out)
 
 
+def answer_html(text: str) -> str:
+    """The answer as chat text: escaped first, then **bold** and "- " bullets, the only marks the model uses often."""
+    out = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", esc(text))
+    return re.sub(r"(?m)^(\s*)[-*] ", "\\1\u2022 ", out)
+
+
 def _sent(view: View, audit: dict, source) -> str:
     where = "shown on this page" if source == "web" else "sent to the assistant"
     if not view.full:
-        return (f'<div class="card"><h2>What was {where}</h2><p class="muted">Only '
-                f'{esc(view.owner_name())} can see the answer text.</p></div>')
+        return (f'<div class="fb-answer"><span class="muted">Only {esc(view.owner_name())} can see the answer '
+                f'text.</span></div>')
     text = audit.get("sent_to_assistant", "")
     pending = ""
     if audit.get("held_ids"):
         pending = ('<p class="muted">Held details wait in <a href="/approvals">Approvals</a> for their owner. '
                    'Approving shows them on the owner\'s screen only.</p>')
-    return (f'<div class="card"><h2>Exactly what was {where}</h2>'
-            f'<pre class="fb-sent">{esc(text)}</pre>{pending}</div>')
+    return (f'<div><div class="fb-answer">{answer_html(text)}</div>{pending}'
+            f'<p class="fb-cap">Exactly what was {where}</p></div>')
 
 
 def version(events: list[dict], audit: dict | None, status: str) -> str:
