@@ -614,3 +614,193 @@ def test_cli_verify_still_prints_the_same_shape(monkeypatch, capsys):
     fake_check(monkeypatch, {"ok": False, "model": "m", "error": "nope"})
     assert asyncio.run(cli._verify("test-key-not-real", "m")) == 1
     assert json.loads(capsys.readouterr().out) == {"model": "m", "verified": False, "error": "nope"}
+
+
+# --- Block C: PIN before a reveal, and starting over ---------------------------------------------
+
+def held(c, value="987-65-4320"):
+    from familybox.approvals import Approvals
+    from familybox.gate import Held
+    return Approvals(c).add("sam", "What is Dana's SSN?",
+                            [Held("h1", "ssn", "SSN", value, "dana", "people/dana/ids/ssn_card_dana.txt")])[0]
+
+
+def test_reveal_asks_for_the_pin_when_the_person_has_one(cfg):
+    from familybox.approvals import Approvals
+    item = held(cfg)
+    household.set_pin(web.WebState(cfg), "dana", PIN)
+    cl, token = sign_in(cfg, "dana")
+    page = cl.get("/approvals").text
+    assert 'name="pin"' in page and "Your PIN, to show it" in page and "987-65-4320" not in page
+    r = cl.post(f"/approvals/{item}/approve", data={"csrf": token})
+    assert r.status_code == 401 and "987-65-4320" not in r.text and "Nothing was shown" in r.text
+    r = cl.post(f"/approvals/{item}/approve", data={"csrf": token, "pin": "135792"})
+    assert r.status_code == 401 and "987-65-4320" not in r.text
+    assert Approvals(cfg).pending("dana")
+    r = cl.post(f"/approvals/{item}/approve", data={"csrf": token, "pin": PIN})
+    assert r.status_code == 200 and "987-65-4320" in r.text
+    assert '<meta http-equiv="refresh" content="30;url=/approvals">' in r.text
+    assert "Hides in 30 seconds" in r.text and "<script" not in r.text and "style=" not in r.text
+    assert not Approvals(cfg).pending("dana")
+    assert PIN not in json.dumps(audit(cfg, "dana"))
+    # Deny never needs the PIN, and an ordinary page has no refresh.
+    item2 = held(cfg, "987-65-4321")
+    assert cl.post(f"/approvals/{item2}/deny", data={"csrf": token}).status_code == 200
+    assert 'http-equiv="refresh"' not in cl.get("/approvals").text
+
+
+def test_reveal_without_a_pin_still_works_and_hides(cfg):
+    item = held(cfg)
+    cl, token = sign_in(cfg, "dana")
+    assert 'name="pin"' not in cl.get("/approvals").text
+    r = cl.post(f"/approvals/{item}/approve", data={"csrf": token})
+    assert r.status_code == 200 and "987-65-4320" in r.text and "Hides in 30 seconds" in r.text
+    assert '<meta http-equiv="refresh" content="30;url=/approvals">' in r.text
+
+
+def test_wrong_reveal_pins_count_toward_the_pin_lockout(cfg):
+    from familybox.approvals import Approvals
+    item = held(cfg)
+    st = web.WebState(cfg)
+    household.set_pin(st, "dana", PIN)
+    cl, token = sign_in(cfg, "dana")
+    for _ in range(web.LOCKOUT_MAX - 1):
+        assert cl.post(f"/approvals/{item}/approve", data={"csrf": token, "pin": "135792"}).status_code == 401
+    r = cl.post(f"/approvals/{item}/approve", data={"csrf": token, "pin": "135792"})
+    assert r.status_code == 429 and "Too many wrong PINs" in r.text
+    r = cl.post(f"/approvals/{item}/approve", data={"csrf": token, "pin": PIN})   # right PIN, but locked
+    assert r.status_code == 429 and "987-65-4320" not in r.text
+    assert household.pin_locked(st, "dana") and not household.pin_locked(st, "maya")
+    assert Approvals(cfg).pending("dana")
+    # The same lockout stops PIN sign-in for Dana.
+    other = client(cfg)
+    r = other.post("/signin", data={"person": "dana", "pin": PIN, "csrf": csrf(other.get("/signin"))})
+    assert r.status_code == 429
+
+
+def test_reveal_pin_needs_csrf_and_the_owner(cfg):
+    from familybox.approvals import Approvals
+    item = held(cfg)
+    household.set_pin(web.WebState(cfg), "dana", PIN)
+    cl, _ = sign_in(cfg, "dana")
+    assert cl.post(f"/approvals/{item}/approve", data={"pin": PIN}).status_code == 403
+    maya, mtok = sign_in(cfg, "maya")
+    r = maya.post(f"/approvals/{item}/approve", data={"csrf": mtok, "pin": PIN})
+    assert r.status_code == 404 and "987-65-4320" not in r.text
+    assert Approvals(cfg).pending("dana")
+    assert not household.pin_locked(web.WebState(cfg), "dana")
+
+
+def set_up_box(empty, monkeypatch):
+    """A box set up on its page, with a file, a key, a session and a certificate."""
+    for k in config.KEY_ENV:
+        monkeypatch.setenv(k, "x")
+        monkeypatch.delenv(k)
+    cl, r = do_setup(empty)
+    assert r.status_code == 303
+    token = csrf(cl.get("/"))
+    up = cl.post("/upload", data={"folder": "ids", "csrf": token},
+                 files={"file": ("card.txt", b"Library card 12345")})
+    assert up.status_code == 200
+    cl.post("/settings/key", data={"csrf": token, "key": FAKE_KEY})
+    web.ensure_cert(empty)
+    return cl, token
+
+
+def test_reset_wipes_the_box_and_reopens_setup(empty, monkeypatch, tmp_path):
+    outside = tmp_path / "outside.txt"
+    outside.write_text("keep me")
+    cl, token = set_up_box(empty, monkeypatch)
+    cert = (empty.runtime / "tls" / "cert.pem").read_bytes()
+    monkeypatch.setattr(household, "STARTED", time.time() - household.SETUP_WINDOW_S - 1)   # window closed
+    page = cl.get("/reset")
+    assert page.status_code == 200 and "Type the family name" in page.text and "<script" not in page.text
+    assert "—" not in page.text and "style=" not in page.text
+    # wrong name, wrong PIN, no CSRF, other origin: nothing deleted
+    assert cl.post("/reset", data={"csrf": token, "family": "Someone else", "pin": PIN}).status_code == 400
+    assert cl.post("/reset", data={"csrf": token, "family": "The Okafor family", "pin": "135792"}).status_code == 401
+    assert cl.post("/reset", data={"family": "The Okafor family", "pin": PIN}).status_code == 403
+    assert cl.post("/reset", data={"csrf": token, "family": "The Okafor family", "pin": PIN},
+                   headers={"origin": "https://evil.example"}).status_code == 403
+    assert (empty.home / "family.toml").exists() and empty.people
+    r = cl.post("/reset", data={"csrf": token, "family": "  the okafor   FAMILY ", "pin": PIN},
+                follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"] == "/setup"
+    assert not (empty.home / "family.toml").exists() and not (empty.home / "files").exists()
+    left = {p.name for p in empty.runtime.iterdir()}
+    assert "tls" in left and not left & {"secrets", "audit", "approvals.json", "remote"}
+    assert not any((empty.runtime / "web").iterdir())    # no PINs, sessions, codes or key check
+    assert (empty.runtime / "tls" / "cert.pem").read_bytes() == cert
+    assert not config.key_path(empty.home).exists() and "NEAR_AI_CLOUD_API_KEY" not in os.environ
+    assert empty.people == {} and empty.name == "Family box"
+    assert outside.read_text() == "keep me"
+    # signed out, and setup is open again
+    assert cl.get("/", follow_redirects=False).headers["location"] == "/setup"
+    assert household.setup_open(empty)
+    cl2, r2 = do_setup(empty, family="The Lee family", name="Jo")
+    assert r2.status_code == 303 and empty.person("jo").admin
+    assert "Library card" not in json.dumps(web.readable_files(empty, empty.person("jo")))
+
+
+def test_reset_is_admin_only_and_needs_a_pin(cfg):
+    maya, mtok = sign_in(cfg, "maya")
+    assert maya.get("/reset").status_code == 403
+    assert maya.post("/reset", data={"csrf": mtok, "family": cfg.name, "pin": PIN}).status_code == 403
+    dana, token = sign_in(cfg, "dana")        # signed in with a code, no PIN yet
+    page = dana.get("/reset")
+    assert page.status_code == 200 and "invite yourself and pick a PIN" in page.text and 'name="pin"' not in page.text
+    assert dana.post("/reset", data={"csrf": token, "family": cfg.name, "pin": PIN}).status_code == 400
+    assert (cfg.home / "family.toml").exists() and (cfg.home / "files").exists()
+    assert client(cfg).get("/reset", follow_redirects=False).headers["location"] == "/signin"
+
+
+def test_reset_refuses_paths_outside_the_home(empty, monkeypatch, tmp_path):
+    cl, token = set_up_box(empty, monkeypatch)
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    (elsewhere / "precious.txt").write_text("not the box's")
+    (empty.runtime / "link").symlink_to(elsewhere)
+    r = cl.post("/reset", data={"csrf": token, "family": "The Okafor family", "pin": PIN})
+    assert r.status_code == 409 and "Nothing was deleted" in r.text
+    assert (elsewhere / "precious.txt").exists() and (empty.home / "family.toml").exists()
+    assert (empty.home / "files").exists() and config.key_path(empty.home).exists()
+
+
+def test_reset_refuses_the_demo_folder_in_the_code(tmp_path):
+    (tmp_path / "pyproject.toml").write_text("")
+    (tmp_path / "src" / "familybox").mkdir(parents=True)
+    (tmp_path / "demo").mkdir()
+    with pytest.raises(HouseholdError):
+        household.reset_targets(config.load(tmp_path / "demo"))
+    with pytest.raises(HouseholdError):
+        household.reset_targets(config.load(DEMO))
+
+
+def test_reset_is_not_on_the_remote_listener(cfg):
+    assert "/reset" not in remote.REMOTE_PATHS
+    cl = TestClient(web.create_app(cfg, remote_only=True), base_url="https://testserver")
+    assert cl.get("/reset", follow_redirects=False).status_code == 404
+    assert cl.post("/reset", follow_redirects=False).status_code == 404
+
+
+def test_home_shows_first_steps(cfg, no_key):
+    dana, token = sign_in(cfg, "dana")
+    home = dana.get("/").text
+    for words in ("First steps", "Add your papers", "Invite your family", "Connect an assistant", "Save the AI key"):
+        assert words in home, words
+    assert 'href="/settings/key"' in home and "—" not in home
+    maya, _ = sign_in(cfg, "maya")
+    m = maya.get("/").text
+    assert "Add your papers" in m and "Connect an assistant" in m
+    assert "Invite your family" not in m and "Save the AI key" not in m
+
+
+def test_box_look_is_plain_and_local():
+    css = web.CSS
+    for want in ("#0d0d0d", "rgba(0,0,0,.13)", "9999px", "6px", "system-ui"):
+        assert want in css, want
+    assert "box-shadow: none" in css and "url(" not in css and "@import" not in css and "—" not in css
+    for cls in (".card", "button.main", ".button", "button.quiet", "button.danger", ".row", ".muted", ".ok", ".bad",
+                ".value", "ul.files", ".name", "label.check", "fieldset", "legend", ".qr", "nav a.here",
+                "header .box", "header .who", "input.code"):
+        assert cls in css, cls

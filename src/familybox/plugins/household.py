@@ -6,9 +6,11 @@
   /join             someone invited opens the link, sets their own PIN and is signed in
   /settings/key     paste the NEAR AI key once and check it (admin only); the key is never shown again
   /status           the box in plain words: AI key, last check, files, approvals, assistants, disk
+  /reset            wipe the box back to new, with your PIN and the family name typed out (admin only)
 
 None of these is in remote.REMOTE_PATHS: they work only on the home network page.
-Every setup, invite, access change, removal and key change is written to the admin's audit log.
+Every setup, invite, access change, removal and key change is written to the admin's audit log. A reset
+deletes the logs with everything else, so it can't be logged on the box.
 """
 
 from __future__ import annotations
@@ -99,7 +101,8 @@ def _disk(n: int) -> str:
 
 def web_routes(ctx):
     from .. import enclave
-    from ..web import (INVITE_TTL_S, _audit, _page, origin_ok, pre_ok, readable_files, set_pre_cookie, signed_in)
+    from ..web import (COOKIE, INVITE_TTL_S, _audit, _page, origin_ok, pre_ok, readable_files, set_pre_cookie,
+                       signed_in)
 
     cfg, esc, state = ctx.cfg, ctx.esc, ctx.state
     csrf = ctx.csrf_field
@@ -500,9 +503,68 @@ def web_routes(ctx):
                         f'{" (running low)" if low else ""}</li>')
         except OSError:
             rows.append('<li>Free space: unknown</li>')
-        links = '<p><a href="/settings/key">AI key</a></p>' if person.admin else ""
+        links = ('<p><a href="/settings/key">AI key</a> &middot; <a href="/reset">Start over</a></p>'
+                 if person.admin else "")
         body = (f'<h1>Box status</h1><div class="card"><ul class="files">{"".join(rows)}</ul></div>{links}')
         return ctx.page(sess, "Status", body, "/status")
+
+    # ---- reset
+    def reset_page(sess, msg: str = "", status: int = 200) -> Response:
+        if not household.has_pin(state, sess.person.id):
+            form = ('<p>A reset needs your PIN, and you don\'t have one yet. On the <a href="/family">Family page</a>, '
+                    'invite yourself and pick a PIN, then come back.</p>')
+        else:
+            form = (f'<form method="post" action="/reset">{csrf(sess.csrf)}'
+                    f'<label for="family">Type the family name: {esc(cfg.name)}</label>'
+                    f'<input type="text" id="family" name="family" maxlength="{household.NAME_MAX}" autocomplete="off"'
+                    f' spellcheck="false" required>'
+                    f'<label for="pin">Your PIN</label>'
+                    f'<input type="password" id="pin" name="pin" inputmode="numeric" maxlength="{household.PIN_MAX}"'
+                    f' autocomplete="current-password" required>'
+                    f'<button class="danger" type="submit">Delete everything and start over</button></form>')
+        body = (f'<h1>Start over</h1>{note(msg, False)}<div class="card">'
+                f'<p><strong>This deletes everything on the box:</strong> every file, every person and PIN, all '
+                f'sign-ins, linked assistants, approvals, logs and the saved AI key.</p>'
+                f'<p class="muted">It can\'t be undone. Make a backup on the Cloud page first if you want to keep '
+                f'anything. After the reset, set the box up again from this page within 15 minutes.</p>'
+                f'{form}</div><p><a href="/status">Back to box status</a></p>')
+        return ctx.page(sess, "Start over", body, "/reset", status)
+
+    @ctx.need_signin
+    async def reset_get(request: Request, sess):
+        if not sess.person.admin:
+            return ctx.forbidden(ADMIN_ONLY)
+        return reset_page(sess)
+
+    async def reset_post(request: Request):
+        got = await ctx.guarded_form(request, max_files=0, max_fields=4, max_part_size=1024)
+        if isinstance(got, Response):
+            return got
+        sess, form = got
+        if not sess.person.admin:
+            return ctx.forbidden(ADMIN_ONLY)
+        if not household.has_pin(state, sess.person.id):
+            return reset_page(sess, "A reset needs your PIN.", 400)
+        typed = " ".join(str(form.get("family", "")).split())
+        if typed.lower() != " ".join(cfg.name.split()).lower():
+            return reset_page(sess, f"Type the family name exactly: {cfg.name}. Nothing was deleted.", 400)
+        ok, why = household.check_pin(state, sess.person.id, str(form.get("pin", "")))
+        if not ok:
+            msg = ("Too many wrong PINs. Wait 10 minutes, then try again." if why == "locked"
+                   else "That PIN didn't work. Nothing was deleted.")
+            return reset_page(sess, msg, 429 if why == "locked" else 401)
+        try:
+            household.reset_box(state)
+        except HouseholdError as e:
+            return reset_page(sess, str(e), 409)
+        # Shared search index: clear it now, so nothing from before the reset can come up in an answer.
+        try:
+            ctx.box().store.reindex()
+        except Exception:  # noqa: BLE001 - the files are gone either way; a fresh index is built on restart
+            pass
+        resp = RedirectResponse("/setup", status_code=303)
+        resp.delete_cookie(COOKIE, secure=True, httponly=True, samesite="strict")
+        return resp
 
     return [
         Route("/setup", setup_get, methods=["GET"]),
@@ -518,4 +580,6 @@ def web_routes(ctx):
         Route("/settings/key", key_post, methods=["POST"]),
         Route("/settings/key/check", key_check, methods=["POST"]),
         Route("/status", status_get, methods=["GET"]),
+        Route("/reset", reset_get, methods=["GET"]),
+        Route("/reset", reset_post, methods=["POST"]),
     ]

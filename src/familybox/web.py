@@ -341,53 +341,73 @@ def signed_in(state: "WebState", person_id: str, to: str = "/") -> RedirectRespo
 # --- HTML ----------------------------------------------------------------------------------------
 
 CSS = """
-:root { color-scheme: light dark; --bg: #f7f7f5; --fg: #1d1d1b; --muted: #5d5d58; --card: #ffffff;
-  --line: #d9d9d4; --accent: #1f5fae; --accent-fg: #ffffff; --ok: #1d6b3a; --bad: #a32020; }
-@media (prefers-color-scheme: dark) {
-  :root { --bg: #151614; --fg: #ececea; --muted: #a8a8a2; --card: #1f201e; --line: #3a3b38;
-    --accent: #7fb0ec; --accent-fg: #0d1b2c; --ok: #7ccf98; --bad: #f08a8a; }
-}
+:root { color-scheme: light; --bg: #ffffff; --fg: #0d0d0d; --muted: #5e5e5e; --card: #ffffff;
+  --line: rgba(0,0,0,.13); --soft: #f4f4f4; --accent: #0d0d0d; --accent-fg: #ffffff; --ok: #17723d;
+  --bad: #b3261e; --radius: 6px; --pill: 9999px; }
 * { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
 body { margin: 0; background: var(--bg); color: var(--fg);
-  font: 17px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
-header { padding: 12px 16px; border-bottom: 1px solid var(--line); background: var(--card); }
-header .box { font-weight: 600; }
-header .who { color: var(--muted); font-size: 15px; }
-nav { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; align-items: center; }
-nav a, nav button { padding: 6px 10px; border-radius: 8px; text-decoration: none; color: var(--fg);
+  font: 17px/1.55 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial,
+  sans-serif; -webkit-font-smoothing: antialiased; }
+a { color: var(--fg); text-underline-offset: 3px; text-decoration-thickness: 1px; }
+header { padding: 16px 20px 14px; border-bottom: 1px solid var(--line); background: var(--bg); }
+header .box { font-weight: 650; letter-spacing: -0.01em; }
+header .who { color: var(--muted); font-size: 15px; margin-top: 2px; }
+nav { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; align-items: center; }
+nav a, nav button { padding: 6px 14px; border-radius: var(--pill); text-decoration: none; color: var(--fg);
   border: 1px solid var(--line); background: transparent; font: inherit; font-size: 15px; cursor: pointer; }
+nav a:hover, nav button:hover { background: var(--soft); }
 nav a.here { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
 nav form { margin: 0; }
-main { padding: 16px; max-width: 640px; margin: 0 auto; }
-h1 { font-size: 24px; margin: 4px 0 12px; }
-h2 { font-size: 19px; margin: 20px 0 8px; }
-.card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 14px; margin: 12px 0; }
-label { display: block; font-weight: 600; margin: 12px 0 4px; }
-input[type=text], input[type=password], input[type=file], select, textarea { width: 100%; padding: 10px; font: inherit; border-radius: 8px;
-  border: 1px solid var(--line); background: var(--bg); color: var(--fg); }
+main { padding: 28px 20px 48px; max-width: 680px; margin: 0 auto; }
+h1 { font-size: 30px; line-height: 1.2; letter-spacing: -0.02em; font-weight: 650; margin: 4px 0 18px; }
+h2 { font-size: 19px; letter-spacing: -0.01em; font-weight: 650; margin: 4px 0 10px; }
+p { margin: 10px 0; }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 20px;
+  margin: 16px 0; box-shadow: none; }
+.card > :first-child { margin-top: 0; }
+.card > :last-child { margin-bottom: 0; }
+label { display: block; font-weight: 600; margin: 16px 0 6px; }
+input[type=text], input[type=password], input[type=file], select, textarea { width: 100%; padding: 11px 14px;
+  font: inherit; border-radius: var(--radius); border: 1px solid var(--line); background: var(--bg);
+  color: var(--fg); }
+input:focus, select:focus, textarea:focus, button:focus-visible, a:focus-visible {
+  outline: 2px solid var(--fg); outline-offset: 2px; }
 input.code { letter-spacing: 4px; text-transform: uppercase; font-size: 22px; text-align: center; }
-button.main, .button { display: inline-block; margin-top: 14px; padding: 10px 16px; border-radius: 8px;
-  border: 0; background: var(--accent); color: var(--accent-fg); font: inherit; font-weight: 600;
-  cursor: pointer; text-decoration: none; }
-button.quiet { background: transparent; color: var(--fg); border: 1px solid var(--line); }
-button.danger { background: transparent; color: var(--bad); border: 1px solid var(--bad); }
-.row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+button.main, .button { display: inline-block; margin-top: 16px; padding: 11px 22px; border-radius: var(--pill);
+  border: 1px solid var(--accent); background: var(--accent); color: var(--accent-fg); font: inherit;
+  font-weight: 600; cursor: pointer; text-decoration: none; line-height: 1.3; }
+button.main:hover, .button:hover { background: #2b2b2b; border-color: #2b2b2b; }
+button.quiet, button.main.quiet { background: transparent; color: var(--fg); border: 1px solid var(--line); }
+button.quiet:hover, button.main.quiet:hover { background: var(--soft); border-color: var(--line); }
+button.danger { display: inline-block; margin-top: 12px; padding: 9px 18px; border-radius: var(--pill);
+  background: transparent; color: var(--bad); border: 1px solid var(--bad); font: inherit; font-weight: 600;
+  cursor: pointer; }
+button.danger:hover { background: #fbeceb; }
+.row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
 .row form { margin: 0; }
 .muted { color: var(--muted); font-size: 15px; }
 .ok { color: var(--ok); font-weight: 600; }
 .bad { color: var(--bad); font-weight: 600; }
-.value { font: 600 22px/1.3 ui-monospace, Menlo, Consolas, monospace; word-break: break-all;
-  padding: 12px; border: 2px dashed var(--accent); border-radius: 8px; margin: 8px 0; }
-ul.files { list-style: none; padding: 0; margin: 0; }
-main img { max-width: 100%; height: auto; display: block; }
+.value { font: 600 22px/1.3 ui-monospace, "SF Mono", Menlo, Consolas, monospace; word-break: break-all;
+  padding: 14px 16px; border: 1px dashed var(--fg); border-radius: var(--radius); background: var(--soft);
+  margin: 10px 0; }
+main img { max-width: 100%; height: auto; display: block; border-radius: var(--radius); }
 pre.value { white-space: pre-wrap; font-size: 16px; }
-ul.files li { padding: 10px 0; border-bottom: 1px solid var(--line); }
-ul.files li:last-child { border-bottom: 0; }
+ul.files { list-style: none; padding: 0; margin: 0; }
+ul.files li { padding: 12px 0; border-bottom: 1px solid var(--line); }
+ul.files li:first-child { padding-top: 0; }
+ul.files li:last-child { border-bottom: 0; padding-bottom: 0; }
+ol.steps { margin: 0; padding-left: 22px; }
+ol.steps li { padding: 10px 0; border-bottom: 1px solid var(--line); }
+ol.steps li:last-child { border-bottom: 0; padding-bottom: 0; }
+ol.steps .row { justify-content: space-between; }
+ol.steps .ok { font-size: 14px; padding: 2px 10px; border: 1px solid var(--line); border-radius: var(--pill); }
 .name { word-break: break-all; }
-label.check { display: flex; gap: 8px; align-items: center; font-weight: 400; margin: 6px 0; }
-fieldset { border: 1px solid var(--line); border-radius: 8px; margin: 12px 0; padding: 8px 12px; }
-legend { font-weight: 600; padding: 0 4px; }
-.qr svg { display: block; max-width: 100%; height: auto; margin: 8px 0; }
+label.check { display: flex; gap: 10px; align-items: center; font-weight: 400; margin: 8px 0; }
+fieldset { border: 1px solid var(--line); border-radius: var(--radius); margin: 16px 0; padding: 10px 16px 14px; }
+legend { font-weight: 600; padding: 0 6px; }
+.qr svg { display: block; max-width: 100%; height: auto; margin: 10px 0; }
 """
 
 NAV = [("/", "Home"), ("/upload", "Upload"), ("/files", "Files"), ("/approvals", "Approvals"), ("/cloud", "Cloud")]
@@ -417,7 +437,9 @@ def _csrf_field(token: str) -> str:
 
 
 def _page(cfg: Config, title: str, body: str, sess: Sess | None = None, here: str = "", status: int = 200,
-          pending: int | None = None, nav: list[tuple[str, str]] | None = None) -> HTMLResponse:
+          pending: int | None = None, nav: list[tuple[str, str]] | None = None,
+          refresh: str = "") -> HTMLResponse:
+    """refresh, when set, is a meta refresh such as "30;url=/approvals" (no script, so the CSP holds)."""
     head = f'<div class="box">{esc(cfg.name)}</div>'
     if sess:
         links = []
@@ -434,6 +456,7 @@ def _page(cfg: Config, title: str, body: str, sess: Sess | None = None, here: st
     doc = (f'<!doctype html><html lang="en"><head><meta charset="utf-8">'
            f'<meta name="viewport" content="width=device-width, initial-scale=1">'
            f'<meta name="referrer" content="no-referrer">'
+           + (f'<meta http-equiv="refresh" content="{esc(refresh)}">' if refresh else "") +
            f'<title>{esc(title)} | {esc(cfg.name)}</title><link rel="stylesheet" href="/static/style.css">'
            f'</head><body><header>{head}</header><main>{body}</main></body></html>')
     return HTMLResponse(doc, status_code=status)
@@ -591,7 +614,8 @@ class WebContext:
 
     cfg                      the box Config
     session_of(request)      -> Sess | None (Sess has sid, person, csrf)
-    page(sess, title, body, here="", status=200) -> HTMLResponse in the box's look, with the nav bar
+    page(sess, title, body, here="", status=200, refresh="") -> HTMLResponse in the box's look, with the nav bar
+                             (refresh: optional meta refresh such as "30;url=/approvals")
     need_signin(handler)     decorator: async handler(request, sess); redirects to /signin when signed out
     guarded_form(request, **form_kw) -> (sess, form) or a 403 Response: signed in + same origin + CSRF ok
     csrf_field(token)        hidden <input> for a form; use sess.csrf as the token
@@ -633,8 +657,8 @@ def create_app(cfg: Config, *, port: int = 8443, remote_only: bool = False, box=
     def pending_count(person: Person) -> int:
         return len(Approvals(cfg).pending(person.id))
 
-    def page(sess: Sess, title: str, body: str, here: str = "", status: int = 200) -> HTMLResponse:
-        return _page(cfg, title, body, sess, here, status, pending_count(sess.person), nav)
+    def page(sess: Sess, title: str, body: str, here: str = "", status: int = 200, refresh: str = "") -> HTMLResponse:
+        return _page(cfg, title, body, sess, here, status, pending_count(sess.person), nav, refresh)
 
     def forbidden(msg: str = "That request wasn't allowed. Go back, reload the page and try again.") -> HTMLResponse:
         return _page(cfg, "Not allowed", f'<h1>Not allowed</h1><p>{esc(msg)}</p><p><a href="/">Go home</a></p>',
@@ -730,12 +754,45 @@ def create_app(cfg: Config, *, port: int = 8443, remote_only: bool = False, box=
         return resp
 
     # ---- home
+    def first_steps(person: Person) -> str:
+        """Plain first steps for a new box. Each one links to its page and says when it is done.
+        A step whose page isn't on this box (its plugin is off) is left out."""
+        from . import enclave
+        have = {href for href, _ in nav} | {"/upload"}
+        if "/family" in have:
+            have.add("/settings/key")        # the key page comes with the Family page, but isn't in the nav
+        try:
+            n_files = len(readable_files(cfg, person))
+        except Exception:  # noqa: BLE001 - the list is a hint, never a reason the home page fails
+            n_files = 0
+        steps = [("/upload", "Add your papers",
+                  "Upload IDs, tax forms, school letters and more into your own folders.", n_files > 0)]
+        if person.admin:
+            steps.append(("/family", "Invite your family",
+                          "Add each person, then send them a QR code so they pick their own PIN.",
+                          len(cfg.people) > 1))
+        steps.append(("/assistants", "Connect an assistant",
+                      "Get a linking code so the AI assistant on your phone or computer can ask the box.", False))
+        if person.admin:
+            steps.append(("/settings/key", "Save the AI key",
+                          "Paste your NEAR AI key once. The box needs it to answer questions and read photos.",
+                          bool(enclave.api_key())))
+        items = []
+        for href, title, what, done in steps:
+            if href not in have:
+                continue
+            mark = '<span class="ok">Done</span>' if done else ""
+            items.append(f'<li><div class="row"><a href="{href}"><strong>{esc(title)}</strong></a>{mark}</div>'
+                         f'<div class="muted">{esc(what)}</div></li>')
+        return (f'<div class="card"><h2>First steps</h2><ol class="steps">{"".join(items)}</ol></div>'
+                if items else "")
+
     @need_signin
     async def home(request: Request, sess: Sess):
         n = pending_count(sess.person)
         waiting = (f'<p><a class="button" href="/approvals">{n} waiting for you to approve</a></p>' if n
                    else '<p class="muted">Nothing is waiting for your approval.</p>')
-        body = (f'<h1>Hi, {esc(sess.person.display)}</h1>{waiting}'
+        body = (f'<h1>Hi, {esc(sess.person.display)}</h1>{waiting}{first_steps(sess.person)}'
                 f'<div class="card"><h2>What you can do here</h2><ul>'
                 f'<li><a href="/upload">Upload a file</a> into your folders or the family\'s shared folder.</li>'
                 f'<li><a href="/files">See your files</a> and remove ones you no longer want on the box.</li>'
@@ -832,18 +889,27 @@ def create_app(cfg: Config, *, port: int = 8443, remote_only: bool = False, box=
         return files_page(sess, "Removed.")
 
     # ---- approvals
-    def approvals_page(sess: Sess, extra: str = "") -> HTMLResponse:
+    REVEAL_S = 30
+
+    def approvals_page(sess: Sess, extra: str = "", status: int = 200, refresh: str = "") -> HTMLResponse:
+        from . import household
         items = Approvals(cfg).pending(sess.person.id)
+        needs_pin = household.has_pin(state, sess.person.id)
         cards = []
         for it in items:
             asker = cfg.people[it["asker"]].display if it["asker"] in cfg.people else it["asker"]
             asker = "You" if it["asker"] == sess.person.id else asker
+            pin = ""
+            if needs_pin:
+                pin = (f'<label for="pin-{esc(it["id"])}">Your PIN, to show it</label>'
+                       f'<input type="password" id="pin-{esc(it["id"])}" name="pin" inputmode="numeric"'
+                       f' maxlength="{household.PIN_MAX}" autocomplete="current-password" required>')
             cards.append(
                 f'<div class="card"><div><strong>{esc(it["label"])}</strong></div>'
                 f'<div class="muted">{esc(asker)} asked: "{esc(it["question"])}"</div>'
                 f'<div class="muted">From: {esc(it["path"])}</div>'
                 f'<div class="row">'
-                f'<form method="post" action="/approvals/{esc(it["id"])}/approve">{_csrf_field(sess.csrf)}'
+                f'<form method="post" action="/approvals/{esc(it["id"])}/approve">{_csrf_field(sess.csrf)}{pin}'
                 f'<button class="main" type="submit">Approve and show it here</button></form>'
                 f'<form method="post" action="/approvals/{esc(it["id"])}/deny">{_csrf_field(sess.csrf)}'
                 f'<button class="main quiet" type="submit">Deny</button></form></div></div>')
@@ -851,17 +917,17 @@ def create_app(cfg: Config, *, port: int = 8443, remote_only: bool = False, box=
         body = (f'<h1>Approvals</h1>{extra}<p class="muted">When an assistant\'s answer included one of your private '
                 f'details, the box held it back. Approving shows it on this page only. It is never sent to the '
                 f'assistant.</p>{listing}')
-        return page(sess, "Approvals", body, "/approvals")
+        return page(sess, "Approvals", body, "/approvals", status, refresh)
 
     @need_signin
     async def approvals_get(request: Request, sess: Sess):
         return approvals_page(sess)
 
     async def approvals_decide(request: Request):
-        got = await guarded_form(request)
+        got = await guarded_form(request, max_files=0, max_fields=4, max_part_size=1024)
         if isinstance(got, Response):
             return got
-        sess, _ = got
+        sess, form = got
         item_id = request.path_params["item_id"]
         if request.path_params["action"] not in ("approve", "deny"):
             return _page(cfg, "Not found", "<h1>Not found</h1>", sess, status=404)
@@ -870,15 +936,25 @@ def create_app(cfg: Config, *, port: int = 8443, remote_only: bool = False, box=
         if item_id not in {it["id"] for it in appr.pending(sess.person.id)}:
             return _page(cfg, "Not found", '<h1>Not found</h1><p>That item isn\'t waiting for you.</p>'
                          '<p><a href="/approvals">Back to approvals</a></p>', sess, status=404)
+        if approve:
+            from . import household
+            if household.has_pin(state, sess.person.id):
+                # Showing a held value needs the PIN again, so an unlocked phone left on a table is not enough.
+                # Wrong PINs count toward this person's PIN lockout, the same one sign-in uses.
+                ok, why = household.check_pin(state, sess.person.id, str(form.get("pin", "")))
+                if not ok:
+                    msg = ("Too many wrong PINs. Wait 10 minutes, then try again." if why == "locked"
+                           else "That PIN didn't work. Nothing was shown. Try again.")
+                    return approvals_page(sess, f'<p class="bad">{esc(msg)}</p>',
+                                          status=429 if why == "locked" else 401)
         result = appr.decide(sess.person.id, item_id, approve)
         if approve:
             extra = (f'<div class="card"><p class="ok">Approved. Here is your {esc(result["label"])}:</p>'
                      f'<div class="value">{esc(result["value"])}</div>'
-                     f'<p class="muted">Only you can see this. It won\'t be shown again after you leave this page.</p>'
-                     f'</div>')
-        else:
-            extra = '<p class="ok">Denied. Nothing was shared.</p>'
-        return approvals_page(sess, extra)
+                     f'<p class="muted">Only you can see this. Hides in {REVEAL_S} seconds, and it won\'t be shown '
+                     f'again after that.</p></div>')
+            return approvals_page(sess, extra, refresh=f"{REVEAL_S};url=/approvals")
+        return approvals_page(sess, '<p class="ok">Denied. Nothing was shared.</p>')
 
     # ---- cloud
     def redirect_uri(request: Request) -> str:

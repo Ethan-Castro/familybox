@@ -13,11 +13,14 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import os
 import re
 import secrets
+import shutil
 import time
 import unicodedata
 from dataclasses import replace
+from pathlib import Path
 
 from . import config
 from .config import Config, Person
@@ -288,3 +291,67 @@ def unowned_folders(cfg: Config) -> list[tuple[str, int]]:
         if d.is_dir() and d.name not in cfg.people:
             out.append((f"people/{d.name}", sum(1 for f in d.rglob("*") if f.is_file())))
     return out
+
+
+# --- reset ---------------------------------------------------------------------------------------
+
+KEEP_IN_RUNTIME = ("tls",)       # the certificate stays, so phones don't see a new warning after a reset
+
+
+def _inside(home: Path, p: Path) -> bool:
+    try:
+        return home in p.resolve().parents
+    except OSError:
+        return False
+
+
+def reset_targets(cfg: Config) -> list[Path]:
+    """What a reset deletes: files/, everything in runtime/ except runtime/tls, and family.toml.
+    Raises HouseholdError, deleting nothing, if any of them is not inside the box's own folder."""
+    home = cfg.home.resolve()
+    if (home.parent / "pyproject.toml").is_file() and (home.parent / "src" / "familybox").is_dir():
+        # The demo folder inside the code checkout: its files are part of the code, never wipe them.
+        raise HouseholdError("This box's folder is the demo inside the code folder. Reset is turned off there.")
+    files, runtime, toml = home / "files", home / "runtime", home / "family.toml"
+    out: list[Path] = []
+    for p in (files, toml):
+        if p.exists() or p.is_symlink():
+            out.append(p)
+    if runtime.is_symlink():
+        out.append(runtime)
+    elif runtime.is_dir():
+        out += [c for c in sorted(runtime.iterdir()) if c.name not in KEEP_IN_RUNTIME]
+    for p in out:
+        if p.parent.resolve() not in (home, runtime.resolve()) or not _inside(home, p):
+            raise HouseholdError("Reset stopped: part of the box's data is outside its own folder. "
+                                 "Nothing was deleted.")
+    return out
+
+
+def reset_box(state: WebState) -> int:
+    """Wipe the box back to new: every file, sign-in, PIN, log and the saved AI key, and family.toml.
+    The certificate is kept. Setup opens again for 15 minutes. Returns how many items were deleted."""
+    global STARTED
+    cfg = state.cfg
+    with state._lock():
+        targets = reset_targets(cfg)       # checked before anything is deleted
+        stored = ""
+        try:
+            stored = config.key_path(cfg.home).read_text().strip()
+        except (OSError, UnicodeDecodeError):
+            pass
+        for p in sorted(targets, key=lambda p: p.name != "family.toml"):   # family.toml first
+            if p.is_symlink() or not p.is_dir():
+                p.unlink(missing_ok=True)     # a link is removed, never what it points to
+            else:
+                shutil.rmtree(p)
+    # The key came from the file that is now gone: stop using it in this process too.
+    for k in config.KEY_ENV:
+        v = os.environ.get(k)
+        if stored and v and hmac.compare_digest(v.strip(), stored):
+            os.environ.pop(k, None)
+    state.dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+    os.chmod(state.dir, 0o700)
+    config.reload(cfg)                       # people empty, name back to "Family box"
+    STARTED = time.time()                    # setup window opens again
+    return len(targets)
