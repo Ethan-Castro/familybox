@@ -460,3 +460,157 @@ def test_new_pages_are_not_on_the_remote_listener(cfg, empty):
         cl = TestClient(web.create_app(c, remote_only=True), base_url="https://testserver")
         for path in ("/setup", "/family", "/join", "/signin"):
             assert cl.get(path, follow_redirects=False).status_code == 404, path
+
+
+# --- Block B: the AI key and the status page ------------------------------------------------------
+
+FAKE_KEY = "test-key-not-real-0123456789"
+
+
+@pytest.fixture
+def no_key(monkeypatch):
+    for k in config.KEY_ENV:
+        monkeypatch.setenv(k, "x")   # setenv first, so the delete is undone after the test
+        monkeypatch.delenv(k)
+
+
+def fake_check(monkeypatch, result, seen=None):
+    from familybox import cli
+
+    async def check(key, model):
+        if seen is not None:
+            seen.append((key, model))
+        return result
+    monkeypatch.setattr(cli, "check_attestation", check)
+
+
+def test_key_page_is_admin_only(cfg, no_key):
+    cl, token = sign_in(cfg, "maya")
+    assert cl.get("/settings/key").status_code == 403
+    r = cl.post("/settings/key", data={"csrf": token, "key": FAKE_KEY})
+    assert r.status_code == 403 and "runs the box" in r.text
+    assert cl.post("/settings/key/check", data={"csrf": token}).status_code == 403
+    assert not config.key_path(cfg.home).exists() and "NEAR_AI_CLOUD_API_KEY" not in os.environ
+
+
+def test_key_is_saved_private_and_never_shown(cfg, no_key):
+    cl, token = sign_in(cfg, "dana")
+    page = cl.get("/settings/key")
+    assert page.status_code == 200 and "No key is saved yet" in page.text and "Check it" not in page.text
+    assert cl.post("/settings/key", data={"key": FAKE_KEY}).status_code == 403          # no CSRF
+    assert cl.post("/settings/key", data={"csrf": token, "key": FAKE_KEY},
+                   headers={"origin": "https://evil.example"}).status_code == 403
+    assert cl.post("/settings/key", data={"csrf": token, "key": "short"}).status_code == 400
+    assert cl.post("/settings/key", data={"csrf": token, "key": "has a space in it ok"}).status_code == 400
+    r = cl.post("/settings/key", data={"csrf": token, "key": f"  {FAKE_KEY}\n"})
+    assert r.status_code == 200 and "A key is saved" in r.text and FAKE_KEY not in r.text
+    kp = config.key_path(cfg.home)
+    assert kp.read_text() == FAKE_KEY
+    assert stat.S_IMODE(kp.stat().st_mode) == 0o600 and stat.S_IMODE(kp.parent.stat().st_mode) == 0o700
+    assert os.environ["NEAR_AI_CLOUD_API_KEY"] == FAKE_KEY
+    for path in ("/settings/key", "/status", "/"):
+        assert FAKE_KEY not in cl.get(path).text
+    assert [e["event"] for e in audit(cfg, "dana")][-1] == "ai_key_saved"
+    assert FAKE_KEY not in json.dumps(audit(cfg, "dana"))
+    assert FAKE_KEY not in (cfg.runtime / "web").joinpath("key_check.json").read_text()
+
+
+def test_check_it_runs_the_verify_check(cfg, no_key, monkeypatch):
+    seen = []
+    fake_check(monkeypatch, {"ok": True, "model": cfg.model, "model_reports_verified": 1, "verified_at_ms": 1},
+               seen)
+    cl, token = sign_in(cfg, "dana")
+    cl.post("/settings/key", data={"csrf": token, "key": FAKE_KEY})
+    r = cl.post("/settings/key/check", data={"csrf": token})
+    assert r.status_code == 200 and "The key works" in r.text and "Last check passed, just now" in r.text
+    assert seen == [(FAKE_KEY, cfg.model)]
+    assert "Last AI check: <span class=\"ok\">passed</span>" in cl.get("/status").text
+    entry = audit(cfg, "dana")[-1]
+    assert entry["event"] == "ai_key_checked" and entry["ok"] is True
+    # a new key clears the old result
+    cl.post("/settings/key", data={"csrf": token, "key": FAKE_KEY + "b"})
+    assert "hasn't been checked yet" in cl.get("/settings/key").text
+
+
+def test_check_failure_shows_only_a_short_reason(cfg, no_key, monkeypatch):
+    cl, token = sign_in(cfg, "dana")
+    cl.post("/settings/key", data={"csrf": token, "key": FAKE_KEY})
+    fake_check(monkeypatch, {"ok": False, "model": cfg.model, "error": f"bad thing with {FAKE_KEY} inside"})
+    r = cl.post("/settings/key/check", data={"csrf": token})
+    assert "Last check failed" in r.text and FAKE_KEY not in r.text and "bad thing" not in r.text
+    assert FAKE_KEY not in json.dumps(audit(cfg, "dana"))
+    fake_check(monkeypatch, {"ok": False, "model": cfg.model, "error": "invalid_api_key"})
+    r = cl.post("/settings/key/check", data={"csrf": token})
+    assert "(reason: invalid_api_key)" in r.text
+    assert "Last AI check: <span class=\"bad\">failed</span>" in cl.get("/status").text
+
+
+def test_check_without_a_key_does_not_call_near(cfg, no_key, monkeypatch):
+    seen = []
+    fake_check(monkeypatch, {"ok": True}, seen)
+    cl, token = sign_in(cfg, "dana")
+    r = cl.post("/settings/key/check", data={"csrf": token})
+    assert r.status_code == 200 and seen == [] and "Save a key first" in r.text
+
+
+def test_stored_key_is_used_after_a_restart(cfg, no_key):
+    cl, token = sign_in(cfg, "dana")
+    cl.post("/settings/key", data={"csrf": token, "key": FAKE_KEY})
+    os.environ.pop("NEAR_AI_CLOUD_API_KEY")
+    config.load(cfg.home)
+    assert os.environ["NEAR_AI_CLOUD_API_KEY"] == FAKE_KEY
+
+
+def test_status_page_in_plain_words(cfg, no_key):
+    cl, token = sign_in(cfg, "dana")
+    home = cl.get("/")
+    assert '<a href="/status">Box status</a>' in home.text
+    r = cl.get("/status")
+    assert r.status_code == 200
+    for words in ("The box is <span class=\"ok\">on</span>", "AI key: <span class=\"bad\">missing</span>",
+                  "Last AI check: not run yet", "Files you can use: ", "Approvals waiting for you: 0",
+                  "Assistants linked to you: 0", "NEAR code check", "Free space: "):
+        assert words in r.text, words
+    n = len(web.readable_files(cfg, cfg.person("dana")))
+    assert f"Files you can use: {n}" in r.text and n > 0
+    assert '<a href="/settings/key">' in r.text
+    assert "—" not in r.text and "<script" not in r.text and "style=" not in r.text
+    maya, _ = sign_in(cfg, "maya")
+    m = maya.get("/status")
+    assert m.status_code == 200 and "NEAR code check" not in m.text and 'href="/settings/key"' not in m.text
+    assert "Ask the person who runs the box to save it" in m.text
+    cl.post("/settings/key", data={"csrf": token, "key": FAKE_KEY})
+    assert "AI key: <span class=\"ok\">saved</span>" in cl.get("/status").text
+
+
+def test_status_needs_sign_in(cfg):
+    assert client(cfg).get("/status", follow_redirects=False).headers["location"] == "/signin"
+    assert client(cfg).get("/settings/key", follow_redirects=False).headers["location"] == "/signin"
+
+
+def test_block_b_pages_are_not_on_the_remote_listener(cfg):
+    paths = ("/settings/key", "/settings/key/check", "/status", "/assistants/code")
+    for path in paths:
+        assert path not in remote.REMOTE_PATHS
+    cl = TestClient(web.create_app(cfg, remote_only=True), base_url="https://testserver")
+    for path in paths:
+        assert cl.get(path, follow_redirects=False).status_code == 404, path
+        assert cl.post(path, follow_redirects=False).status_code == 404, path
+
+
+def test_no_em_dashes_in_block_b_text():
+    root = Path(__file__).resolve().parents[1]
+    for p in ("src/familybox/plugins/household.py", "src/familybox/plugins/remote.py"):
+        assert "—" not in (root / p).read_text(), p
+
+
+def test_cli_verify_still_prints_the_same_shape(monkeypatch, capsys):
+    import asyncio
+    from familybox import cli
+    fake_check(monkeypatch, {"ok": True, "model": "m", "model_reports_verified": 2, "verified_at_ms": 5})
+    assert asyncio.run(cli._verify("test-key-not-real", "m")) == 0
+    assert json.loads(capsys.readouterr().out) == {"model": "m", "gateway": "verified",
+                                                   "model_reports_verified": 2, "verified_at_ms": 5}
+    fake_check(monkeypatch, {"ok": False, "model": "m", "error": "nope"})
+    assert asyncio.run(cli._verify("test-key-not-real", "m")) == 1
+    assert json.loads(capsys.readouterr().out) == {"model": "m", "verified": False, "error": "nope"}

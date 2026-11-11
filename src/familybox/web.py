@@ -741,6 +741,7 @@ def create_app(cfg: Config, *, port: int = 8443, remote_only: bool = False, box=
                 f'<li><a href="/files">See your files</a> and remove ones you no longer want on the box.</li>'
                 f'<li><a href="/approvals">Approve or deny</a> details an assistant asked for.</li>'
                 f'<li><a href="/cloud">Cloud</a>: bring files in from Google Drive, and back up the box.</li>'
+                f'<li><a href="/status">Box status</a>: is the box working, and is the AI key saved.</li>'
                 f'</ul></div><p class="muted">This page only works on your home network.</p>')
         return page(sess, "Home", body, "/")
 

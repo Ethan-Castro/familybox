@@ -261,18 +261,30 @@ def _cloud(cfg, args) -> int:
     return 0
 
 
-async def _verify(key: str, model: str) -> int:
+async def check_attestation(key: str, model: str) -> dict:
+    """The NEAR enclave attestation check behind `familybox verify` (no inference). Never raises.
+
+    Returns {"ok", "model", "model_reports_verified", "verified_at_ms"} or {"ok": False, "model", "error"}.
+    The box's key page runs this same check."""
     from nearai_inference_sdk import InferenceClient, get_sdk_error
     try:
         async with InferenceClient(key, e2ee=True, attestation_cache_time_to_live_ms=0) as c:
             att = await c.verify(model)
-        print(json.dumps({"model": model, "gateway": "verified", "model_reports_verified": len(att.models),
-                          "verified_at_ms": att.verified_at}))
-        return 0 if att.models else 1
+        return {"ok": bool(att.models), "model": model, "model_reports_verified": len(att.models),
+                "verified_at_ms": att.verified_at}
     except Exception as e:  # noqa: BLE001
         sdk = get_sdk_error(e)
-        print(json.dumps({"model": model, "verified": False, "error": sdk.failure.code if sdk else str(e)}))
+        return {"ok": False, "model": model, "error": sdk.failure.code if sdk else str(e)}
+
+
+async def _verify(key: str, model: str) -> int:
+    r = await check_attestation(key, model)
+    if "error" in r:
+        print(json.dumps({"model": model, "verified": False, "error": r["error"]}))
         return 1
+    print(json.dumps({"model": model, "gateway": "verified", "model_reports_verified": r["model_reports_verified"],
+                      "verified_at_ms": r["verified_at_ms"]}))
+    return 0 if r["ok"] else 1
 
 
 if __name__ == "__main__":

@@ -3,7 +3,7 @@
 Adds to the box's web page (familybox serve):
   /mcp, the OAuth 2.1 endpoints and metadata (see familybox.remote), the consent page where a family
   member links an assistant with a one-time sign-in code, and an "Assistants" page that lists
-  connected assistants with Revoke and makes API tokens.
+  connected assistants with Revoke, gives out linking codes and makes API tokens.
 
 Adds to the CLI:
   familybox token --as maya [--label "Cursor"]    API token for apps that only take a bearer header
@@ -145,7 +145,8 @@ def web_routes(ctx):
                 f'<label for="code">Your 8-letter sign-in code</label>'
                 f'<input type="text" id="code" name="code" class="code" maxlength="12" autocomplete="one-time-code"'
                 f' autocapitalize="characters" spellcheck="false" required>'
-                f'<p class="muted">Ask the person who runs the box for a code. It works once and lasts 10 minutes.</p>'
+                f'<p class="muted">Get a code from the Assistants page on your box. It works once and lasts '
+                f'10 minutes.</p>'
                 f'<button class="main" type="submit">Next</button></form>'
                 f'<form method="post" action="/authorize/consent"><input type="hidden" name="req" value="{esc(req_id)}">'
                 f'<input type="hidden" name="step" value="deny">'
@@ -279,6 +280,9 @@ def web_routes(ctx):
                 f'<p class="muted">These assistants can ask the family box questions as you. Revoking one stops it '
                 f'right away.</p><div class="card">{listing}</div>'
                 f'<div class="card"><h2>Add one</h2>{add_one(request)}'
+                f'<form method="post" action="/assistants/code">{ctx.csrf_field(sess.csrf)}'
+                f'<p class="muted">When the assistant asks for a code, get one here.</p>'
+                f'<button class="main" type="submit">Get a linking code</button></form>'
                 f'<form method="post" action="/assistants/token">{ctx.csrf_field(sess.csrf)}'
                 f'<p class="muted">Some apps only take a token instead of a sign-in. Make one for them here. '
                 f'It is shown once.</p>'
@@ -316,6 +320,25 @@ def web_routes(ctx):
                  f'shown again. Anyone with it can ask the box as you, so keep it private.</p>'
                  f'<div class="value">{esc(token)}</div>'
                  f'<p class="muted">Send it as the header: Authorization: Bearer (then the token)</p></div>')
+        return assistants_page(request, sess, extra)
+
+    async def assistants_code(request: Request):
+        got = await ctx.guarded_form(request, max_files=0, max_fields=4, max_part_size=4096)
+        if isinstance(got, Response):
+            return got
+        sess, _ = got
+        code = (ctx.state or signin).issue_code(sess.person.id)
+        from ..web import CODE_TTL_S, _audit
+        _audit(cfg, sess.person.id, {"event": "linking_code_issued", "by": "web", "expires_in_s": CODE_TTL_S})
+        address = remote.resource_of(fixed or base_of(request))
+        extra = (f'<div class="card"><h2>Your linking code</h2>'
+                 f'<div class="value">{esc(code[:4])}-{esc(code[4:])}</div>'
+                 f'<p class="muted">It works once and lasts 10 minutes. It links an assistant to you, '
+                 f'{esc(sess.person.display)}, so don\'t share it. It won\'t be shown again.</p>'
+                 f'<ol><li>In ChatGPT or Claude, add a custom connector with this address:'
+                 f'<div class="value">{esc(address)}</div></li>'
+                 f'<li>The assistant opens a page from this box. Type the code there.</li>'
+                 f'<li>Check the name it shows, then choose "Yes, link it".</li></ol></div>')
         return assistants_page(request, sess, extra)
 
     async def revoke_endpoint(request: Request):
@@ -375,6 +398,7 @@ def web_routes(ctx):
         Route("/assistants", assistants_get, methods=["GET"]),
         Route("/assistants/revoke", assistants_revoke, methods=["POST"]),
         Route("/assistants/token", assistants_token, methods=["POST"]),
+        Route("/assistants/code", assistants_code, methods=["POST"]),
     ]
 
 

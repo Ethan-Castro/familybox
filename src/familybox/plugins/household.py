@@ -4,14 +4,21 @@
   /family           people, what each may also read, words never to share, invite, remove (admin only)
   /family/invite    a one-time invite: code, link and QR, good for 30 minutes
   /join             someone invited opens the link, sets their own PIN and is signed in
+  /settings/key     paste the NEAR AI key once and check it (admin only); the key is never shown again
+  /status           the box in plain words: AI key, last check, files, approvals, assistants, disk
 
 None of these is in remote.REMOTE_PATHS: they work only on the home network page.
-Every setup, invite, access change and removal is written to the admin's audit log.
+Every setup, invite, access change, removal and key change is written to the admin's audit log.
 """
 
 from __future__ import annotations
 
+import asyncio
+import os
+import re
 import secrets
+import shutil
+import time
 
 from starlette.requests import Request
 from starlette.responses import RedirectResponse, Response
@@ -21,6 +28,10 @@ from .. import household
 from ..household import HouseholdError
 
 ADMIN_ONLY = "Only the person who runs the box can do that."
+KEY_MIN, KEY_MAX = 16, 512
+KEY_CHECK_FILE = "key_check.json"     # in <runtime>/web: time and result of the last key check, never the key
+KEY_CHECK_TIMEOUT_S = 60
+_REASON = re.compile(r"[A-Za-z0-9_.-]{1,40}")
 
 
 def web_nav():
@@ -33,8 +44,62 @@ def _qr_svg(link: str) -> str:
     return segno.make(link, error="m").svg_inline(scale=5, border=4, light="#fff", title="Invite link")
 
 
+def key_problem(key: str) -> str | None:
+    """Why a pasted key can't be saved, in plain words, or None. Never repeats the key."""
+    if not key:
+        return "Paste the key first."
+    if not KEY_MIN <= len(key) <= KEY_MAX:
+        return "That doesn't look like a NEAR AI key. Check that you copied all of it."
+    if any(ch.isspace() or not ch.isprintable() for ch in key):
+        return "That doesn't look like a NEAR AI key. It should have no spaces in it."
+    return None
+
+
+def save_key(cfg, key: str) -> None:
+    """Store the key 0600 in <runtime>/secrets/near_api_key and use it in this process from now on."""
+    from .. import config
+    from ..web import _write_private
+    path = config.key_path(cfg.home)
+    _write_private(path, key.encode())
+    os.chmod(path.parent, 0o700)
+    os.environ[config.KEY_ENV[0]] = key
+
+
+def _attest(key: str, model: str) -> dict:
+    """Run the same check as `familybox verify`, in its own event loop (called from a worker thread)."""
+    from .. import cli
+    return asyncio.run(cli.check_attestation(key, model))
+
+
+def _reason(r: dict, key: str) -> str:
+    """A short code for why the check failed, safe to keep and show. Free text is dropped."""
+    why = str(r.get("error") or ("no_model_reports" if not r.get("ok") else ""))
+    if not _REASON.fullmatch(why) or (key and key in why):
+        return "other"
+    return why
+
+
+def _ago(ts) -> str:
+    if not ts:
+        return "never"
+    s = max(0, int(time.time() - float(ts)))
+    if s < 90:
+        return "just now"
+    if s < 90 * 60:
+        return f"{s // 60} minutes ago"
+    if s < 36 * 3600:
+        return f"{round(s / 3600)} hours ago"
+    return f"{round(s / 86400)} days ago"
+
+
+def _disk(n: int) -> str:
+    gb = n / 1024 ** 3
+    return f"{gb:.1f} GB" if gb >= 1 else f"{n // 1024 ** 2} MB"
+
+
 def web_routes(ctx):
-    from ..web import (INVITE_TTL_S, _audit, _page, origin_ok, pre_ok, set_pre_cookie, signed_in)
+    from .. import enclave
+    from ..web import (INVITE_TTL_S, _audit, _page, origin_ok, pre_ok, readable_files, set_pre_cookie, signed_in)
 
     cfg, esc, state = ctx.cfg, ctx.esc, ctx.state
     csrf = ctx.csrf_field
@@ -283,6 +348,162 @@ def web_routes(ctx):
         _audit(cfg, pid, {"event": "joined", "person": pid})
         return signed_in(state, pid)
 
+    # ---- the AI key
+    def last_check() -> dict:
+        got = state._load(KEY_CHECK_FILE, {})
+        return got if isinstance(got, dict) else {}
+
+    def check_line() -> str:
+        last = last_check()
+        if not last.get("time"):
+            return '<p class="muted">The key hasn\'t been checked yet.</p>'
+        when = esc(_ago(last["time"]))
+        if last.get("ok"):
+            return f'<p class="ok">Last check passed, {when}. The box can talk to NEAR\'s private AI.</p>'
+        why = last.get("reason", "other")
+        if why == "no_key":
+            return f'<p class="bad">Last check, {when}: no key was saved.</p>'
+        hint = "" if why == "other" else f' (reason: {esc(why)})'
+        return (f'<p class="bad">Last check failed, {when}{hint}. Check that the key is right and that the box '
+                f'is online, then try again.</p>')
+
+    def key_page(sess, msg: str = "", ok: bool = True, status: int = 200) -> Response:
+        saved = bool(enclave.api_key())
+        have = ('<p class="ok">A key is saved.</p><p class="muted">For safety it is never shown again. To change '
+                'it, paste a new one below.</p>' if saved
+                else '<p>No key is saved yet. Without it the box can\'t answer questions or read photos.</p>')
+        check = ""
+        if saved:
+            check = (f'<form method="post" action="/settings/key/check" class="card">{csrf(sess.csrf)}'
+                     f'<h2>Check the key</h2>{check_line()}'
+                     f'<p class="muted">The box asks NEAR to prove its AI runs in a sealed, private machine. '
+                     f'No question is sent. This can take up to a minute.</p>'
+                     f'<button class="main" type="submit">Check it</button></form>')
+        body = (f'<h1>AI key</h1>{note(msg, ok)}<div class="card">{have}</div>'
+                f'<form method="post" action="/settings/key" class="card">{csrf(sess.csrf)}'
+                f'<h2>{"Replace the key" if saved else "Save the key"}</h2>'
+                f'<label for="key">NEAR AI key</label>'
+                f'<input type="password" id="key" name="key" maxlength="{KEY_MAX}" autocomplete="off"'
+                f' spellcheck="false" autocapitalize="off" required>'
+                f'<p class="muted">Copy it from your NEAR AI account and paste it here once. It stays on this box.'
+                f'</p><button class="main" type="submit">Save the key</button></form>{check}'
+                f'<p><a href="/status">Box status</a></p>')
+        return ctx.page(sess, "AI key", body, "/settings/key", status)
+
+    @ctx.need_signin
+    async def key_get(request: Request, sess):
+        if not sess.person.admin:
+            return ctx.forbidden(ADMIN_ONLY)
+        return key_page(sess)
+
+    async def key_form(request: Request):
+        got = await ctx.guarded_form(request, max_files=0, max_fields=4, max_part_size=4096)
+        if isinstance(got, Response):
+            return got
+        sess, form = got
+        if not sess.person.admin:
+            return ctx.forbidden(ADMIN_ONLY)
+        return sess, form
+
+    async def key_post(request: Request):
+        got = await key_form(request)
+        if isinstance(got, Response):
+            return got
+        sess, form = got
+        key = str(form.get("key", "")).strip()
+        why = key_problem(key)
+        if why:
+            return key_page(sess, why, False, status=400)
+        save_key(cfg, key)
+        with state._lock():
+            state._save(KEY_CHECK_FILE, {})        # the last check was for the old key
+        _audit(cfg, sess.person.id, {"event": "ai_key_saved"})
+        return key_page(sess, "Saved. Now press \"Check it\" to make sure it works.")
+
+    async def key_check(request: Request):
+        got = await key_form(request)
+        if isinstance(got, Response):
+            return got
+        sess, _ = got
+        key = enclave.api_key()
+        if not key:
+            r = {"ok": False, "error": "no_key"}
+        else:
+            try:
+                r = await asyncio.wait_for(asyncio.to_thread(_attest, key, cfg.model), KEY_CHECK_TIMEOUT_S)
+            except asyncio.TimeoutError:
+                r = {"ok": False, "error": "timeout"}
+            except Exception:  # noqa: BLE001 - never show the error text, it could hold anything
+                r = {"ok": False, "error": "other"}
+        ok = bool(r.get("ok"))
+        reason = "" if ok else _reason(r, key or "")
+        with state._lock():
+            state._save(KEY_CHECK_FILE, {"time": int(time.time()), "ok": ok, "reason": reason})
+        _audit(cfg, sess.person.id, {"event": "ai_key_checked", "ok": ok, "reason": reason})
+        if ok:
+            return key_page(sess, "The key works. NEAR proved its private AI is sealed.")
+        if not key:
+            return key_page(sess, "Save a key first, then check it.", False)
+        return key_page(sess, "The check didn't pass.", False)
+
+    # ---- status
+    def pin_state() -> str:
+        try:
+            from ..pinning import PinStore
+            store = PinStore(cfg)
+            if store.level == "off":
+                return '<li>NEAR code check: <span class="bad">turned off</span></li>'
+            waiting = store.reviews("waiting")
+        except Exception:  # noqa: BLE001 - a damaged pin file is itself the news
+            return '<li>NEAR code check: <span class="bad">needs a look</span> (<a href="/pins">open it</a>)</li>'
+        if waiting:
+            return (f'<li>NEAR code check: <span class="bad">{len(waiting)} change(s) to review</span>. The box won\'t '
+                    f'answer until you do (<a href="/pins">review</a>).</li>')
+        return '<li>NEAR code check: <span class="ok">no changes waiting</span></li>'
+
+    @ctx.need_signin
+    async def status_get(request: Request, sess):
+        from ..approvals import Approvals
+        person = sess.person
+        saved = bool(enclave.api_key())
+        rows = ['<li>The box is <span class="ok">on</span>.</li>']
+        if saved:
+            rows.append('<li>AI key: <span class="ok">saved</span></li>')
+        else:
+            rows.append('<li>AI key: <span class="bad">missing</span>. The box can\'t answer questions yet.'
+                        + (' <a href="/settings/key">Save it</a>' if person.admin else
+                           ' Ask the person who runs the box to save it.') + '</li>')
+        last = last_check()
+        if last.get("time"):
+            res = '<span class="ok">passed</span>' if last.get("ok") else '<span class="bad">failed</span>'
+            rows.append(f'<li>Last AI check: {res}, {esc(_ago(last["time"]))}</li>')
+        else:
+            rows.append('<li>Last AI check: not run yet</li>')
+        try:
+            n_files = len(readable_files(cfg, person))
+        except Exception:  # noqa: BLE001
+            n_files = None
+        rows.append(f'<li>Files you can use: {n_files if n_files is not None else "unknown"}</li>')
+        rows.append(f'<li>Approvals waiting for you: {len(Approvals(cfg).pending(person.id))}</li>')
+        try:
+            from ..remote import RemoteStore
+            n_conn = len(RemoteStore(cfg).connections(person.id))
+        except Exception:  # noqa: BLE001
+            n_conn = None
+        rows.append(f'<li>Assistants linked to you: {n_conn if n_conn is not None else "unknown"}</li>')
+        if person.admin:
+            rows.append(pin_state())
+        try:
+            free = shutil.disk_usage(cfg.home).free
+            low = free < 1024 ** 3
+            rows.append(f'<li>Free space: <span class="{"bad" if low else "ok"}">{esc(_disk(free))}</span>'
+                        f'{" (running low)" if low else ""}</li>')
+        except OSError:
+            rows.append('<li>Free space: unknown</li>')
+        links = '<p><a href="/settings/key">AI key</a></p>' if person.admin else ""
+        body = (f'<h1>Box status</h1><div class="card"><ul class="files">{"".join(rows)}</ul></div>{links}')
+        return ctx.page(sess, "Status", body, "/status")
+
     return [
         Route("/setup", setup_get, methods=["GET"]),
         Route("/setup", setup_post, methods=["POST"]),
@@ -293,4 +514,8 @@ def web_routes(ctx):
         Route("/family/invite", family_invite, methods=["POST"]),
         Route("/join", join_get, methods=["GET"]),
         Route("/join", join_post, methods=["POST"]),
+        Route("/settings/key", key_get, methods=["GET"]),
+        Route("/settings/key", key_post, methods=["POST"]),
+        Route("/settings/key/check", key_check, methods=["POST"]),
+        Route("/status", status_get, methods=["GET"]),
     ]

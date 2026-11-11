@@ -866,3 +866,60 @@ async def test_assistants_page_shows_public_address_or_says_not_online(cfg, monk
         page = await signed_in(c, cfg, "maya")
         a = await page.get("/assistants")
         assert "https://box.example.org/mcp" in a.text and "isn't on the internet" not in a.text
+
+
+# --- linking code from the Assistants page (Block B2) --------------------------------------------------
+
+@pytest.mark.anyio
+async def test_linking_code_from_the_assistants_page_links_an_assistant(http, cfg):
+    page = await signed_in(http, cfg, "maya")
+    a = await page.get("/assistants")
+    assert "Get a linking code" in a.text
+    assert (await http.post("/assistants/code", data={})).status_code == 403          # no CSRF
+    r = await http.post("/assistants/code", data={"csrf": field(a.text, "csrf")})
+    assert r.status_code == 200 and "Your linking code" in r.text
+    shown = re.search(r'<div class="value">([A-Z0-9]{4})-([A-Z0-9]{4})</div>', r.text)
+    assert shown, r.text
+    code, dashed = shown.group(1) + shown.group(2), f"{shown.group(1)}-{shown.group(2)}"
+    assert f"{BASE}/mcp" in r.text and "add a custom connector" in r.text and "Yes, link it" in r.text
+    assert "lasts 10 minutes" in r.text and "—" not in r.text
+    again = await http.get("/assistants")
+    assert code not in again.text and dashed not in again.text
+    entry = audit(cfg, "maya")[-1]
+    assert entry["event"] == "linking_code_issued" and code not in json.dumps(audit(cfg, "maya"))
+
+    client = await register(http)
+    verifier, challenge = pkce()
+    start_r = await start(http, client, challenge)
+    consent_page = await http.get(start_r.headers["location"])
+    assert "Get a code from the Assistants page on your box" in consent_page.text
+    assert "Ask the person who runs the box" not in consent_page.text
+    req = field(consent_page.text, "req")
+    step2 = await http.post("/authorize/consent", data={"req": req, "step": "code", "code": dashed})
+    assert step2.status_code == 200 and "Link Claude to Maya?" in step2.text
+    done = await http.post("/authorize/consent", data={"req": req, "step": "approve",
+                                                       "nonce": field(step2.text, "nonce")})
+    q = parse_qs(urlsplit(back_url(done.text)).query)
+    tok = await http.post("/token", data={"grant_type": "authorization_code", "code": q["code"][0],
+                                          "redirect_uri": REDIRECT, "client_id": client["client_id"],
+                                          "code_verifier": verifier})
+    assert tok.status_code == 200
+    m = Mcp(http, tok.json()["access_token"])
+    await m.initialize()
+    assert "as Maya" in await m.call("family_box_status")
+    # the code worked once
+    start2 = await start(http, client, challenge, state="st-2")
+    req2 = field((await http.get(start2.headers["location"])).text, "req")
+    bad = await http.post("/authorize/consent", data={"req": req2, "step": "code", "code": code})
+    assert bad.status_code == 401
+
+
+@pytest.mark.anyio
+async def test_linking_code_shows_the_public_address(cfg, monkeypatch):
+    monkeypatch.setenv("FAMILYBOX_PUBLIC_URL", "https://box.example.org")
+    app = web.create_app(cfg)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url=BASE) as c:
+        page = await signed_in(c, cfg, "dana")
+        a = await page.get("/assistants")
+        r = await c.post("/assistants/code", data={"csrf": field(a.text, "csrf")})
+        assert r.status_code == 200 and '<div class="value">https://box.example.org/mcp</div>' in r.text
