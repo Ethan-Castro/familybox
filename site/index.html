@@ -17,6 +17,7 @@
   --hair: rgba(0,0,0,.13); --whisper: rgba(0,0,0,.045); --night: #0a0a0a;
   --font: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --gap: 20px; --section: 128px;
+  --home: #c9691a; --home-wash: #fdf4ea; --bubble: #ecf2fd; --bubble-ink: #13233d; --ok: #14713d;
   color-scheme: light;
 }
 * { box-sizing: border-box; }
@@ -213,6 +214,95 @@ footer p { max-width: 30em; }
   .key-lock { opacity: 1; } .a-draw { stroke-dashoffset: 0; } .meter { transition: none; }
   .zoom, .thumb svg { transition: none; }
 }
+/* how it works, animated: one question followed through the box (classes prefixed fl-) */
+.fl-flow { display: flex; flex-direction: column; gap: 28px; margin-bottom: 72px; }
+.fl-lead { max-width: 40em; color: var(--graphite); margin-top: -24px; }
+.fl-stage { position: relative; display: grid; grid-template-columns: 1fr 1.3fr 1fr; grid-template-areas: "helper home near" "phone home near"; gap: 24px 64px; }
+.fl-zone { position: relative; z-index: 1; border: 1px solid var(--hair); border-radius: 22px; padding: 18px; background: var(--paper); display: flex; flex-direction: column; gap: 12px; transition: border-color .3s, box-shadow .3s; }
+.fl-zone.fl-on { border-color: rgba(0,0,0,.55); box-shadow: 0 0 0 4px rgba(0,0,0,.04); }
+.fl-zone h3 { font-size: 15px; font-weight: 600; letter-spacing: -0.01em; }
+.fl-zone .fl-sub { font-size: 13px; color: var(--graphite); line-height: 1.4; }
+.fl-helper { grid-area: helper; } .fl-phone { grid-area: phone; } .fl-near { grid-area: near; }
+.fl-home { grid-area: home; background: var(--home-wash); border-color: rgba(201,105,26,.35); }
+.fl-home.fl-on { border-color: var(--home); box-shadow: 0 0 0 4px rgba(201,105,26,.1); }
+.fl-slot { border-radius: 14px; background: var(--ash); padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; min-height: 64px; }
+.fl-home .fl-slot { background: var(--paper); border: 1px solid rgba(201,105,26,.22); }
+.fl-slot .fl-k { font-size: 12.5px; font-weight: 500; color: var(--graphite); }
+.fl-muted { color: var(--smoke); font-size: 14px; }
+
+.fl-chat { min-height: 132px; justify-content: flex-start; }
+.fl-msg { font-size: 14.5px; line-height: 1.4; }
+.fl-msg.fl-me { align-self: flex-end; background: var(--bubble); color: var(--bubble-ink); border-radius: 16px; padding: 7px 13px; max-width: 95%; }
+.fl-msg.fl-ai { align-self: flex-start; }
+
+.fl-screen { align-items: center; text-align: center; background: linear-gradient(200deg, #10203f 0%, #1c3f7a 70%, #5b6f9c 130%); color: #fff; min-height: 118px; justify-content: center; }
+.fl-screen .fl-k { color: rgba(255,255,255,.75); }
+.fl-num { font-size: 20px; font-weight: 600; font-variant-numeric: tabular-nums; letter-spacing: 0; }
+.fl-approve { font: 500 13px var(--font); padding: 6px 14px; border-radius: 9999px; background: #fff; color: #10203f; border: 0; transition: transform .15s, background .15s; }
+.fl-approve.fl-press { transform: scale(.93); background: #dbe4f5; }
+
+.fl-folders { display: flex; gap: 8px; flex-wrap: wrap; }
+.fl-folder { display: inline-flex; align-items: center; gap: 6px; font-size: 13.5px; font-weight: 500; padding: 7px 12px; border-radius: 10px; border: 1px solid var(--hair); background: var(--paper); color: var(--graphite); transition: all .3s; }
+.fl-folder svg { width: 14px; height: 14px; flex: none; }
+.fl-folder.fl-open { color: var(--ink); border-color: var(--home); background: #fff7ee; box-shadow: 0 0 0 3px rgba(201,105,26,.12); }
+.fl-folder.fl-shut { color: var(--smoke); background: var(--ash); border-color: transparent; }
+.fl-draft { font-size: 15px; line-height: 1.45; min-height: 1.45em; }
+.fl-draft .fl-secret { font-variant-numeric: tabular-nums; border-radius: 6px; padding: 1px 4px; margin: 0 -1px; transition: background .3s, color .3s; }
+.fl-draft .fl-secret.fl-found { background: #ffe1c2; color: #7a3a06; }
+.fl-chip { align-self: flex-start; font-size: 12.5px; font-weight: 500; padding: 4px 10px; border-radius: 9999px; background: #fff0df; color: #7a3a06; }
+.fl-chip.fl-ok { background: #e7f5ec; color: var(--ok); }
+
+.fl-near .fl-lockrow { display: flex; align-items: center; gap: 8px; }
+.fl-near .fl-lockrow svg { width: 18px; height: 18px; flex: none; }
+.fl-model .fl-state { font-size: 14px; line-height: 1.4; min-height: 2.8em; }
+
+.fl-flow [hidden] { display: none !important; }
+
+/* links between the places, and the travelling message */
+.fl-links { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 0; overflow: visible; }
+.fl-links line { stroke: rgba(0,0,0,.22); stroke-width: 1.5; stroke-dasharray: 3 6; transition: stroke .3s; }
+.fl-links line.fl-on { stroke: var(--ink); animation: march 1s linear infinite; }
+@keyframes march { to { stroke-dashoffset: -18; } }
+.fl-token { position: absolute; left: 0; top: 0; z-index: 3; max-width: 230px; padding: 8px 13px; border-radius: 14px; font-size: 13.5px; font-weight: 500; line-height: 1.3; background: var(--paper); border: 1px solid rgba(0,0,0,.4); box-shadow: 0 6px 22px rgba(0,0,0,.14); opacity: 0; pointer-events: none; display: flex; gap: 7px; align-items: flex-start; }
+.fl-token svg { width: 14px; height: 14px; flex: none; margin-top: 2px; }
+.fl-token.fl-locked { background: var(--ink); color: #fff; border-color: var(--ink); }
+
+/* caption and controls */
+.fl-panel { display: grid; grid-template-columns: 1fr auto; gap: 18px 32px; align-items: start; border-top: 1px solid var(--hair); padding-top: 22px; }
+.fl-caption { display: flex; flex-direction: column; gap: 6px; max-width: 40em; min-height: 6.6em; }
+.fl-count { font-size: 13px; font-weight: 500; color: var(--graphite); font-variant-numeric: tabular-nums; }
+.fl-caption h4 { font-size: 20px; font-weight: 600; letter-spacing: -0.02em; line-height: 1.25; }
+.fl-caption p { color: #3a3a3a; }
+.fl-controls { display: flex; flex-direction: column; gap: 14px; align-items: flex-end; }
+.fl-buttons { display: flex; gap: 8px; }
+.fl-btn { font: 500 14px var(--font); letter-spacing: -0.01em; padding: 9px 16px; border-radius: 9999px; border: 1px solid var(--hair); background: var(--paper); color: var(--ink); cursor: pointer; transition: background .15s; }
+.fl-btn:hover { background: var(--ash); }
+.fl-btn.fl-solid { background: var(--ink); border-color: var(--ink); color: var(--paper); min-width: 104px; }
+.fl-btn.fl-solid:hover { background: #2a2a2a; }
+.fl-btn:disabled { opacity: .4; cursor: default; }
+.fl-dots { display: flex; gap: 6px; }
+.fl-dot { width: 26px; height: 26px; border-radius: 50%; border: 1px solid var(--hair); background: var(--paper); font: 500 12px var(--font); color: var(--graphite); cursor: pointer; font-variant-numeric: tabular-nums; padding: 0; }
+.fl-dot.fl-done { background: var(--ash); border-color: transparent; color: var(--ink); }
+.fl-dot.fl-cur { background: var(--ink); border-color: var(--ink); color: #fff; }
+.fl-flow button:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
+
+.fl-sum { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+.fl-sum > div { border-radius: 18px; background: var(--ash); padding: 18px 20px; display: flex; flex-direction: column; gap: 6px; }
+.fl-sum h4 { font-size: 15px; font-weight: 600; }
+.fl-sum ul { margin: 0; padding-left: 1.1em; color: #3a3a3a; font-size: 15px; display: flex; flex-direction: column; gap: 3px; }
+.fl-fine { font-size: 13px; color: var(--graphite); max-width: 60em; }
+
+@media (max-width: 860px) {
+  .fl-stage { grid-template-columns: 1fr 1fr; grid-template-areas: "helper phone" "home home" "near near"; gap: 44px 16px; }
+  .fl-panel { grid-template-columns: 1fr; } .fl-controls { align-items: flex-start; }
+  .fl-sum { grid-template-columns: 1fr; }
+  .fl-token { max-width: 190px; }
+  .fl-panel { position: sticky; bottom: 0; z-index: 5; background: var(--paper); padding: 14px 0 12px; gap: 10px; box-shadow: 0 -12px 18px -12px rgba(0,0,0,.12); }
+  .fl-caption { min-height: 0; gap: 3px; } .fl-caption h4 { font-size: 17px; } .fl-caption p { font-size: 14.5px; line-height: 1.4; }
+  .fl-controls { flex-direction: row; flex-wrap: wrap; align-items: center; gap: 10px; } .fl-dot { width: 24px; height: 24px; }
+}
+@media (prefers-reduced-motion: reduce) { .fl-links line.fl-on { animation: none; } .fl-flow * { transition: none !important; } }
+.fl-caption h4, .fl-sum h4 { margin: 0; }
 </style>
 </head>
 <body>
@@ -276,6 +366,83 @@ footer p { max-width: 30em; }
   <section class="block" id="how">
     <div class="wrap">
       <div class="sec-h"><h2>How it works</h2><a href="#safe">Is it safe?</a></div>
+      <div class="fl-flow" id="fl-flow">
+        <p class="fl-lead">Follow one question. Maya asks her AI helper for her Social Security number. Watch where the question, the paper and the answer go.</p>
+  <div class="fl-stage" id="fl-stage">
+    <svg class="fl-links" id="fl-links" aria-hidden="true"><line id="fl-l-helper"/><line id="fl-l-phone"/><line id="fl-l-near"/></svg>
+
+    <section class="fl-zone fl-helper" id="fl-z-helper">
+      <div><h3>The AI helper</h3><p class="fl-sub">ChatGPT, Claude and others. It never gets a paper.</p></div>
+      <div class="fl-slot fl-chat" id="fl-a-chat">
+        <p class="fl-muted" id="fl-chat-wait">Waiting for Maya's question</p>
+        <div class="fl-msg fl-me" id="fl-chat-q" hidden>What's my Social Security number?</div>
+        <div class="fl-msg fl-ai" id="fl-chat-a" hidden>It ends in 4322. The full number is waiting on your phone.</div>
+      </div>
+    </section>
+
+    <section class="fl-zone fl-phone" id="fl-z-phone">
+      <div><h3>Maya's phone</h3><p class="fl-sub">The box's own page, on the home Wi-Fi.</p></div>
+      <div class="fl-slot fl-screen" id="fl-a-phone">
+        <span class="fl-k" id="fl-phone-k">Nothing to approve yet</span>
+        <span class="fl-num" id="fl-phone-num" hidden>•••-••-4322</span>
+        <button type="button" class="fl-approve" id="fl-phone-btn" tabindex="-1" hidden>Approve</button>
+      </div>
+    </section>
+
+    <section class="fl-zone fl-home" id="fl-z-home">
+      <div id="fl-a-box"><h3>The box at home</h3><p class="fl-sub">A small computer in Maya's house. The family's papers live here.</p></div>
+      <div class="fl-slot" id="fl-a-files">
+        <span class="fl-k">Family papers</span>
+        <div class="fl-folders">
+          <span class="fl-folder" id="fl-f-maya"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>Maya's IDs</span>
+          <span class="fl-folder">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>Shared family</span>
+          <span class="fl-folder fl-shut"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>Mom's health</span>
+        </div>
+      </div>
+      <div class="fl-slot" id="fl-a-gate">
+        <span class="fl-k">Answer check: simple code, not an AI</span>
+        <p class="fl-draft" id="fl-draft"><span class="fl-muted">No draft yet</span></p>
+        <span class="fl-chip" id="fl-held" hidden>Full number held for Maya</span>
+        <span class="fl-chip fl-ok" id="fl-second" hidden>Second check: no hints found</span>
+      </div>
+    </section>
+
+    <section class="fl-zone fl-near" id="fl-z-near">
+      <div>
+        <div class="fl-lockrow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg><h3>Sealed computer at NEAR</h3></div>
+        <p class="fl-sub">The AI runs here. The hardware is sealed, so NEAR's own staff can't look inside.</p>
+      </div>
+      <span class="fl-chip fl-ok" id="fl-proof" hidden>Proof checked by the box</span>
+      <div class="fl-slot fl-model" id="fl-a-model"><span class="fl-k">AI model</span><p class="fl-state" id="fl-model-state"><span class="fl-muted">Waiting</span></p></div>
+      <div class="fl-slot fl-model" id="fl-a-model2"><span class="fl-k">Second checker, a different model</span><p class="fl-state" id="fl-model2-state"><span class="fl-muted">Waiting</span></p></div>
+    </section>
+
+    <div class="fl-token" id="fl-token" aria-hidden="true"></div>
+  </div>
+
+  <div class="fl-panel">
+    <div class="fl-caption" aria-live="polite">
+      <span class="fl-count" id="fl-count">Nine steps</span>
+      <h4 id="fl-cap-title">One question, start to finish</h4>
+      <p id="fl-cap-text">Press Play to watch, or use Next to go one step at a time. Dark messages are locked: only the sealed computer and the box can read them.</p>
+    </div>
+    <div class="fl-controls">
+      <div class="fl-buttons">
+        <button type="button" class="fl-btn" id="fl-prev">Back</button>
+        <button type="button" class="fl-btn fl-solid" id="fl-play">Play</button>
+        <button type="button" class="fl-btn" id="fl-next">Next</button>
+      </div>
+      <div class="fl-dots" id="fl-dots" aria-label="Go to a step"></div>
+    </div>
+  </div>
+
+  <div class="fl-sum">
+    <div><h4>What the AI helper got</h4><ul><li>Maya's question</li><li>A safe answer: "It ends in 4322"</li></ul></div>
+    <div><h4>What it never got</h4><ul><li>Any of the family's papers</li><li>The full Social Security number</li><li>Anything from Mom's health folder</li></ul></div>
+  </div>
+  <p class="fl-fine">The family and the numbers are made up. Step 7 lowers the risk of a private fact slipping out in other words; it does not remove it. In five live test runs of 39 trick questions, no Social Security or ID number got out through the box.</p>
+      </div>
       <div class="rows">
         <div class="row rv"><div class="thumb g1" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 13v6h16v-6"/><path d="M4 13l3-4h10l3 4"/><g class="a-drop"><rect x="9" y="3" width="6" height="7" rx="1"/></g></svg></div>
           <div><h3 class="t">Put your papers in the box</h3><p class="m"><b>Step 1</b>Take a photo of a card or form, or add a file</p></div></div>
@@ -333,7 +500,7 @@ footer p { max-width: 30em; }
   <section class="block" id="safe">
     <div class="wrap">
       <div class="sec-h"><h2>We tried hard to break it</h2><a href="https://github.com/Ethan-Castro/familybox">See the tests</a></div>
-      <p class="lede">We used a made-up family and tried 39 different tricks to get private details out, four times over. Here is how many got through each time.</p>
+      <p class="lede">We used a made-up family and tried 39 different tricks to get private details out, five times over. Here is how many got through each time.</p>
       <div class="cards">
         <div class="card rv">
           <div class="img"><div class="zoom"><div class="score"><div class="big">0 to 4</div><div class="of">of 39 tricks</div><div class="track"><div class="meter" style="--w:10%"></div></div></div></div></div>
@@ -586,6 +753,144 @@ footer p { max-width: 30em; }
       await wait(4200);
     });
   })();
+})();
+</script>
+<script>
+(() => {
+  const $ = id => document.getElementById("fl-" + id);
+  const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+  const LOCK = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>';
+  const stage = $("stage"), token = $("token");
+
+  // from/to are anchor ids; line is the link that lights up; lock means only the box and the sealed computer can read it.
+  const steps = [
+    { title: "Maya asks her AI helper", zones: ["helper", "home"],
+      text: "Maya types her question into ChatGPT or Claude. The helper doesn't have her papers, so it passes the question to the box at home. The connection itself tells the box that Maya is the one asking.",
+      fly: [{ from: "a-chat", to: "a-box", line: "helper", text: "What's my Social Security number?" }] },
+    { title: "The box checks who it is talking to", zones: ["home", "near"],
+      text: "Before it sends anything, the box makes NEAR's computer prove that it is sealed. No proof, no question. Then the box locks the question so only that sealed computer can open it.",
+      fly: [{ from: "a-box", to: "a-model", line: "near", text: "Prove you are sealed" }, { from: "a-model", to: "a-box", line: "near", text: "Here is my proof" }, { from: "a-box", to: "a-model", line: "near", text: "Maya's question", lock: 1 }] },
+    { title: "The AI asks to see a paper", zones: ["near", "home"],
+      text: "The AI can't reach into the box. All it can do is ask the box to search or to read a paper for it.",
+      fly: [{ from: "a-model", to: "a-files", line: "near", text: "Please read Maya's ID papers", lock: 1 }] },
+    { title: "The box opens only Maya's folder", zones: ["home", "near"],
+      text: "The box finds the paper itself, and only in folders Maya is allowed to see. Mom's health folder stays shut. The paper's text goes to the sealed computer, locked.",
+      fly: [{ from: "a-files", to: "a-model", line: "near", text: "Text of Maya's Social Security card", lock: 1 }] },
+    { title: "The AI writes a draft", zones: ["near", "home"],
+      text: "The AI writes an answer and the sealed computer signs it, so the box knows where it came from. This draft has the full number in it. It goes to the box, not to the helper.",
+      fly: [{ from: "a-model", to: "a-gate", line: "near", text: "Draft: Your SSN is 987-65-4322.", lock: 1 }] },
+    { title: "The box checks the draft", zones: ["home"],
+      text: "Simple code on the box compares the draft with the real numbers in the papers. It is not an AI, so it can't be talked into anything. It finds the full number and covers it.",
+      fly: [] },
+    { title: "A second model looks for hints", zones: ["home", "near"],
+      text: "A different sealed model reads the answer and looks for private facts given away in other words. If this check fails or takes too long, the answer is held.",
+      fly: [{ from: "a-gate", to: "a-model2", line: "near", text: "Does this give anything away?", lock: 1 }, { from: "a-model2", to: "a-gate", line: "near", text: "No hints found", lock: 1 }] },
+    { title: "The helper gets the safe answer", zones: ["home", "helper"],
+      text: "Only the checked answer leaves the house. The helper can tell Maya the last four digits and where to find the rest.",
+      fly: [{ from: "a-gate", to: "a-chat", line: "helper", text: "It ends in 4322. The full number is waiting on your phone." }] },
+    { title: "The full number shows only on Maya's phone", zones: ["home", "phone"],
+      text: "Maya opens the box's page on her phone, types her PIN and taps Approve. All nine digits show there for 30 seconds, then hide again.",
+      fly: [{ from: "a-gate", to: "a-phone", line: "phone", text: "987-65-4322" }] },
+  ];
+  const N = steps.length;
+
+  // What the stage looks like once step i has finished (0 = before anything happens).
+  function render(i) {
+    $("chat-wait").hidden = i >= 1; $("chat-q").hidden = i < 1; $("chat-a").hidden = i < 8;
+    $("proof").hidden = i < 2;
+    $("model-state").innerHTML = i < 2 ? '<span class="fl-muted">Waiting</span>' : i === 2 ? "Has Maya's question" : i === 3 ? "Asks the box to read Maya's ID papers" : i === 4 ? "Reads the text of Maya's card" : "Wrote a draft and signed it";
+    $("model2-state").innerHTML = i < 7 ? '<span class="fl-muted">Waiting</span>' : "Read the checked answer. No hints found.";
+    $("f-maya").classList.toggle("fl-open", i >= 4);
+    $("draft").innerHTML = i < 5 ? '<span class="fl-muted">No draft yet</span>' : i === 5 ? 'Your SSN is <span class="fl-secret" id="fl-secret">987-65-4322</span>.' : 'Your SSN <span class="fl-secret fl-found">ends in 4322</span>.';
+    $("held").hidden = i < 6; $("second").hidden = i < 7;
+    $("phone-k").textContent = i < 6 ? "Nothing to approve yet" : i < 9 ? "One number is waiting" : "Only on this phone, for 30 seconds";
+    $("phone-num").hidden = i < 6; $("phone-num").textContent = i >= 9 ? "987-65-4322" : "•••-••-4322";
+    $("phone-btn").hidden = !(i >= 6 && i < 9);
+  }
+  function caption(i) {
+    $("count").textContent = i ? `Step ${i} of ${N}` : "Nine steps";
+    $("cap-title").textContent = i ? steps[i - 1].title : "One question, start to finish";
+    $("cap-text").textContent = i ? steps[i - 1].text : "Press Play to watch, or use Next to go one step at a time. Dark messages are locked: only the sealed computer and the box can read them.";
+    [...$("dots").children].forEach((d, k) => { d.classList.toggle("fl-cur", k + 1 === i); d.classList.toggle("fl-done", k + 1 < i); d.setAttribute("aria-current", k + 1 === i ? "step" : "false"); });
+    for (const z of ["helper", "phone", "home", "near"]) $("z-" + z).classList.toggle("fl-on", !!i && steps[i - 1].zones.includes(z));
+    $("prev").disabled = i === 0;
+    $("next").disabled = i === N;
+  }
+
+  // Links between the places, redrawn when the layout changes.
+  const pairs = { helper: ["z-helper", "z-home"], phone: ["z-phone", "z-home"], near: ["z-home", "z-near"] };
+  function box(el) { const s = stage.getBoundingClientRect(), r = el.getBoundingClientRect(); return { l: r.left - s.left, t: r.top - s.top, r: r.right - s.left, b: r.bottom - s.top, cx: r.left - s.left + r.width / 2, cy: r.top - s.top + r.height / 2, w: r.width, h: r.height }; }
+  function drawLinks() {
+    for (const [k, [a, b]] of Object.entries(pairs)) {
+      const A = box($(a)), B = box($(b)), ln = $("l-" + k);
+      let x1, y1, x2, y2;
+      if (A.r <= B.l || B.r <= A.l) { const y = (A.h < B.h ? A : B).cy; [x1, x2] = A.r <= B.l ? [A.r, B.l] : [A.l, B.r]; y1 = y2 = y; }
+      else { const x = (A.w < B.w ? A : B).cx; [y1, y2] = A.b <= B.t ? [A.b, B.t] : [A.t, B.b]; x1 = x2 = x; }
+      ln.setAttribute("x1", x1); ln.setAttribute("y1", y1); ln.setAttribute("x2", x2); ln.setAttribute("y2", y2);
+    }
+  }
+  addEventListener("resize", drawLinks);
+  if (window.ResizeObserver) new ResizeObserver(drawLinks).observe(stage);
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(drawLinks);
+
+  let run = 0, cur = 0, playing = false, flight = null;
+  async function fly(f, my) {
+    const A = box($(f.from)), B = box($(f.to));
+    token.className = "fl-token" + (f.lock ? " fl-locked" : "");
+    token.innerHTML = (f.lock ? LOCK : "") + "<span></span>"; token.lastChild.textContent = f.text;
+    const at = p => `translate(${p.cx}px, ${p.cy}px) translate(-50%, -50%)`;
+    $("l-" + f.line).classList.add("fl-on");
+    flight = token.animate([
+      { transform: at(A) + " scale(.92)", opacity: 0 }, { transform: at(A), opacity: 1, offset: 0.14 },
+      { transform: at(B), opacity: 1, offset: 0.86 }, { transform: at(B) + " scale(.92)", opacity: 0 }],
+      { duration: 1900, easing: "cubic-bezier(.45,0,.25,1)" });
+    try { await flight.finished; } catch (e) {}
+    $("l-" + f.line).classList.remove("fl-on");
+    return my === run;
+  }
+  async function go(i, animate = true) {
+    const my = ++run;
+    if (flight) flight.cancel();
+    document.querySelectorAll(".fl-links line.fl-on").forEach(l => l.classList.remove("fl-on"));
+    cur = i; caption(i);
+    if (i && animate && !reduce) {
+      render(i - 1);
+      await sleep(350); if (my !== run) return;
+      if (i === 4) { $("f-maya").classList.add("fl-open"); await sleep(700); if (my !== run) return; }
+      for (const f of steps[i - 1].fly) { if (!(await fly(f, my))) return; await sleep(180); if (my !== run) return; }
+      if (i === 6) { const s = $("secret"); if (s) s.classList.add("fl-found"); await sleep(1300); if (my !== run) return; }
+      if (i === 9) { $("phone-btn").classList.add("fl-press"); await sleep(320); $("phone-btn").classList.remove("fl-press"); if (my !== run) return; }
+    }
+    render(i);
+    if (playing) {
+      await sleep(reduce ? 5200 : 3200 + steps[Math.max(i - 1, 0)].text.length * 14); if (my !== run) return;
+      if (i < N) go(i + 1); else setPlaying(false);
+    }
+  }
+  function setPlaying(p) { playing = p; $("play").textContent = p ? "Pause" : cur === N ? "Play again" : cur ? "Resume" : "Play"; }
+
+  $("play").onclick = () => {
+    if (playing) { setPlaying(false); run++; if (flight) flight.cancel(); render(cur); return; }
+    setPlaying(true); go(cur === N ? 1 : cur + 1); setPlaying(true);
+  };
+  $("next").onclick = () => { setPlaying(false); if (cur < N) go(cur + 1); setPlaying(false); };
+  $("prev").onclick = () => { setPlaying(false); if (cur > 0) go(cur - 1, false); setPlaying(false); };
+  for (let k = 1; k <= N; k++) {
+    const d = document.createElement("button"); d.type = "button"; d.className = "fl-dot"; d.textContent = k; d.title = steps[k - 1].title;
+    d.setAttribute("aria-label", `Step ${k}: ${steps[k - 1].title}`);
+    d.onclick = () => { setPlaying(false); go(k); setPlaying(false); };
+    $("dots").append(d);
+  }
+  addEventListener("keydown", e => { if (e.target.closest("button, input, textarea") || !inView) return; if (e.key === "ArrowRight") $("next").click(); if (e.key === "ArrowLeft") $("prev").click(); });
+
+  render(0); caption(0); drawLinks();
+  // On the site: the arrow keys only work while this is on screen, and it starts by itself the first time it is seen.
+  let inView = false, started = false;
+  new IntersectionObserver(es => es.forEach(e => {
+    inView = e.isIntersecting;
+    if (inView && !started && !reduce && e.intersectionRatio >= 0.35) { started = true; $("play").click(); }
+  }), { threshold: [0, 0.35] }).observe(stage);
 })();
 </script>
 </body>
