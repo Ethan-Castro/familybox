@@ -54,6 +54,7 @@ CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"   # no 0/O, 1/I/L
 CODE_LEN = 8
 CODE_TTL_S = 10 * 60
 INVITE_TTL_S = 30 * 60
+CODE_KINDS = ("signin", "invite")
 LOCKOUT_MAX = 5
 LOCKOUT_WINDOW_S = 10 * 60
 SESSION_TTL_S = 12 * 60 * 60
@@ -143,16 +144,22 @@ class WebState:
     def normalize(code: str) -> str:
         return re.sub(r"[\s-]", "", code or "").upper()
 
-    def issue_code(self, person_id: str, ttl: int = CODE_TTL_S) -> str:
-        """A one-time sign-in code. ttl is how long it lasts in seconds (invites use INVITE_TTL_S)."""
+    def issue_code(self, person_id: str, ttl: int = CODE_TTL_S, kind: str = "signin") -> str:
+        """A one-time code. ttl is how long it lasts in seconds (invites use INVITE_TTL_S).
+
+        kind "signin" codes sign in or link an assistant (the CLI, the Assistants page). kind "invite"
+        codes only work on /join, where the person picks their first PIN: an invite never signs
+        anyone in on /signin, and a sign-in code can never set a PIN."""
         self.cfg.person(person_id)  # raises KeyError for unknown people
         if not 0 < ttl <= INVITE_TTL_S:
             raise ValueError("a code lasts at most 30 minutes")
+        if kind not in CODE_KINDS:
+            raise ValueError("unknown code kind")
         code = "".join(secrets.choice(CODE_ALPHABET) for _ in range(CODE_LEN))
         now = time.time()
         with self._lock():
             codes = {h: c for h, c in self._load("codes.json", {}).items() if c["expires"] > now}
-            codes[self._code_hash(code)] = {"person": person_id, "expires": now + ttl}
+            codes[self._code_hash(code)] = {"person": person_id, "expires": now + ttl, "kind": kind}
             self._save("codes.json", codes)
         return code
 
@@ -161,13 +168,18 @@ class WebState:
         fails = [t for t in self._load(bucket, []) if now - t < LOCKOUT_WINDOW_S]
         return len(fails) >= LOCKOUT_MAX
 
-    def redeem(self, code: str, bucket: str = "failures.json") -> tuple[str | None, str | None]:
-        """Returns (person_id, None) on success or (None, reason) where reason is 'locked' or 'wrong'.
+    def redeem(self, code: str, bucket: str = "failures.json",
+               kind: str = "signin") -> tuple[str | None, str | None]:
+        """Returns (person_id, None) on success or (None, reason) where reason is 'locked', 'wrong',
+        or the kind of a real code that was typed in the wrong place ('invite' or 'signin'). A code of
+        the wrong kind is left unused and doesn't count as a wrong try.
 
         bucket is the file that counts wrong codes. The web sign-in uses failures.json; codes typed on
         pages the internet can reach use their own bucket, so they can never lock the home sign-in."""
         if bucket not in ("failures.json", "remote_failures.json"):
             raise ValueError("unknown failure bucket")
+        if kind not in CODE_KINDS:
+            raise ValueError("unknown code kind")
         now = time.time()
         code = self.normalize(code)
         with self._lock():
@@ -186,6 +198,10 @@ class WebState:
                 self._save(bucket, fails)
                 self._save("codes.json", codes)
                 return None, ("locked" if len(fails) >= LOCKOUT_MAX else "wrong")
+            got = codes[hit].get("kind", "signin")
+            if got != kind:
+                self._save("codes.json", codes)
+                return None, got
             person = codes.pop(hit)["person"]
             self._save("codes.json", codes)
         if person not in self.cfg.people:
@@ -818,11 +834,17 @@ def create_app(cfg: Config, *, port: int = 8443, remote_only: bool = False, box=
         body = (f'<h1>Sign in</h1>{err}{pin_form}'
                 f'<form method="post" action="/signin" class="card">{_csrf_field(pre)}'
                 f'<h2>Sign in with a code</h2>'
-                f'<p>Ask the person who runs the family box for a sign-in code. It works once and lasts 10 minutes.</p>'
+                f'<p>Ask the person who runs the family box for a sign-in code. It works once and lasts 10 minutes.'
+                f' If you were sent an invite, type it here and the box takes you to pick your PIN.</p>'
                 f'<label for="code">Your 8-letter code</label>'
                 f'<input type="text" id="code" name="code" class="code" maxlength="12" autocomplete="one-time-code"'
                 f' autocapitalize="characters" spellcheck="false" required>'
-                f'<button class="main" type="submit">Sign in</button></form>')
+                f'<button class="main" type="submit">Sign in</button></form>'
+                f'<div class="card"><h2>Forgot your PIN?</h2>'
+                f'<p class="muted">For safety, nobody can see or change your PIN on this page, not even the person '
+                f'who runs the box, so nobody can take over your folders. The person who runs the box can make you '
+                f'a sign-in code on the box itself with the command familybox code. If you run the box and forgot '
+                f'your own PIN, ask whoever set the box up for you to help.</p></div>')
         return set_pre_cookie(_page(cfg, "Sign in", body, status=status), pre)
 
     async def signin_get(request: Request):
@@ -846,6 +868,11 @@ def create_app(cfg: Config, *, port: int = 8443, remote_only: bool = False, box=
                 return signin_page(secrets.token_urlsafe(24), msg, status=429 if why == "locked" else 401)
             return signed_in(state, person_id)
         person_id, why = state.redeem(str(form.get("code", "")))
+        if why == "invite":
+            # An invite typed here: it is still unused. Send it to the join page, where the person picks
+            # their PIN. The invite never signs anyone in without one.
+            code = state.normalize(str(form.get("code", "")))
+            return RedirectResponse(f"/join?c={code}", status_code=303)
         if person_id is None:
             msg = ("Too many wrong codes. Wait 10 minutes, then try again." if why == "locked"
                    else "That code didn't work. Check it, or ask for a new one.")
@@ -874,18 +901,26 @@ def create_app(cfg: Config, *, port: int = 8443, remote_only: bool = False, box=
             n_files = len(readable_files(cfg, person))
         except Exception:  # noqa: BLE001 - the list is a hint, never a reason the home page fails
             n_files = 0
-        steps = [("/upload", "Add your papers",
-                  "Upload IDs, tax forms, school letters and more into your own folders.", n_files > 0)]
+        from .remote import public_url
+        steps = []
+        if person.admin:
+            # The key comes first: photos uploaded before it is saved wait to be read, and only their owner
+            # can have them read later.
+            steps.append(("/settings/key", "Save the AI key",
+                          "Paste your NEAR AI key once. The box needs it to answer questions and read photos.",
+                          bool(enclave.api_key())))
+        steps.append(("/upload", "Add your papers",
+                      "Upload IDs, tax forms, school letters and more into your own folders.", n_files > 0))
         if person.admin:
             steps.append(("/family", "Invite your family",
                           "Add each person, then send them a QR code so they pick their own PIN.",
                           len(cfg.people) > 1))
-        steps.append(("/assistants", "Connect an assistant",
-                      "Get a linking code so the AI assistant on your phone or computer can ask the box.", False))
-        if person.admin:
-            steps.append(("/settings/key", "Save the AI key",
-                          "Paste your NEAR AI key once. The box needs it to answer questions and read photos.",
-                          bool(enclave.api_key())))
+        if public_url(cfg):
+            link_what = "Get a linking code so the AI assistant on your phone or computer can ask the box."
+        else:
+            link_what = ("Apps on your home network can link now. ChatGPT and Claude on the web need the box "
+                         "to be on the internet first, which isn't set up yet.")
+        steps.append(("/assistants", "Connect an assistant", link_what, False))
         items = []
         for href, title, what, done in steps:
             if href not in have:
@@ -923,10 +958,22 @@ def create_app(cfg: Config, *, port: int = 8443, remote_only: bool = False, box=
         for_others = ("<p class=\"muted\">You can also file papers into the family folders you look after. "
                       "Health papers you file for someone else can only be opened by that person.</p>"
                       if theirs else "")
-        accept = ",".join(sorted(ALLOWED_SUFFIXES | PHOTO_SUFFIXES))
+        # No .heic/.heif here: when the list leaves them out, an iPhone sends its photos as JPEG, which the
+        # photo reader can read. A HEIC file that still arrives gets a plain message from the server.
+        accept = ",".join(sorted(ALLOWED_SUFFIXES | (PHOTO_SUFFIXES - {".heic", ".heif"})))
+        from . import enclave
+        no_key = ""
+        if not enclave.api_key():
+            no_key = ('<p class="bad">The AI key isn\'t saved yet, so photos you upload now are kept but not '
+                      'read. Photos filed for someone else can then only be read by that person. '
+                      + ('<a href="/settings/key">Save the key first</a>.' if sess.person.admin
+                         else 'Ask the person who runs the box to save it.') + '</p>')
+        if not theirs and sess.person.admin and len(cfg.people) > 1:
+            for_others = ('<p class="muted">To file papers for someone else in the family, tick their folders on '
+                          'your card on the <a href="/family">Family page</a> first.</p>')
         body = (f'<h1>Upload files</h1>{note}{results}'
                 f'<form method="post" action="/upload" enctype="multipart/form-data" class="card">'
-                f'{_csrf_field(sess.csrf)}'
+                f'{_csrf_field(sess.csrf)}{no_key}'
                 f'<label for="folder">Where should they go?</label><select id="folder" name="folder">{opts}</select>'
                 f'{for_others}'
                 f'<label for="file">Pick files</label>'
@@ -1048,14 +1095,21 @@ def create_app(cfg: Config, *, port: int = 8443, remote_only: bool = False, box=
             _reindex(cfg)
         done = sum(1 for _, st, _ in results if st != "skipped")
         left = len(results) - done
+        from . import enclave
+        usable = not drop_off and any(st in ("saved", "photo") for _, st, _ in results)
         rows = "".join(f'<li><div class="name">{esc(n)}</div>'
                        f'<div class="{"bad" if st == "skipped" else "ok" if st != "later" else "muted"}">'
                        f'{esc(w)}</div></li>' for n, st, w in results)
         listing = f'<div class="card"><h2>What happened to each file</h2><ul class="files">{rows}</ul></div>'
         if done:
-            msg = (f"Uploaded {done} file{'s' if done != 1 else ''}"
-                   + (f", {left} left out" if left else "") + ". Your assistant can use "
-                   + ("it" if done == 1 else "them") + " now.")
+            msg = f"Uploaded {done} file{'s' if done != 1 else ''}" + (f", {left} left out" if left else "") + "."
+            if drop_off:
+                owner = cfg.people[access.owner_of(rel_folder + "/x")].display
+                msg += f" Filed for {owner}. Only {owner}'s assistant can use {'it' if done == 1 else 'them'}."
+            elif not enclave.api_key():
+                msg += " Save the AI key so your assistant can use " + ("it." if done == 1 else "them.")
+            elif usable:
+                msg += " Your assistant can use " + ("it" if done == 1 else "them") + " now."
         else:
             msg = "Nothing was uploaded. See why below."
         return upload_form(sess, msg, ok=bool(done), status=200 if done else 400, results=listing)

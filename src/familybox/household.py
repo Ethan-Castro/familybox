@@ -211,28 +211,20 @@ def grant_choices(cfg: Config, person_id: str) -> list[tuple[str, str]]:
     return out
 
 
-def set_also_reads(state: WebState, person_id: str, grants) -> Person:
-    """Replace what this person may also read. Each grant is people/<someone else>/<folder>, never health."""
-    cfg = state.cfg
-    with state._lock():
-        config.reload(cfg)
-        person = cfg.person(person_id)
-        allowed = {g for g, _ in grant_choices(cfg, person_id)}
-        clean = []
-        for g in grants:
-            g = str(g).strip().strip("/")
-            if g not in allowed:
-                raise HouseholdError("One of those folders can't be shared. Health folders stay private "
-                                     "to their owner.")
-            if g not in clean:
-                clean.append(g)
-        person = replace(person, also_reads=tuple(sorted(clean)))
-        _write(cfg, dict(cfg.people) | {person_id: person})
-    return person
+def _clean_grants(cfg: Config, person_id: str, grants) -> tuple[str, ...]:
+    allowed = {g for g, _ in grant_choices(cfg, person_id)}
+    clean = []
+    for g in grants:
+        g = str(g).strip().strip("/")
+        if g not in allowed:
+            raise HouseholdError("One of those folders can't be shared. Health folders stay private "
+                                 "to their owner.")
+        if g not in clean:
+            clean.append(g)
+    return tuple(sorted(clean))
 
 
-def set_never_share(state: WebState, person_id: str, words) -> Person:
-    cfg = state.cfg
+def _clean_words(words) -> tuple[str, ...]:
     clean: list[str] = []
     for w in words:
         w = " ".join("".join(ch for ch in str(w) if ch.isprintable()).split())
@@ -244,11 +236,42 @@ def set_never_share(state: WebState, person_id: str, words) -> Person:
             clean.append(w)
     if len(clean) > WORDS_MAX:
         raise HouseholdError(f"Up to {WORDS_MAX} words or phrases.")
+    return tuple(clean)
+
+
+def set_also_reads(state: WebState, person_id: str, grants) -> Person:
+    """Replace what this person may also read. Each grant is people/<someone else>/<folder>, never health."""
+    cfg = state.cfg
     with state._lock():
         config.reload(cfg)
-        person = replace(cfg.person(person_id), never_share=tuple(clean))
+        person = replace(cfg.person(person_id), also_reads=_clean_grants(cfg, person_id, grants))
         _write(cfg, dict(cfg.people) | {person_id: person})
     return person
+
+
+def set_never_share(state: WebState, person_id: str, words) -> Person:
+    cfg = state.cfg
+    clean = _clean_words(words)
+    with state._lock():
+        config.reload(cfg)
+        person = replace(cfg.person(person_id), never_share=clean)
+        _write(cfg, dict(cfg.people) | {person_id: person})
+    return person
+
+
+def set_access(state: WebState, person_id: str, grants, words) -> tuple[Person, bool]:
+    """What the Family page's Save does: both lists are checked first, then written once, so a refused
+    save changes nothing. Returns (person, whether anything changed)."""
+    cfg = state.cfg
+    clean_words = _clean_words(words)
+    with state._lock():
+        config.reload(cfg)
+        old = cfg.person(person_id)
+        person = replace(old, also_reads=_clean_grants(cfg, person_id, grants), never_share=clean_words)
+        changed = (person.also_reads, person.never_share) != (old.also_reads, old.never_share)
+        if changed:
+            _write(cfg, dict(cfg.people) | {person_id: person})
+    return person, changed
 
 
 def remove_person(state: WebState, person_id: str, by: str) -> Person:

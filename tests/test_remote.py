@@ -5,6 +5,7 @@ Everything runs in-process through httpx's ASGI transport against the box's real
 
 import base64
 import hashlib
+import html
 import json
 import re
 import secrets
@@ -923,3 +924,18 @@ async def test_linking_code_shows_the_public_address(cfg, monkeypatch):
         a = await page.get("/assistants")
         r = await c.post("/assistants/code", data={"csrf": field(a.text, "csrf")})
         assert r.status_code == 200 and '<div class="value">https://box.example.org/mcp</div>' in r.text
+
+
+@pytest.mark.anyio
+async def test_linking_code_without_a_public_address_doesnt_send_you_to_chatgpt(http, cfg):
+    page = await signed_in(http, cfg, "maya")
+    a = await page.get("/assistants")
+    assert "docs/REMOTE.md" not in a.text
+    r = await http.post("/assistants/code", data={"csrf": field(a.text, "csrf")})
+    text = html.unescape(r.text)
+    assert "In ChatGPT or Claude, add" not in text
+    assert "can't reach this box yet" in text and "In an app on this home network" in text
+    # a linking code is not an invite: it can't set a PIN on /join
+    code = re.search(r'<div class="value">([A-Z0-9]{4})-([A-Z0-9]{4})</div>', r.text)
+    pid, why = web.WebState(cfg).redeem(code.group(1) + code.group(2), kind="invite")
+    assert pid is None and why == "signin"

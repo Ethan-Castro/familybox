@@ -238,9 +238,9 @@ def web_routes(ctx):
             return (f'<p>In ChatGPT or Claude, add a custom connector with this address, then sign in with a '
                     f'code from the box:</p><div class="value">{esc(remote.resource_of(fixed))}</div>')
         return (f'<p>This box isn\'t on the internet yet, so ChatGPT and Claude on the web can\'t reach it. '
-                f'The person who runs the box can set that up with the steps in docs/REMOTE.md '
-                f'("Putting it on the internet").</p>'
-                f'<p class="muted">Apps on this home network can use this address now:</p>'
+                f'That needs an extra setup step that isn\'t done on this box yet.</p>'
+                f'<p class="muted">Apps on this home network, such as an assistant app on a computer at home, '
+                f'can use this address now:</p>'
                 f'<div class="value">{esc(remote.resource_of(base_of(request)))}</div>')
 
     def last_asked(person_id: str) -> dict:
@@ -331,11 +331,19 @@ def web_routes(ctx):
         from ..web import CODE_TTL_S, _audit
         _audit(cfg, sess.person.id, {"event": "linking_code_issued", "by": "web", "expires_in_s": CODE_TTL_S})
         address = remote.resource_of(fixed or base_of(request))
+        if fixed:
+            where = "In ChatGPT or Claude, add a custom connector with this address:"
+            reach = ""
+        else:
+            # No public address: a cloud assistant can't reach this box, so don't send anyone there.
+            where = "In an app on this home network, add a custom connector with this address:"
+            reach = ('<p class="muted">ChatGPT and Claude on the web can\'t reach this box yet, because it isn\'t '
+                     'on the internet. Use an app on a computer or phone on the home Wi-Fi.</p>')
         extra = (f'<div class="card"><h2>Your linking code</h2>'
                  f'<div class="value">{esc(code[:4])}-{esc(code[4:])}</div>'
                  f'<p class="muted">It works once and lasts 10 minutes. It links an assistant to you, '
-                 f'{esc(sess.person.display)}, so don\'t share it. It won\'t be shown again.</p>'
-                 f'<ol><li>In ChatGPT or Claude, add a custom connector with this address:'
+                 f'{esc(sess.person.display)}, so don\'t share it. It won\'t be shown again.</p>{reach}'
+                 f'<ol><li>{where}'
                  f'<div class="value">{esc(address)}</div></li>'
                  f'<li>The assistant opens a page from this box. Type the code there.</li>'
                  f'<li>Check the name it shows, then choose "Yes, link it".</li></ol></div>')

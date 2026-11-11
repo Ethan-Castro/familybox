@@ -1,5 +1,6 @@
 """First-time setup, PINs, the Family page and invites (Block A). No network, temp homes only."""
 
+import html
 import json
 import os
 import re
@@ -541,7 +542,11 @@ def test_check_failure_shows_only_a_short_reason(cfg, no_key, monkeypatch):
     assert FAKE_KEY not in json.dumps(audit(cfg, "dana"))
     fake_check(monkeypatch, {"ok": False, "model": cfg.model, "error": "invalid_api_key"})
     r = cl.post("/settings/key/check", data={"csrf": token})
-    assert "(reason: invalid_api_key)" in r.text
+    assert "NEAR didn't accept the key" in html.unescape(r.text) and "reason:" not in r.text   # plain words, not the code
+    fake_check(monkeypatch, {"ok": False, "model": cfg.model, "error": "timeout"})
+    r = cl.post("/settings/key/check", data={"csrf": token})
+    assert "couldn't reach NEAR in time" in html.unescape(r.text)
+    assert "cloud.near.ai" in r.text                                   # where to get a key
     assert "Last AI check: <span class=\"bad\">failed</span>" in cl.get("/status").text
 
 
@@ -847,3 +852,164 @@ def test_serve_prints_the_setup_address_only_for_a_new_box(empty, cfg):
     assert "https://127.0.0.1:8443/setup" in "\n".join(web.setup_lines(empty, lan=False, port=8443))
     assert all("—" not in line for line in lan)
     assert web.setup_lines(cfg, lan=True, port=8443) == []
+
+
+# --- review fixes: invites only set a first PIN; reset reopens the shared index ---------------------
+
+def test_a_sign_in_or_linking_code_can_never_replace_a_pin_on_join(cfg):
+    st = web.WebState(cfg)
+    household.set_pin(st, "maya", "135792")
+    maya, token = sign_in(cfg, "maya")
+    r = maya.post("/assistants/code", data={"csrf": token})
+    code = re.search(r'<div class="value">([A-Z0-9]{4})-([A-Z0-9]{4})</div>', r.text)
+    code = code.group(1) + code.group(2)
+    r = join(maya, code, pin="864209")
+    assert r.status_code == 401 and "sign-in code" in r.text
+    assert household.check_pin(st, "maya", "135792") == (True, None)
+    assert household.check_pin(st, "maya", "864209")[0] is False
+    household.check_pin(st, "maya", "135792")          # clear the wrong try above
+    # a CLI code doesn't work on /join either
+    assert join(client(cfg), web.issue_code(cfg, "maya"), pin="864209").status_code == 401
+    # even an invite (made before the PIN, say) can't replace a PIN that exists now
+    inv = st.issue_code("maya", ttl=web.INVITE_TTL_S, kind="invite")
+    r = join(client(cfg), inv, pin="864209")
+    assert r.status_code == 409 and "already have a PIN" in r.text
+    assert household.check_pin(st, "maya", "135792") == (True, None)
+
+
+def test_admin_cannot_invite_someone_who_already_has_a_pin(cfg):
+    st = web.WebState(cfg)
+    household.set_pin(st, "dana", PIN)
+    household.set_pin(st, "maya", "135792")
+    dana, token = sign_in(cfg, "dana")
+    page = dana.get("/family").text
+    assert 'value="maya"><button class="main quiet" type="submit">Invite Maya' not in page
+    assert "Maya has joined and picked a PIN" in page and "Invite Sam with a QR code" in page
+    for who in ("maya", "dana"):                      # not someone else, not yourself
+        r = dana.post("/family/invite", data={"person": who, "csrf": token})
+        assert r.status_code == 409 and "<svg" not in r.text, who
+    assert household.check_pin(st, "maya", "135792") == (True, None)
+    assert household.check_pin(st, "dana", PIN) == (True, None)
+    # an invite for someone without a PIN is written to their log too
+    invite(dana, token, "sam")
+    ev = audit(cfg, "sam")[-1]
+    assert ev["event"] == "invite_issued" and ev["by"] == "dana"
+
+
+def test_an_invite_typed_on_sign_in_goes_to_join_and_signs_nobody_in(cfg):
+    dana, token = sign_in(cfg, "dana")
+    r, code = invite(dana, token, "maya")
+    assert "/join</span> and type this code" in r.text and "sign-in page and type" not in r.text
+    assert "not private" in r.text                    # the certificate warning is explained
+    phone = client(cfg)
+    r = phone.post("/signin", data={"code": code, "csrf": csrf(phone.get("/signin"))}, follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"] == f"/join?c={code}"
+    assert phone.get("/", follow_redirects=False).status_code == 303          # not signed in
+    assert join(phone, code).status_code == 303                                # the invite is still good
+    assert household.check_pin(web.WebState(cfg), "maya", PIN) == (True, None)
+
+
+def test_change_my_pin_needs_the_current_pin(cfg):
+    st = web.WebState(cfg)
+    household.set_pin(st, "maya", "135792")
+    maya, token = sign_in(cfg, "maya")
+    assert 'href="/settings/pin"' in maya.get("/status").text
+    page = maya.get("/settings/pin")
+    assert page.status_code == 200 and "style=" not in page.text and "<script" not in page.text
+    assert maya.post("/settings/pin", data={"current": "135792", "pin": "864209", "pin2": "864209"}).status_code == 403
+    r = maya.post("/settings/pin", data={"csrf": token, "current": "999999", "pin": "864209", "pin2": "864209"})
+    assert r.status_code == 401 and household.check_pin(st, "maya", "135792") == (True, None)
+    r = maya.post("/settings/pin", data={"csrf": token, "current": "135792", "pin": "864209", "pin2": "864209"})
+    assert r.status_code == 200 and household.check_pin(st, "maya", "864209") == (True, None)
+    assert "864209" not in r.text and "864209" not in json.dumps(audit(cfg, "maya"))
+    assert audit(cfg, "maya")[-1]["event"] == "pin_changed"
+    sam, stok = sign_in(cfg, "sam")                     # no PIN yet: nothing to change, invite instead
+    assert sam.post("/settings/pin", data={"csrf": stok, "current": "", "pin": "864209",
+                                           "pin2": "864209"}).status_code == 400
+    assert not household.has_pin(st, "sam")
+    assert "/settings/pin" not in remote.REMOTE_PATHS
+
+
+def test_a_refused_family_save_changes_nothing(cfg):
+    cl, token = sign_in(cfg, "dana")
+    cl.post("/family/access", data={"person": "sam", "grant": ["people/maya/ids"], "csrf": token})
+    before = cfg.person("sam").also_reads
+    assert before == ("people/maya/ids",)
+    n = len(audit(cfg, "dana"))
+    r = cl.post("/family/access", data={"person": "sam", "never_share": "x" * (household.WORD_MAX + 1),
+                                        "csrf": token})
+    assert r.status_code == 400 and "Nothing was saved" in r.text
+    assert cfg.person("sam").also_reads == before
+    assert config.load(cfg.home).person("sam").also_reads == before
+    assert len(audit(cfg, "dana")) == n
+
+
+def test_adding_a_person_says_how_to_file_their_papers(cfg, no_key):
+    cl, token = sign_in(cfg, "dana")
+    r = cl.post("/family/add", data={"name": "Kim", "csrf": token})
+    assert "To file Kim's papers yourself, tick their folders" in html.unescape(r.text)
+    # no grants yet, so the upload page points to the Family page
+    household.set_also_reads(web.WebState(cfg), "dana", [])
+    up = cl.get("/upload").text
+    assert 'tick their folders on your card on the <a href="/family">Family page</a>' in up
+
+
+def test_upload_page_warns_before_photos_without_a_key_and_key_comes_first(cfg, no_key):
+    dana, token = sign_in(cfg, "dana")
+    up = dana.get("/upload").text
+    assert "The AI key isn't saved yet" in html.unescape(up) and 'href="/settings/key"' in up
+    assert ".heic" not in re.search(r'accept="([^"]*)"', up).group(1)
+    home = dana.get("/").text
+    assert home.index("Save the AI key") < home.index("Add your papers")
+    # nothing about "your assistant can use them now" while there is no key
+    r = dana.post("/upload", data={"folder": "ids", "csrf": token}, files={"file": ("a.txt", b"hello")})
+    assert r.status_code == 200 and "can use it now" not in r.text and "Save the AI key" in r.text
+
+
+def test_drop_off_upload_doesnt_say_your_assistant_can_use_it(cfg, monkeypatch):
+    monkeypatch.setenv("NEAR_AI_CLOUD_API_KEY", "test-key-not-real-0123456789")
+    st = web.WebState(cfg)
+    household.set_also_reads(st, "dana", ["people/maya/ids"])
+    dana, token = sign_in(cfg, "dana")
+    r = dana.post("/upload", data={"folder": "people/maya/health", "csrf": token},
+                  files={"file": ("note.txt", b"checkup")})
+    assert r.status_code == 200 and "Filed for Maya" in r.text and "Your assistant can use" not in r.text
+    r = dana.post("/upload", data={"folder": "ids", "csrf": token}, files={"file": ("b.txt", b"mine")})
+    assert "Your assistant can use it now" in r.text
+
+
+def test_reset_reopens_the_shared_index_for_the_new_family(empty, monkeypatch):
+    from familybox.box import Box
+    for k in config.KEY_ENV:
+        monkeypatch.setenv(k, "x")
+        monkeypatch.delenv(k)
+    shared: list = []
+
+    def box():
+        if not shared:
+            shared.append(Box(empty, mode="replay"))
+        return shared[0]
+
+    cl = TestClient(web.create_app(empty, box=box), base_url="https://testserver")
+    r = cl.post("/setup", data={"family": "The Okafor family", "name": "Dana", "pin": PIN, "pin2": PIN,
+                                "csrf": csrf(cl.get("/setup"))}, follow_redirects=False)
+    assert r.status_code == 303
+    token = csrf(cl.get("/"))
+    cl.post("/upload", data={"folder": "shared", "csrf": token},
+            files={"file": ("old.txt", b"Zebracorn SSN 123-45-6789")})
+    b = box()                                          # the shared box is open before the reset
+    assert any(s.value == "123456789" for s in b.store.sensitive_values())
+    r = cl.post("/reset", data={"csrf": token, "family": "The Okafor family", "pin": PIN}, follow_redirects=False)
+    assert r.status_code == 303
+    cl2 = TestClient(web.create_app(empty, box=box), base_url="https://testserver")
+    r = cl2.post("/setup", data={"family": "The Lee family", "name": "Jo", "pin": PIN, "pin2": PIN,
+                                 "csrf": csrf(cl2.get("/setup"))}, follow_redirects=False)
+    assert r.status_code == 303
+    t2 = csrf(cl2.get("/"))
+    cl2.post("/upload", data={"folder": "shared", "csrf": t2},
+             files={"file": ("new.txt", b"New family SSN 987-65-4321")})
+    values = {s.value for s in b.store.sensitive_values()}
+    assert "987654321" in values and "123456789" not in values
+    paths = [h.get("path") for h in b.store.search(empty.person("jo"), "New family")]
+    assert "shared/new.txt" in paths
+    assert not b.store.search(empty.person("jo"), "Zebracorn")

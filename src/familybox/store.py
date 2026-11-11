@@ -163,15 +163,25 @@ class _LockedDB:
 class Store:
     def __init__(self, cfg: Config):
         self.cfg = cfg
-        cfg.runtime.mkdir(parents=True, exist_ok=True)
-        self.db = _LockedDB(cfg.runtime / "index.sqlite3")
-        self.db.executescript(
+        self.db = self._open()
+
+    def _open(self) -> _LockedDB:
+        self.cfg.runtime.mkdir(parents=True, exist_ok=True)
+        db = _LockedDB(self.cfg.runtime / "index.sqlite3")
+        db.executescript(
             """
             CREATE VIRTUAL TABLE IF NOT EXISTS docs USING fts5(path UNINDEXED, owner UNINDEXED, body);
             CREATE TABLE IF NOT EXISTS sensitive(value TEXT, kind TEXT, label TEXT, path TEXT, owner TEXT);
             CREATE TABLE IF NOT EXISTS meta(path TEXT PRIMARY KEY, mtime REAL);
             """
         )
+        return db
+
+    def reopen(self) -> None:
+        """Close the index and open runtime/index.sqlite3 again. A reset deletes that file while a shared
+        Store still holds it open; without this, the running box would keep searching the deleted one."""
+        old, self.db = self.db, self._open()
+        old.close()
 
     def files(self) -> list[Path]:
         return sorted(p for p in self.cfg.files.rglob("*")

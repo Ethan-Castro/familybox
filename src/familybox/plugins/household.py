@@ -3,7 +3,8 @@
   /setup            first visit to a new box: family name, your name and a PIN (15 minute window)
   /family           people, what each may also read, words never to share, invite, remove (admin only)
   /family/invite    a one-time invite: code, link and QR, good for 30 minutes
-  /join             someone invited opens the link, sets their own PIN and is signed in
+  /join             someone invited opens the link, sets their first PIN and is signed in
+  /settings/pin     change your own PIN; needs the PIN you have now
   /settings/key     paste the NEAR AI key once and check it (admin only); the key is never shown again
   /status           the box in plain words: AI key, last check, files, approvals, assistants, disk
   /reset            wipe the box back to new, with your PIN and the family name typed out (admin only)
@@ -34,6 +35,27 @@ KEY_MIN, KEY_MAX = 16, 512
 KEY_CHECK_FILE = "key_check.json"     # in <runtime>/web: time and result of the last key check, never the key
 KEY_CHECK_TIMEOUT_S = 60
 _REASON = re.compile(r"[A-Za-z0-9_.-]{1,40}")
+KEY_WHERE = "https://cloud.near.ai/dashboard/organizations"
+CERT_NOTE = ("The first time, the phone warns that the connection is not private. That is expected for "
+             "the family box, because it lives at home and not on the internet. Choose to continue (on an "
+             "iPhone: Show Details, then visit this website).")
+# Why the last key check failed, in plain words. Any other code gets the general sentence.
+REASON_WORDS = {
+    "timeout": "The box couldn't reach NEAR in time. Check that the box is online, then try again.",
+    "no_model_reports": "NEAR didn't send its proof that the AI is sealed. Try again in a few minutes.",
+    "invalid_api_key": "NEAR didn't accept the key. Copy it again from your NEAR AI account and save it.",
+}
+
+
+def reason_words(why: str) -> str:
+    low = why.lower()
+    if why in REASON_WORDS:
+        return REASON_WORDS[why]
+    if any(w in low for w in ("key", "auth", "401", "403")):
+        return REASON_WORDS["invalid_api_key"]
+    if "timeout" in low or "connect" in low:
+        return REASON_WORDS["timeout"]
+    return "Check that the key is right and that the box is online, then try again."
 
 
 def web_nav():
@@ -163,6 +185,14 @@ def web_routes(ctx):
         return signed_in(state, person.id)
 
     # ---- the Family page
+    def invite_form(sess, p) -> str:
+        if household.has_pin(state, p.id):
+            return (f'<p class="muted">{esc(p.display)} has joined and picked a PIN. Only they can change it, '
+                    f'so nobody else can sign in as them.</p>')
+        return (f'<form method="post" action="/family/invite">{csrf(sess.csrf)}'
+                f'<input type="hidden" name="person" value="{esc(p.id)}">'
+                f'<button class="main quiet" type="submit">Invite {esc(p.display)} with a QR code</button></form>')
+
     def family_page(sess, msg: str = "", ok: bool = True, extra: str = "", status: int = 200) -> Response:
         cards = []
         for p in sorted(cfg.people.values(), key=lambda p: (not p.admin, p.display.lower())):
@@ -195,10 +225,7 @@ def web_routes(ctx):
                 f'<textarea id="words-{esc(p.id)}" name="never_share" rows="3">{esc(words)}</textarea>'
                 f'<p class="muted">One word or phrase per line, for example the name of a doctor.</p>'
                 f'<button class="main" type="submit">Save</button></form>'
-                f'<form method="post" action="/family/invite">{csrf(sess.csrf)}'
-                f'<input type="hidden" name="person" value="{esc(p.id)}">'
-                f'<button class="main quiet" type="submit">Invite {esc(p.display)} with a QR code</button></form>'
-                f'{remove}</div>')
+                f'{invite_form(sess, p)}{remove}</div>')
         unowned = household.unowned_folders(cfg)
         left = ""
         if unowned:
@@ -210,7 +237,8 @@ def web_routes(ctx):
                 f'<form method="post" action="/family/add" class="card">{csrf(sess.csrf)}<h2>Add a person</h2>'
                 f'<label for="new-name">Name</label>'
                 f'<input type="text" id="new-name" name="name" maxlength="{household.NAME_MAX}" required>'
-                f'<p class="muted">They get their own folders. Then invite them so they can set their own PIN.</p>'
+                f'<p class="muted">They get their own folders. To file papers for them, tick their folders on '
+                f'your own card. Invite them when they are ready to pick their own PIN.</p>'
                 f'<button class="main" type="submit">Add</button></form>'
                 f'{"".join(cards)}{left}')
         return ctx.page(sess, "Family", body, "/family", status)
@@ -244,7 +272,10 @@ def web_routes(ctx):
         except HouseholdError as e:
             return family_page(sess, str(e), False, status=400)
         _audit(cfg, sess.person.id, {"event": "person_added", "person": person.id})
-        return family_page(sess, f"Added {person.display}. Invite them so they can set their own PIN.")
+        me = sess.person.display
+        return family_page(sess, f"Added {person.display}. To file {person.display}'s papers yourself, tick "
+                                 f"their folders under \"{me} can also read\" on your card below, then use the "
+                                 f"Upload page. Invite {person.display} when they are ready to pick their own PIN.")
 
     async def family_access(request: Request):
         got = await admin_form(request)
@@ -255,11 +286,10 @@ def web_routes(ctx):
         if pid is None:
             return family_page(sess, "That person isn't in the family.", False, status=404)
         try:
-            person = household.set_also_reads(state, pid, form.getlist("grant"))
-            words = str(form.get("never_share", "")).splitlines()
-            person = household.set_never_share(state, pid, words)
+            person, _ = household.set_access(state, pid, form.getlist("grant"),
+                                             str(form.get("never_share", "")).splitlines())
         except HouseholdError as e:
-            return family_page(sess, str(e), False, status=400)
+            return family_page(sess, f"{e} Nothing was saved.", False, status=400)
         # The folders granted are written to the log; the never-share words are not (only how many).
         _audit(cfg, sess.person.id, {"event": "access_changed", "person": pid,
                                      "also_reads": list(person.also_reads),
@@ -292,15 +322,26 @@ def web_routes(ctx):
         pid = target(form)
         if pid is None:
             return family_page(sess, "That person isn't in the family.", False, status=404)
-        code = state.issue_code(pid, ttl=INVITE_TTL_S)
-        link = f"https://{request.url.netloc}/join?c={code}"
         who = cfg.people[pid].display
+        if household.has_pin(state, pid):
+            # An invite sets a first PIN. Someone who already has one changes it themselves, with that PIN,
+            # so nobody (not even the person who runs the box) can take over their folders.
+            return family_page(sess, f"{who} has already joined and picked a PIN, so no invite is needed. "
+                                     f"Only {who} can change their PIN.", False, status=409)
+        code = state.issue_code(pid, ttl=INVITE_TTL_S, kind="invite")
+        host = request.url.netloc
+        link = f"https://{host}/join?c={code}"
         _audit(cfg, sess.person.id, {"event": "invite_issued", "person": pid, "expires_in_s": INVITE_TTL_S})
+        if pid != sess.person.id:
+            _audit(cfg, pid, {"event": "invite_issued", "person": pid, "by": sess.person.id,
+                              "expires_in_s": INVITE_TTL_S})
         extra = (f'<div class="card"><h2>Invite for {esc(who)}</h2>'
                  f'<p>On {esc(who)}\'s phone, on the home Wi-Fi, scan this code with the camera.</p>'
                  f'<div class="qr">{_qr_svg(link)}</div>'
                  f'<p>Or open this link: <span class="name">{esc(link)}</span></p>'
-                 f'<p>Or go to the sign-in page and type this code:</p><div class="value">{esc(code)}</div>'
+                 f'<p>Or open <span class="name">https://{esc(host)}/join</span> and type this code:</p>'
+                 f'<div class="value">{esc(code)}</div>'
+                 f'<p class="muted">{esc(CERT_NOTE)}</p>'
                  f'<p class="muted">It works once and lasts 30 minutes. {esc(who)} then picks their own PIN.</p></div>')
         return family_page(sess, extra=extra)
 
@@ -319,7 +360,9 @@ def web_routes(ctx):
                 f'<input type="password" id="pin2" name="pin2" inputmode="numeric" maxlength="{household.PIN_MAX}"'
                 f' autocomplete="new-password" required>'
                 f'<p class="muted">{household.PIN_MIN} to {household.PIN_MAX} numbers. Only you should know it.</p>'
-                f'<button class="main" type="submit">Join</button></form>')
+                f'<button class="main" type="submit">Join</button></form>'
+                f'<p class="muted">Already have a PIN? <a href="/signin">Sign in</a> instead. You can change your PIN '
+                f'after you sign in.</p>')
         return set_pre_cookie(_page(cfg, "Join", body, status=status), pre)
 
     async def join_get(request: Request):
@@ -341,15 +384,73 @@ def web_routes(ctx):
         why = household.pin_problem(pin)
         if why:
             return join_page(keep, why, 400)
-        pid, reason = state.redeem(code)
+        pid, reason = state.redeem(code, kind="invite")
         if pid is None:
-            msg = ("Too many wrong codes. Wait 10 minutes, then try again." if reason == "locked"
-                   else "That invite didn't work. It may have been used or be more than 30 minutes old. "
-                        "Ask for a new one.")
+            if reason == "locked":
+                msg = "Too many wrong codes. Wait 10 minutes, then try again."
+            elif reason == "signin":
+                msg = "That is a sign-in code, not an invite. Use it on the sign-in page."
+            else:
+                msg = ("That invite didn't work. It may have been used or be more than 30 minutes old. "
+                       "Ask for a new one.")
             return join_page("", msg, 429 if reason == "locked" else 401)
+        if household.has_pin(state, pid):
+            # Never replace a PIN through an invite: changing one needs the PIN itself (/settings/pin).
+            _audit(cfg, pid, {"event": "join_refused", "person": pid, "reason": "has_pin"})
+            return join_page("", "You already have a PIN, so this invite can't be used. Sign in with your PIN. "
+                                 "To change it, sign in and choose Change my PIN on the Box status page.", 409)
         household.set_pin(state, pid, pin)
         _audit(cfg, pid, {"event": "joined", "person": pid})
         return signed_in(state, pid)
+
+    # ---- changing your own PIN
+    def pin_page(sess, msg: str = "", ok: bool = False, status: int = 200) -> Response:
+        if not household.has_pin(state, sess.person.id):
+            form = ('<p>You don\'t have a PIN yet. Ask the person who runs the box for an invite, and pick your '
+                    'PIN when you open it.</p>')
+        else:
+            form = (f'<form method="post" action="/settings/pin">{csrf(sess.csrf)}'
+                    f'<label for="current">Your PIN now</label>'
+                    f'<input type="password" id="current" name="current" inputmode="numeric"'
+                    f' maxlength="{household.PIN_MAX}" autocomplete="current-password" required>'
+                    f'<label for="pin">New PIN</label>'
+                    f'<input type="password" id="pin" name="pin" inputmode="numeric" maxlength="{household.PIN_MAX}"'
+                    f' autocomplete="new-password" required>'
+                    f'<label for="pin2">Type the new PIN again</label>'
+                    f'<input type="password" id="pin2" name="pin2" inputmode="numeric" maxlength="{household.PIN_MAX}"'
+                    f' autocomplete="new-password" required>'
+                    f'<p class="muted">{household.PIN_MIN} to {household.PIN_MAX} numbers. Only you should know it.'
+                    f'</p><button class="main" type="submit">Change my PIN</button></form>')
+        body = (f'<h1>Change my PIN</h1>{note(msg, ok)}<div class="card">{form}</div>'
+                f'<p><a href="/status">Back to box status</a></p>')
+        return ctx.page(sess, "Change my PIN", body, "/settings/pin", status)
+
+    @ctx.need_signin
+    async def pin_get(request: Request, sess):
+        return pin_page(sess)
+
+    async def pin_post(request: Request):
+        got = await ctx.guarded_form(request, max_files=0, max_fields=6, max_part_size=1024)
+        if isinstance(got, Response):
+            return got
+        sess, form = got
+        pid = sess.person.id
+        if not household.has_pin(state, pid):
+            return pin_page(sess, "You don't have a PIN yet.", status=400)
+        pin = str(form.get("pin", ""))
+        if pin != str(form.get("pin2", "")):
+            return pin_page(sess, "The two new PINs don't match. Your PIN wasn't changed.", status=400)
+        why = household.pin_problem(pin)
+        if why:
+            return pin_page(sess, why, status=400)
+        ok, why = household.check_pin(state, pid, str(form.get("current", "")))
+        if not ok:
+            msg = ("Too many wrong PINs. Wait 10 minutes, then try again." if why == "locked"
+                   else "Your PIN now didn't match. Your PIN wasn't changed.")
+            return pin_page(sess, msg, status=429 if why == "locked" else 401)
+        household.set_pin(state, pid, pin)
+        _audit(cfg, pid, {"event": "pin_changed", "person": pid})
+        return pin_page(sess, "Your PIN is changed. Use the new one from now on.", ok=True)
 
     # ---- the AI key
     def last_check() -> dict:
@@ -366,9 +467,8 @@ def web_routes(ctx):
         why = last.get("reason", "other")
         if why == "no_key":
             return f'<p class="bad">Last check, {when}: no key was saved.</p>'
-        hint = "" if why == "other" else f' (reason: {esc(why)})'
-        return (f'<p class="bad">Last check failed, {when}{hint}. Check that the key is right and that the box '
-                f'is online, then try again.</p>')
+        return f'<p class="bad">Last check failed, {when}. {esc(reason_words(why))}</p>'
+
 
     def key_page(sess, msg: str = "", ok: bool = True, status: int = 200) -> Response:
         saved = bool(enclave.api_key())
@@ -388,7 +488,9 @@ def web_routes(ctx):
                 f'<label for="key">NEAR AI key</label>'
                 f'<input type="password" id="key" name="key" maxlength="{KEY_MAX}" autocomplete="off"'
                 f' spellcheck="false" autocapitalize="off" required>'
-                f'<p class="muted">Copy it from your NEAR AI account and paste it here once. It stays on this box.'
+                f'<p class="muted">To get one, sign in to your NEAR AI Cloud account at '
+                f'<span class="name">{esc(KEY_WHERE)}</span>, make an API key there, copy it and paste '
+                f'it here once. It stays on this box.'
                 f'</p><button class="main" type="submit">Save the key</button></form>{check}'
                 f'<p><a href="/status">Box status</a></p>')
         return ctx.page(sess, "AI key", body, "/settings/key", status)
@@ -503,8 +605,9 @@ def web_routes(ctx):
                         f'{" (running low)" if low else ""}</li>')
         except OSError:
             rows.append('<li>Free space: unknown</li>')
-        links = ('<p><a href="/settings/key">AI key</a> &middot; <a href="/reset">Start over</a></p>'
-                 if person.admin else "")
+        links = ('<p><a href="/settings/pin">Change my PIN</a>'
+                 + (' &middot; <a href="/settings/key">AI key</a> &middot; <a href="/reset">Start over</a>'
+                    if person.admin else "") + '</p>')
         body = (f'<h1>Box status</h1><div class="card"><ul class="files">{"".join(rows)}</ul></div>{links}')
         return ctx.page(sess, "Status", body, "/status")
 
@@ -557,9 +660,12 @@ def web_routes(ctx):
             household.reset_box(state)
         except HouseholdError as e:
             return reset_page(sess, str(e), 409)
-        # Shared search index: clear it now, so nothing from before the reset can come up in an answer.
+        # Shared search index: the reset deleted its file, so open it again and rebuild it now. Otherwise the
+        # running box would keep the old family's index (and miss every new family's ID number).
         try:
-            ctx.box().store.reindex()
+            store = ctx.box().store
+            store.reopen()
+            store.reindex()
         except Exception:  # noqa: BLE001 - the files are gone either way; a fresh index is built on restart
             pass
         resp = RedirectResponse("/setup", status_code=303)
@@ -576,6 +682,8 @@ def web_routes(ctx):
         Route("/family/invite", family_invite, methods=["POST"]),
         Route("/join", join_get, methods=["GET"]),
         Route("/join", join_post, methods=["POST"]),
+        Route("/settings/pin", pin_get, methods=["GET"]),
+        Route("/settings/pin", pin_post, methods=["POST"]),
         Route("/settings/key", key_get, methods=["GET"]),
         Route("/settings/key", key_post, methods=["POST"]),
         Route("/settings/key/check", key_check, methods=["POST"]),
