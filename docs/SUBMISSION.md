@@ -7,7 +7,7 @@ without Ethan's yes. The real payload is never committed (it holds personal data
 
 - [x] Final attack report numbers in README, DEMO_SCRIPT and the X post (five runs, show the range)
 - [x] Pi run on the merged build: 691 passed, 2 skipped, sandbox tests included, workbench ready (2026-11-09)
-- [ ] Box service and terminal-free setup on the Pi (`scripts/pi_service.sh` through fleet exec; Pi unreachable on 2026-11-11)
+- [x] Box service on the Pi (`scripts/pi_service.sh` through fleet exec, linger on, 792 passed there, 2026-11-11). The demo family was loaded directly; the setup page has not been run on the Pi yet
 - [ ] Ethan's phone run on the Pi: setup, invite by QR, upload, paste the NEAR key on the AI key page, approve a held number
 - [ ] Live answers on the Pi (needs the NEAR key on the board; Ethan pastes it on the box page)
 - [x] Clean-install check from a fresh clone, following the README word for word, replay mode, no key (2026-11-09: 675 passed, 17 skipped)

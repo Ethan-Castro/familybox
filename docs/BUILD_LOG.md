@@ -490,3 +490,41 @@ without changing a system security setting. Not changed. Documented in docs/WORK
   39 were box 2, no gate 14, open 17; without reworded hints 0, 6, 9. Normal questions 8/8 in each. 4 errors
   (1 in the box arm), nothing sent for those. Both box leaks are reworded hints about the asker's own record
   (pa3 Maya, pa8 Dana's poem: sleep, steady, someone listened).
+
+## 2026-11-11, later: the box on the real Pi, a browser bug, and the ChatGPT-style page
+
+- Fleet reachable again at 16:17 Pi time (both addresses answered 401, so only the token was missing from the
+  check). Pushed and installed through fleet exec: 792 passed, 2 skipped on the Pi, sandbox ready.
+- Linger was off, so the user service could not run. At Ethan's request I ran
+  `sudo -n loginctl enable-linger offlinebase` through fleet exec, then `scripts/pi_service.sh`.
+  `familybox.service` is enabled and active and survives a reboot. `avahi-publish` is not on the board, so
+  `familybox.local` is not published; the address is `https://decision-tree.local:8443`.
+- Mistake: my first restart used `pkill -f "familybox serve"`, which matched its own command line and killed
+  the job before the new box started. The box was down for about a minute. Restarts now use a pattern that
+  cannot match itself, or `systemctl --user restart`.
+- Ethan asked me to set the box up for him. I loaded the fictional Okafor family straight into
+  `~/familybox-home` (family.toml, 13 demo files, 2 forms, index) and set a test PIN per person. The PINs were
+  made on the laptop and only their scrypt hashes went to the Pi. The PINs are in `docs/private/` (untracked).
+  The setup page itself was not used on the Pi; it is covered by the laptop run and the tests.
+- **Bug found by Ethan's first sign-in: every form failed in a real browser with "Not allowed".** The page sent
+  `Referrer-Policy: no-referrer`, and with that policy browsers send `Origin: null` on form posts. The box
+  refuses `null`. The tests and my curl checks never sent that header, so 777 tests passed on a page no browser
+  could use. Fix: `same-origin` on the box page and the red-team page (e1eb393), plus a test that sends a
+  browser's headers. Confirmed in headless Chrome over CDP: the old commit shows "Not allowed" on sign-in, the
+  new one signs in, adds a person and uploads a file. Also confirmed against the Pi with a wrong PIN ("That
+  PIN didn't work", not "Not allowed"). Lesson: form flows need one real-browser pass, not only the test client.
+- Also fixed: a sign-in, setup or join form from an out-of-date tab now gets a fresh form with a plain message
+  (7126955). Other sites still get the plain refusal.
+- NEAR key on the Pi: Ethan lifted the "he pastes it himself" rule for the demo. I did not type it into the
+  key page. The Pi made a one-time RSA key, the laptop encrypted the key to it, the Pi decrypted it into
+  `runtime/secrets/near_api_key` (0600) and deleted the RSA key. The plain key is in no command, log or job
+  history. `familybox verify` on the Pi: gateway verified, 1 model report verified.
+- Box page restyled after the ChatGPT app and OpenAI's developer-site style (b4a883e): a side menu (everyday
+  pages first, the rest under "Box settings"), a question box on the home screen that posts to the Activity
+  plugin, and each question shown as a chat (question bubble, checked answer, then the live steps). System
+  fonts only, no scripts beyond the Activity page's own, CSP unchanged. Checked in headless Chrome with the
+  demo family and a replayed answer: no console errors.
+- Public site (familybox-five.vercel.app): the hero is now a chat screen (one line and a centered composer;
+  on send the composer slides down and the chat fills the screen). "How it works" has a four-step animation of
+  one question. A nine-step version is in `docs/how-it-works-animation.html`. The results line says five runs.
+
