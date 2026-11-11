@@ -1,0 +1,18 @@
+# Optional: publish the friendly name familybox.local on the home network, so a phone can open
+# https://familybox.local:8443 instead of the board's own name. Needs avahi-publish (avahi-utils)
+# and a running avahi-daemon. If avahi-publish is missing the wrapper says so and exits cleanly.
+# Installed by scripts/pi_service.sh only when avahi-publish exists.
+[Unit]
+Description=familybox friendly name (familybox.local)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+ExecStart=/bin/sh %h/familybox/deploy/familybox-mdns.sh
+Restart=on-failure
+RestartSec=30
+
+[Install]
+WantedBy=default.target

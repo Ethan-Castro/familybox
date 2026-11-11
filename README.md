@@ -55,6 +55,26 @@ uv run familybox serve                    # https://127.0.0.1:8443 (on the Pi: -
 
 The page lets each person upload into their own folders (or `shared/`), see their files, and approve or deny held values. Uploads never leave the box. The page loads no outside scripts, fonts or analytics. Google Drive import and encrypted backup are in [docs/CLOUD.md](docs/CLOUD.md).
 
+### Set up a new box without a terminal
+
+Someone who knows the Pi does this once, from a copy of this repo at `~/familybox`:
+
+```bash
+bash scripts/pi_install.sh                # installs uv and the box's Python packages, runs the tests
+bash scripts/pi_service.sh                # starts the box on its own after every power-on
+```
+
+`pi_service.sh` makes an empty `~/familybox-home`, installs `deploy/familybox.service` as a user service (no root), and, if `avahi-publish` is on the board, `deploy/familybox-mdns.service` to publish the name `familybox.local`. It never changes other services or the board's name. If the box should also start when nobody is signed in to the board, it prints the one admin command to run (`sudo loginctl enable-linger <user>`); it does not run it.
+
+After that, the family needs no terminal:
+
+1. Plug the box into the router and into power.
+2. On a phone or computer on the same Wi-Fi, open `https://familybox.local:8443` (or `https://<board name>.local:8443` if the friendly name is not published). The browser warns once because the box made its own certificate; accept it.
+3. On the setup page, type the family name, your name and a PIN. Setup stays open for 15 minutes after the box starts. If it closes, unplug the box and plug it back in.
+4. Upload papers from the box's page, and invite each family member from the Family page with a QR code.
+
+If the box's address on the home network changes, restart it so `familybox.local` points to the new address. A box whose certificate was made before `familybox.local` was added keeps its certificate; `familybox serve` prints how to make a new one.
+
 ### Photos of cards and documents
 
 ```bash

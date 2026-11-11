@@ -1,0 +1,21 @@
+# familybox: the box's page on the home network, as a systemd user service.
+# Installed by scripts/pi_service.sh into ~/.config/systemd/user. No root needed.
+# The home ~/familybox-home starts empty, so a new box opens its setup page on first start.
+# The setup page stays open for 15 minutes after each start; restarting the service opens it again
+# (only while no family is set up).
+[Unit]
+Description=familybox web page (home network)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+Environment=FAMILYBOX_HOME=%h/familybox-home
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+Environment=PYTHONUNBUFFERED=1
+ExecStart=%h/.local/bin/uv run --directory %h/familybox familybox serve --lan --port 8443
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=default.target

@@ -804,3 +804,46 @@ def test_box_look_is_plain_and_local():
                 ".value", "ul.files", ".name", "label.check", "fieldset", "legend", ".qr", "nav a.here",
                 "header .box", "header .who", "input.code"):
         assert cls in css, cls
+
+
+# --- Block D: friendly name in the certificate, setup address on start ---------------------------
+
+def test_new_certificate_covers_the_friendly_name(empty):
+    cert_p, _, _ = web.ensure_cert(empty)
+    names = web.cert_dns_names(cert_p)
+    assert web.FRIENDLY_NAME == "familybox.local" and "familybox.local" in names and "localhost" in names
+    assert len(names) == len(set(names))
+    assert web.cert_names("familybox").count("familybox.local") == 1
+
+
+def test_existing_certificate_is_left_alone(empty):
+    """A certificate made before the friendly name was added keeps its fingerprint."""
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import ec
+    import datetime as dt
+
+    tls = empty.runtime / "tls"
+    tls.mkdir(parents=True, mode=0o700)
+    key = ec.generate_private_key(ec.SECP256R1())
+    subject = x509.Name([x509.NameAttribute(x509.oid.NameOID.COMMON_NAME, "old box")])
+    now = dt.datetime.now(dt.timezone.utc)
+    old = (x509.CertificateBuilder().subject_name(subject).issuer_name(subject).public_key(key.public_key())
+           .serial_number(1).not_valid_before(now).not_valid_after(now + dt.timedelta(days=1))
+           .add_extension(x509.SubjectAlternativeName([x509.DNSName("localhost")]), critical=False)
+           .sign(key, hashes.SHA256()))
+    (tls / "key.pem").write_bytes(key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8,
+                                                    serialization.NoEncryption()))
+    (tls / "cert.pem").write_bytes(old.public_bytes(serialization.Encoding.PEM))
+    before = (tls / "cert.pem").read_bytes()
+    cert_p, _, _ = web.ensure_cert(empty)
+    assert cert_p.read_bytes() == before and web.cert_dns_names(cert_p) == ["localhost"]
+
+
+def test_serve_prints_the_setup_address_only_for_a_new_box(empty, cfg):
+    lan = web.setup_lines(empty, lan=True, port=8443)
+    assert any("https://familybox.local:8443/setup" in line for line in lan)
+    assert any("15 minutes" in line for line in lan)
+    assert "https://127.0.0.1:8443/setup" in "\n".join(web.setup_lines(empty, lan=False, port=8443))
+    assert all("—" not in line for line in lan)
+    assert web.setup_lines(cfg, lan=True, port=8443) == []

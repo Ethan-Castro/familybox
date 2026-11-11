@@ -246,8 +246,32 @@ def issue_code(cfg: Config, person_id: str) -> str:
 
 # --- TLS ---------------------------------------------------------------------------------------
 
+FRIENDLY_NAME = "familybox.local"   # published on the home network by deploy/familybox-mdns.service
+
+
+def cert_names(host: str) -> list[str]:
+    """The host names a new certificate covers: localhost, this machine's name and the friendly name."""
+    names = ["localhost", host, f"{host}.local", FRIENDLY_NAME]
+    return list(dict.fromkeys(names))
+
+
+def cert_dns_names(cert_p: Path) -> list[str]:
+    """The host names an existing certificate covers."""
+    from cryptography import x509
+
+    cert = x509.load_pem_x509_certificate(cert_p.read_bytes())
+    try:
+        san = cert.extensions.get_extension_for_class(x509.SubjectAlternativeName).value
+    except x509.ExtensionNotFound:
+        return []
+    return san.get_values_for_type(x509.DNSName)
+
+
 def ensure_cert(cfg: Config) -> tuple[Path, Path, str]:
-    """Self-signed certificate in <runtime>/tls, made once. Returns (cert, key, SHA-256 fingerprint)."""
+    """Self-signed certificate in <runtime>/tls, made once. Returns (cert, key, SHA-256 fingerprint).
+
+    A certificate made before familybox.local was added is left as it is, so the fingerprint people
+    already checked stays the same. serve() prints a note when the friendly name is missing."""
     from cryptography import x509
     from cryptography.hazmat.primitives import hashes, serialization
     from cryptography.hazmat.primitives.asymmetric import ec
@@ -261,7 +285,7 @@ def ensure_cert(cfg: Config) -> tuple[Path, Path, str]:
     if not (cert_p.exists() and key_p.exists()):
         key = ec.generate_private_key(ec.SECP256R1())
         host = socket.gethostname().split(".")[0] or "familybox"
-        names = [x509.DNSName("localhost"), x509.DNSName(host), x509.DNSName(f"{host}.local"),
+        names = [x509.DNSName(n) for n in cert_names(host)] + [
                  x509.IPAddress(ipaddress.ip_address("127.0.0.1")), x509.IPAddress(ipaddress.ip_address("::1"))]
         subject = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, f"{cfg.name} ({host})"[:64])])
         now = dt.datetime.now(dt.timezone.utc)
@@ -1330,6 +1354,25 @@ def create_app(cfg: Config, *, port: int = 8443, remote_only: bool = False, box=
     return SecurityHeaders(SetupGate(app, cfg))
 
 
+def setup_lines(cfg: Config, *, lan: bool, port: int) -> list[str]:
+    """What serve() prints when no family is set up yet: the address of the setup page."""
+    if cfg.people:
+        return []
+    from . import household
+
+    mins = household.SETUP_WINDOW_S // 60
+    if lan:
+        host = socket.gethostname().split(".")[0] or "familybox"
+        where = [f"https://{FRIENDLY_NAME}:{port}/setup", f"https://{host}.local:{port}/setup"]
+        intro = ("On a phone or computer on the same Wi-Fi, open the first address "
+                 "(if it does not open, try the second):")
+    else:
+        where = [f"https://127.0.0.1:{port}/setup"]
+        intro = "On this computer, open:"
+    return ["No family is set up on this box yet. " + intro] + [f"  {w}" for w in where] + [
+        f"Setup stays open for {mins} minutes after the box starts. If it closes, restart the box."]
+
+
 def serve(cfg: Config, *, lan: bool = False, port: int = 8443, remote_port: int | None = None) -> None:
     """Serve the web page. remote_port adds a second listener, always on 127.0.0.1, that serves only
     the routes assistants on the internet need. Point a tunnel at that port, never at the main one."""
@@ -1355,6 +1398,12 @@ def serve(cfg: Config, *, lan: bool = False, port: int = 8443, remote_port: int 
               f"nothing else). Point the tunnel here.")
     print(f"certificate SHA-256 fingerprint: {fp}")
     print("check that your browser shows the same fingerprint before signing in.")
+    if FRIENDLY_NAME not in cert_dns_names(cert):
+        print(f"note: this certificate was made before {FRIENDLY_NAME} was added, so the browser warns on that "
+              f"name. To add it, stop the box, delete {cfg.runtime / 'tls'} and start again. The fingerprint "
+              "changes, so everyone accepts the warning once more.")
+    for line in setup_lines(cfg, lan=lan, port=port):
+        print(line)
     print("sign-in codes: familybox code --as <person>", flush=True)
     # lifespan off: the app has no startup hooks (the /mcp session manager starts on first use).
     common = dict(ssl_certfile=str(cert), ssl_keyfile=str(key), access_log=False, log_level="warning",
