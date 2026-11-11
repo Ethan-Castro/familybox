@@ -1,7 +1,7 @@
 """The box's own private web page: sign in with a one-time code, upload files, approve held values.
 
-LAN only, HTTPS with a self-signed certificate made on first run. No passwords: the box owner runs
-`familybox code --as <person>` on the box and types the code on their phone.
+LAN only, HTTPS with a self-signed certificate made on first run. A new box opens on /setup. People
+sign in with their own PIN, or with a one-time code from `familybox code --as <person>` or an invite.
 
 What is stored in <runtime>/web/ (all 0600, folder 0700):
   secret           random key used to hash sign-in codes
@@ -10,6 +10,8 @@ What is stored in <runtime>/web/ (all 0600, folder 0700):
   remote_failures.json  the same, for codes typed on the remote consent page (its own lockout, so
                    internet traffic can never lock the home sign-in)
   sessions.json    hashed session ids -> person, CSRF token, expiry (12 hours)
+  pins.json        scrypt hashes of PINs, and pin_failures.json, wrong PINs per person
+                   (see familybox.household). Invites are codes that last 30 minutes.
 
 Nothing here prints file contents or file names. Uploads and deletes append one line to the person's
 audit log with the folder, a SHA-256 and the size.
@@ -47,6 +49,7 @@ from .store import TRANSCRIPT_SUFFIX, Store, photo_of
 CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"   # no 0/O, 1/I/L
 CODE_LEN = 8
 CODE_TTL_S = 10 * 60
+INVITE_TTL_S = 30 * 60
 LOCKOUT_MAX = 5
 LOCKOUT_WINDOW_S = 10 * 60
 SESSION_TTL_S = 12 * 60 * 60
@@ -134,13 +137,16 @@ class WebState:
     def normalize(code: str) -> str:
         return re.sub(r"[\s-]", "", code or "").upper()
 
-    def issue_code(self, person_id: str) -> str:
+    def issue_code(self, person_id: str, ttl: int = CODE_TTL_S) -> str:
+        """A one-time sign-in code. ttl is how long it lasts in seconds (invites use INVITE_TTL_S)."""
         self.cfg.person(person_id)  # raises KeyError for unknown people
+        if not 0 < ttl <= INVITE_TTL_S:
+            raise ValueError("a code lasts at most 30 minutes")
         code = "".join(secrets.choice(CODE_ALPHABET) for _ in range(CODE_LEN))
         now = time.time()
         with self._lock():
             codes = {h: c for h, c in self._load("codes.json", {}).items() if c["expires"] > now}
-            codes[self._code_hash(code)] = {"person": person_id, "expires": now + CODE_TTL_S}
+            codes[self._code_hash(code)] = {"person": person_id, "expires": now + ttl}
             self._save("codes.json", codes)
         return code
 
@@ -281,6 +287,57 @@ class SecurityHeaders:
         await self.app(scope, receive, send_wrapped)
 
 
+class SetupGate:
+    """While the box has no family yet, every page except /setup and the style sheet sends the browser
+    to /setup. The setup page itself decides whether setup is still allowed (household.setup_open)."""
+
+    OPEN = frozenset({"/setup", "/static/style.css"})
+
+    def __init__(self, app: ASGIApp, cfg: Config):
+        self.app = app
+        self.cfg = cfg
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] == "http" and not self.cfg.people and scope.get("path") not in self.OPEN:
+            return await RedirectResponse("/setup", status_code=303)(scope, receive, send)
+        await self.app(scope, receive, send)
+
+
+# --- forms before sign-in ---------------------------------------------------------------------
+
+def origin_ok(request: Request) -> bool:
+    """True when a POST comes from this page (or from a client that sends no Origin at all)."""
+    origin = request.headers.get("origin")
+    if not origin or origin == "null":
+        return origin is None
+    host = request.headers.get("host", "")
+    return origin.split("://", 1)[-1] == host
+
+
+def set_pre_cookie(resp: Response, token: str) -> Response:
+    """The CSRF cookie for forms shown before anyone is signed in (/signin, /setup, /join)."""
+    resp.set_cookie(PRE_COOKIE, token, max_age=CODE_TTL_S * 3, secure=True, httponly=True, samesite="strict")
+    return resp
+
+
+def pre_ok(request: Request, form) -> bool:
+    """Same origin, and the form's csrf field matches the pre-sign-in cookie."""
+    if not origin_ok(request):
+        return False
+    pre = request.cookies.get(PRE_COOKIE, "")
+    token = form.get("csrf")
+    return bool(pre) and isinstance(token, str) and hmac.compare_digest(token, pre)
+
+
+def signed_in(state: "WebState", person_id: str, to: str = "/") -> RedirectResponse:
+    """Start a session for person_id and send the browser on, with the session cookie set."""
+    sid = state.new_session(person_id)
+    resp = RedirectResponse(to, status_code=303)
+    resp.set_cookie(COOKIE, sid, max_age=SESSION_TTL_S, secure=True, httponly=True, samesite="strict")
+    resp.delete_cookie(PRE_COOKIE, secure=True, httponly=True, samesite="strict")
+    return resp
+
+
 # --- HTML ----------------------------------------------------------------------------------------
 
 CSS = """
@@ -306,7 +363,7 @@ h1 { font-size: 24px; margin: 4px 0 12px; }
 h2 { font-size: 19px; margin: 20px 0 8px; }
 .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 14px; margin: 12px 0; }
 label { display: block; font-weight: 600; margin: 12px 0 4px; }
-input[type=text], input[type=file], select { width: 100%; padding: 10px; font: inherit; border-radius: 8px;
+input[type=text], input[type=password], input[type=file], select, textarea { width: 100%; padding: 10px; font: inherit; border-radius: 8px;
   border: 1px solid var(--line); background: var(--bg); color: var(--fg); }
 input.code { letter-spacing: 4px; text-transform: uppercase; font-size: 22px; text-align: center; }
 button.main, .button { display: inline-block; margin-top: 14px; padding: 10px 16px; border-radius: 8px;
@@ -327,6 +384,10 @@ pre.value { white-space: pre-wrap; font-size: 16px; }
 ul.files li { padding: 10px 0; border-bottom: 1px solid var(--line); }
 ul.files li:last-child { border-bottom: 0; }
 .name { word-break: break-all; }
+label.check { display: flex; gap: 8px; align-items: center; font-weight: 400; margin: 6px 0; }
+fieldset { border: 1px solid var(--line); border-radius: 8px; margin: 12px 0; padding: 8px 12px; }
+legend { font-weight: 600; padding: 0 4px; }
+.qr svg { display: block; max-width: 100%; height: auto; margin: 8px 0; }
 """
 
 NAV = [("/", "Home"), ("/upload", "Upload"), ("/files", "Files"), ("/approvals", "Approvals"), ("/cloud", "Cloud")]
@@ -537,6 +598,7 @@ class WebContext:
     forbidden(msg=...)       403 page
     esc(text)                HTML escape
     box()                    a shared familybox.box.Box (made on first use)
+    state                    the shared WebState (codes, sessions)
     """
     cfg: Config
     session_of: Any
@@ -547,6 +609,7 @@ class WebContext:
     forbidden: Any
     esc: Any
     box: Any
+    state: Any = None
 
 
 def create_app(cfg: Config, *, port: int = 8443, remote_only: bool = False, box=None) -> Starlette:
@@ -577,13 +640,6 @@ def create_app(cfg: Config, *, port: int = 8443, remote_only: bool = False, box=
         return _page(cfg, "Not allowed", f'<h1>Not allowed</h1><p>{esc(msg)}</p><p><a href="/">Go home</a></p>',
                      status=403)
 
-    def origin_ok(request: Request) -> bool:
-        origin = request.headers.get("origin")
-        if not origin or origin == "null":
-            return origin is None
-        host = request.headers.get("host", "")
-        return origin.split("://", 1)[-1] == host
-
     async def guarded_form(request: Request, **kw):
         """For POSTs: signed in, same origin, CSRF token matches. Returns (sess, form) or a Response."""
         sess = session_of(request)
@@ -612,17 +668,29 @@ def create_app(cfg: Config, *, port: int = 8443, remote_only: bool = False, box=
         return Response(CSS, media_type="text/css")
 
     def signin_page(pre: str, error: str = "", status: int = 200) -> HTMLResponse:
+        from . import household
         err = f'<p class="bad">{esc(error)}</p>' if error else ""
-        body = (f'<h1>Sign in</h1>'
+        with_pin = [p for p in sorted(cfg.people.values(), key=lambda p: p.display.lower())
+                    if household.has_pin(state, p.id)]
+        pin_form = ""
+        if with_pin:
+            opts = "".join(f'<option value="{esc(p.id)}">{esc(p.display)}</option>' for p in with_pin)
+            pin_form = (f'<form method="post" action="/signin" class="card">{_csrf_field(pre)}'
+                        f'<h2>Sign in with your PIN</h2>'
+                        f'<label for="person">Your name</label><select id="person" name="person">{opts}</select>'
+                        f'<label for="pin">Your PIN</label>'
+                        f'<input type="password" id="pin" name="pin" inputmode="numeric" maxlength="12"'
+                        f' autocomplete="current-password" required>'
+                        f'<button class="main" type="submit">Sign in</button></form>')
+        body = (f'<h1>Sign in</h1>{err}{pin_form}'
+                f'<form method="post" action="/signin" class="card">{_csrf_field(pre)}'
+                f'<h2>Sign in with a code</h2>'
                 f'<p>Ask the person who runs the family box for a sign-in code. It works once and lasts 10 minutes.</p>'
-                f'{err}<form method="post" action="/signin" class="card">{_csrf_field(pre)}'
                 f'<label for="code">Your 8-letter code</label>'
                 f'<input type="text" id="code" name="code" class="code" maxlength="12" autocomplete="one-time-code"'
                 f' autocapitalize="characters" spellcheck="false" required>'
                 f'<button class="main" type="submit">Sign in</button></form>')
-        resp = _page(cfg, "Sign in", body, status=status)
-        resp.set_cookie(PRE_COOKIE, pre, max_age=CODE_TTL_S * 3, secure=True, httponly=True, samesite="strict")
-        return resp
+        return set_pre_cookie(_page(cfg, "Sign in", body, status=status), pre)
 
     async def signin_get(request: Request):
         if session_of(request):
@@ -633,20 +701,23 @@ def create_app(cfg: Config, *, port: int = 8443, remote_only: bool = False, box=
         if not origin_ok(request):
             return forbidden()
         form = await request.form()
-        pre = request.cookies.get(PRE_COOKIE, "")
-        token = form.get("csrf")
-        if not pre or not isinstance(token, str) or not hmac.compare_digest(token, pre):
+        if not pre_ok(request, form):
             return forbidden()
+        if "pin" in form:
+            from . import household
+            person_id = str(form.get("person", ""))
+            ok, why = household.check_pin(state, person_id, str(form.get("pin", "")))
+            if not ok:
+                msg = ("Too many wrong PINs for this name. Wait 10 minutes, or sign in with a code."
+                       if why == "locked" else "That PIN didn't work. Check it and try again.")
+                return signin_page(secrets.token_urlsafe(24), msg, status=429 if why == "locked" else 401)
+            return signed_in(state, person_id)
         person_id, why = state.redeem(str(form.get("code", "")))
         if person_id is None:
             msg = ("Too many wrong codes. Wait 10 minutes, then try again." if why == "locked"
                    else "That code didn't work. Check it, or ask for a new one.")
             return signin_page(secrets.token_urlsafe(24), msg, status=429 if why == "locked" else 401)
-        sid = state.new_session(person_id)
-        resp = RedirectResponse("/", status_code=303)
-        resp.set_cookie(COOKIE, sid, max_age=SESSION_TTL_S, secure=True, httponly=True, samesite="strict")
-        resp.delete_cookie(PRE_COOKIE, secure=True, httponly=True, samesite="strict")
-        return resp
+        return signed_in(state, person_id)
 
     async def signout(request: Request):
         got = await guarded_form(request)
@@ -967,14 +1038,16 @@ def create_app(cfg: Config, *, port: int = 8443, remote_only: bool = False, box=
         return _box[0]
 
     ctx = WebContext(cfg=cfg, session_of=session_of, page=page, need_signin=need_signin, guarded_form=guarded_form,
-                     csrf_field=_csrf_field, forbidden=forbidden, esc=esc, box=get_box)
+                     csrf_field=_csrf_field, forbidden=forbidden, esc=esc, box=get_box, state=state)
     for extra in plugins.call_each("web_routes", ctx):
         routes.extend(extra or [])   # after the core routes, so a plugin can never shadow them
     if remote_only:
         from .remote import REMOTE_PATHS
         routes = [r for r in routes if getattr(r, "path", None) in REMOTE_PATHS]
     app = Starlette(routes=routes, max_body_size=FORM_SLACK)
-    return SecurityHeaders(app)
+    if remote_only:
+        return SecurityHeaders(app)   # the internet listener never offers setup
+    return SecurityHeaders(SetupGate(app, cfg))
 
 
 def serve(cfg: Config, *, lan: bool = False, port: int = 8443, remote_port: int | None = None) -> None:
