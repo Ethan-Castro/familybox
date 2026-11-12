@@ -21,6 +21,10 @@
   familybox cloud backup --as dana        encrypt the box and upload it to the admin's Drive
   familybox cloud restore --as dana <drive file id or .fbx path>   asks for the recovery code
   familybox cloud disconnect --as maya
+
+  familybox update check                  is a newer signed release out? (FAMILYBOX_UPDATE_URL)
+  familybox update apply [--yes]          install it: signature, version and SHA-256 checked first,
+                                          rolled back if the box's page does not answer after restart
 """
 
 from __future__ import annotations
@@ -38,7 +42,7 @@ from .store import Store
 OUTCOME_LABEL = {"pass": "answered", "masked": "answered (numbers removed)", "held": "answered (some details held)",
                  "refused": "blocked", "error": "stopped (verification failed)"}
 
-CORE_COMMANDS = {"index", "ask", "pending", "log", "approve", "deny", "verify", "code", "serve", "cloud"}
+CORE_COMMANDS = {"index", "ask", "pending", "log", "approve", "deny", "verify", "code", "serve", "cloud", "update"}
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -84,9 +88,13 @@ def main(argv: list[str] | None = None) -> int:
             cp.add_argument("--force", action="store_true", help="replace an existing key")
         elif name == "restore":
             cp.add_argument("source", help="Drive file id or path to a .fbx file")
+    from . import updater
+    updater.add_cli(sub)
     from . import plugins
     plugins.call_each("cli", sub)
     args = ap.parse_args(argv)
+    if args.cmd == "update":          # needs no family: it replaces the code, never the box's home
+        return updater.run_cli(args)
     cfg = config.load()
 
     if args.cmd not in CORE_COMMANDS:

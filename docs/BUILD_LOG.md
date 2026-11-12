@@ -576,3 +576,36 @@ out 657px wide on a 390px phone, so phones would show it zoomed out. Cause: the 
 16:8.6 shape with a 340px minimum height, which forces at least 633px of width (the phone tile next to
 it forced 427px the same way). Fixed in `site/index.html` with a fixed height under 700px; now 390 on a
 390 phone and 360 on a 360 phone, no overflow, no browser errors. Not yet deployed: waiting for Ethan's OK.
+
+## 2026-11-12: signed automatic updates
+
+Built: `scripts/release.py` (laptop: signs a `git archive` of HEAD), `src/familybox/updater.py` with
+`familybox update check` and `familybox update apply [--yes]`, a daily user timer
+(`deploy/familybox-update.timer`, 2 to 5 at night at random, `Persistent=true`), its setup in
+`scripts/pi_service.sh`, and `scripts/pi_os_updates.sh` for Debian's unattended security upgrades (needs
+sudo, so it is a separate script that someone runs by hand; nothing was run on the Pi).
+
+- **Release key:** made on Ethan's laptop with `release.py --new-key`. The private half is in
+  `~/.config/familybox/release-signing.key` (0600, folder 0700), outside the repo. The public half is
+  committed: `LYNWEqBMxq2clGcvJ7ttZwICS4CGRh3iWn/DeiUVe9Q=` (`src/familybox/release_key.pub`).
+- **Order of checks on the box:** signature over the exact manifest bytes first, then version newer than
+  installed (no rollback; `min_version` if set), then SHA-256, then every tarball entry (absolute paths,
+  `..`, devices, links out). Unpacking also uses Python's `data` filter and checks every link once unpacked.
+- **Found while building:** a Python environment made in `~/familybox.next` remembers that path (the
+  editable install and the script headers), and renaming the folder does not update it. So after the swap
+  the updater runs `uv sync --frozen` again in `~/familybox`, before the restart; if that fails it goes back.
+- **Found while testing:** the `data` filter quietly rewrites a link target like `s/../..` instead of refusing
+  it. The box now refuses any link whose target is not in plain form (git never writes one).
+- **A bad release:** if the page does not answer within 60 s of the restart, the old code is put back,
+  restarted, and that version is marked `failed_version` so the timer does not retry it every night.
+- **Real run on the laptop (no restart, nothing published):** a release of this branch, signed with the real
+  key, read from a `file://` folder and installed over a `git archive` of the commit before, with real
+  `uv sync --frozen`: check, unpack, sync, import check, swap and record took about 3 s. A second run said
+  "Already up to date". The same release with its version edited was refused ("not signed by our release
+  key"); an `http://` source was refused. The installed copy served its page, and the health check saw it.
+- Tests: `tests/test_updater.py`, 37 passed (good release, tampered manifest, wrong key, missing or broken
+  signature, same and older version, `min_version`, SHA mismatch, path traversal, absolute paths, symlink
+  and hard link escapes, two symlink chains, devices and pipes, failed health check and failed restart roll
+  back, half-finished swap recovered, a git checkout is never replaced, CLI). `tests/test_plugins.py`: 16 passed.
+- Not done: no GitHub release published; the default URL works once the repo is public. The first box to
+  get the updater still needs it installed by hand, since the code on the Pi today has no `update` command.
