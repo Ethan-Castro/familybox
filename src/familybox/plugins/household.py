@@ -123,8 +123,10 @@ def _disk(n: int) -> str:
 
 def web_routes(ctx):
     from .. import enclave
-    from ..web import (COOKIE, INVITE_TTL_S, STALE_FORM, _audit, _page, origin_ok, pre_ok, pre_token,
-                       readable_files, set_pre_cookie, signed_in)
+    from .. import vault as vaultmod
+    from ..locked import set_unlock_cookie
+    from ..web import (COOKIE, INVITE_TTL_S, PRE_COOKIE, SESSION_TTL_S, STALE_FORM, _audit, _page, origin_ok,
+                       pre_ok, pre_token, readable_files, set_pre_cookie, signed_in)
 
     cfg, esc, state = ctx.cfg, ctx.esc, ctx.state
     csrf = ctx.csrf_field
@@ -156,8 +158,54 @@ def web_routes(ctx):
                 f' autocomplete="new-password" required>'
                 f'<p class="muted">{household.PIN_MIN} to {household.PIN_MAX} numbers. You use it to sign in on '
                 f'this page. You will run the box: you can add your family next.</p>'
+                f'{setup_code_field()}'
                 f'<button class="main" type="submit">Set up the box</button></form>')
         return set_pre_cookie(_page(cfg, "Setup", body, status=status), pre)
+
+    def setup_code_field() -> str:
+        if not vaultmod.Vault(cfg.home).needs_setup_code():
+            return ""
+        return ('<label for="setup_code">Setup code (on the sticker on the box)</label>'
+                '<input type="text" id="setup_code" name="setup_code" maxlength="12" autocomplete="off"'
+                ' spellcheck="false" autocapitalize="characters" required>'
+                '<p class="muted">Only someone holding the box can set it up.</p>')
+
+    def recovery_page(code: str, encrypted: bool) -> str:
+        lock = ("<p>The family's files are <strong>encrypted</strong> on this box. After a power cut it starts "
+                "locked: open this page on this phone and type your PIN to unlock it.</p>" if encrypted else
+                '<p class="muted">This computer can\'t encrypt its folders, so the files here are not encrypted. '
+                "The recovery key still resets a forgotten PIN.</p>")
+        return (f'<h1>Save your recovery key</h1><div class="card">'
+                f'<p>Write this down or print it, and keep it somewhere safe at home. It is shown only once.</p>'
+                f'<div class="value">{esc(code)}</div>'
+                f'<p>It unlocks the box from any phone, and it resets your PIN if you forget it. Anyone who has it '
+                f'and the box can read the family\'s files, so don\'t keep it next to the box or in a photo.</p>'
+                f'{lock}<p><a class="main" href="/">I saved it. Continue</a></p></div>')
+
+    def start_vault(family: str) -> tuple[bytes | None, str | None, bool]:
+        """Keys for a new box, and the encrypted folder where this computer can make one. Returns
+        (box_key, recovery_key, encrypted)."""
+        v = vaultmod.Vault(cfg.home)
+        if v.exists():
+            return None, None, v.encrypted()
+        in_checkout = (cfg.home.parent / "pyproject.toml").is_file()   # the demo folder inside the code
+        box_key, code = v.create(encrypt=False if in_checkout else None)
+        data = v.load()
+        data["name"] = family
+        v.save(data)
+        if v.encrypted():
+            # Before setup the home folder holds only what this page wrote (sign-in tokens) and the
+            # certificate. The certificate moves next to the encrypted folder; the rest is dropped.
+            tls = cfg.runtime / "tls"
+            if tls.is_dir() and not v.tls.exists():
+                shutil.copytree(tls, v.tls)
+                os.chmod(v.tls, 0o700)
+            for child in list(cfg.home.iterdir()):
+                shutil.rmtree(child) if child.is_dir() and not child.is_symlink() else child.unlink()
+            v.open(box_key)
+            state.dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+        vaultmod.remember(box_key)
+        return box_key, code, v.encrypted()
 
     async def setup_get(request: Request):
         if cfg.people:
@@ -174,17 +222,40 @@ def web_routes(ctx):
             return setup_page(STALE_FORM, 403, pre_token(request))   # a fresh form, nothing saved
         if not household.setup_open(cfg):
             return setup_page(status=403)
+        v = vaultmod.Vault(cfg.home)
+        if v.needs_setup_code() and not v.check_setup_code(str(form.get("setup_code", ""))):
+            return setup_page("That setup code didn't match the sticker on the box.", 401, pre_token(request))
         pin = str(form.get("pin", ""))
         if pin != str(form.get("pin2", "")):
             return setup_page("The two PINs don't match. Try again.", 400, pre_token(request))
+        try:   # check everything that can be wrong before any key is made
+            family, name = household.clean_name(str(form.get("family", ""))), household.clean_name(str(form.get("name", "")))
+            why = household.pin_problem(pin)
+            if why:
+                raise HouseholdError(why)
+        except HouseholdError as e:
+            return setup_page(str(e), 400, pre_token(request))
         try:
-            person = household.setup_family(state, str(form.get("family", "")), str(form.get("name", "")), pin)
+            box_key, code, encrypted = start_vault(family)
+        except (vaultmod.VaultError, OSError) as e:
+            return setup_page(f"The box could not make its encryption keys ({e}). Nothing was saved.", 500,
+                              pre_token(request))
+        try:
+            person = household.setup_family(state, family, name, pin)
         except HouseholdError as e:
             if not household.setup_open(cfg):
                 return ctx.forbidden("This box is already set up.") if cfg.people else setup_page(status=403)
             return setup_page(str(e), 400, pre_token(request))
-        _audit(cfg, person.id, {"event": "setup", "person": person.id})
-        return signed_in(state, person.id)
+        _audit(cfg, person.id, {"event": "setup", "person": person.id, "encrypted": bool(encrypted)})
+        if code is None:      # keys made by an earlier setup (an old box): the usual sign-in
+            return signed_in(state, person.id)
+        resp = _page(cfg, "Recovery key", recovery_page(code, encrypted))
+        sid = state.new_session(person.id)
+        resp.set_cookie(COOKIE, sid, max_age=SESSION_TTL_S, secure=True, httponly=True, samesite="strict")
+        resp.delete_cookie(PRE_COOKIE, secure=True, httponly=True, samesite="strict")
+        if box_key is not None:
+            set_unlock_cookie(resp, v.add_device(box_key, person.id, person.display, pin))
+        return resp
 
     # ---- the Family page
     def invite_form(sess, p) -> str:
@@ -453,7 +524,152 @@ def web_routes(ctx):
             return pin_page(sess, msg, status=429 if why == "locked" else 401)
         household.set_pin(state, pid, pin)
         _audit(cfg, pid, {"event": "pin_changed", "person": pid})
-        return pin_page(sess, "Your PIN is changed. Use the new one from now on.", ok=True)
+        msg, cookie_out = "Your PIN is changed. Use the new one from now on.", None
+        v = vaultmod.Vault(cfg.home)
+        if v.exists() and v.devices(pid):
+            cookie = request.cookies.get(vaultmod.UNLOCK_COOKIE)
+            got = v.check_device(cookie, str(form.get("current", "")), count=False)
+            if got and got[1] == pid:
+                cookie_out = v.add_device(got[0], pid, sess.person.display, pin, replace_for_person=True)
+                msg += " This phone still unlocks the box with your new PIN."
+            else:
+                v.remove_devices(pid)
+            if v.devices(pid) == [] and cookie_out is None:
+                msg += " Phones you had set up to unlock the box need setting up again on the Unlocking page."
+        resp = pin_page(sess, msg, ok=True)
+        return set_unlock_cookie(resp, cookie_out) if cookie_out else resp
+
+    # ---- forgot your PIN (the recovery key), for people who run the box
+    def recover_page(pre: str, msg: str = "", status: int = 200) -> Response:
+        admins = sorted((p for p in cfg.people.values() if p.admin), key=lambda p: p.display.lower())
+        opts = "".join(f'<option value="{esc(p.id)}">{esc(p.display)}</option>' for p in admins)
+        body = (f'<h1>Forgot your PIN?</h1>{note(msg, False)}'
+                f'<form method="post" action="/recover" class="card">{csrf(pre)}'
+                f'<p class="muted">For the person who runs the box. You need the recovery key from setup. Anyone '
+                f'else: ask the person who runs the box.</p>'
+                f'<label for="person">Your name</label><select id="person" name="person">{opts}</select>'
+                f'<label for="code">Recovery key</label>'
+                f'<input type="text" id="code" name="code" maxlength="40" autocomplete="off" spellcheck="false"'
+                f' autocapitalize="characters" required>'
+                f'<label for="pin">New PIN</label>'
+                f'<input type="password" id="pin" name="pin" inputmode="numeric" maxlength="{household.PIN_MAX}"'
+                f' autocomplete="new-password" required>'
+                f'<label for="pin2">Type the new PIN again</label>'
+                f'<input type="password" id="pin2" name="pin2" inputmode="numeric" maxlength="{household.PIN_MAX}"'
+                f' autocomplete="new-password" required>'
+                f'<button class="main" type="submit">Set my new PIN</button></form>'
+                f'<p><a href="/signin">Back to sign in</a></p>')
+        return set_pre_cookie(_page(cfg, "Forgot your PIN", body, status=status), pre)
+
+    async def recover_get(request: Request):
+        if not vaultmod.Vault(cfg.home).exists():
+            return RedirectResponse("/signin", status_code=303)
+        return recover_page(pre_token(request))
+
+    async def recover_post(request: Request):
+        v = vaultmod.Vault(cfg.home)
+        if not origin_ok(request) or not v.exists():
+            return ctx.forbidden()
+        form = await request.form()
+        if not pre_ok(request, form):
+            return recover_page(pre_token(request), STALE_FORM, 403)
+        pid = str(form.get("person", ""))
+        person = cfg.people.get(pid)
+        if person is None or not person.admin:
+            return recover_page(pre_token(request), "Only the person who runs the box can use the recovery key.", 403)
+        if v.throttled():
+            return recover_page(pre_token(request), "Too many wrong tries. Wait 15 minutes, then try again.", 429)
+        pin = str(form.get("pin", ""))
+        if pin != str(form.get("pin2", "")):
+            return recover_page(pre_token(request), "The two new PINs don't match.", 400)
+        why = household.pin_problem(pin)
+        if why:
+            return recover_page(pre_token(request), why, 400)
+        key = v.check_recovery(str(form.get("code", "")))
+        if key is None:
+            return recover_page(pre_token(request), "That recovery key didn't work. Check it and try again.", 401)
+        household.set_pin(state, pid, pin)
+        vaultmod.remember(key)
+        _audit(cfg, pid, {"event": "pin_reset_with_recovery_key", "person": pid})
+        resp = signed_in(state, pid)
+        return set_unlock_cookie(resp, v.add_device(key, pid, person.display, pin, replace_for_person=True))
+
+    # ---- which phones can unlock the box after a power cut
+    def unlock_page(sess, request: Request, msg: str = "", ok: bool = False, status: int = 200) -> Response:
+        v = vaultmod.Vault(cfg.home)
+        mine = v.devices(sess.person.id)
+        this = v.device_of(request.cookies.get(vaultmod.UNLOCK_COOKIE))
+        here = bool(this and this.get("person") == sess.person.id)
+        state_line = ('<p class="ok">The family\'s files are encrypted on this box.</p>' if v.encrypted() else
+                      '<p class="bad">The files on this box are not encrypted (this computer can\'t encrypt '
+                      'folders). Phones and the recovery key still work for PINs.</p>')
+        need_code = vaultmod.current_key() is None
+        code_field = ('<label for="code">Recovery key (the box needs it once after a restart)</label>'
+                      '<input type="text" id="code" name="code" maxlength="40" autocomplete="off" spellcheck="false"'
+                      ' autocapitalize="characters" required>' if need_code else "")
+        add = ("" if here else
+               f'<form method="post" action="/settings/unlock" class="card">{csrf(sess.csrf)}'
+               f'<input type="hidden" name="action" value="add">'
+               f'<p>Let this phone unlock the box after a power cut, with your PIN.</p>'
+               f'<label for="pin">Your PIN</label>'
+               f'<input type="password" id="pin" name="pin" inputmode="numeric" maxlength="{household.PIN_MAX}"'
+               f' autocomplete="current-password" required>{code_field}'
+               f'<button class="main" type="submit">Let this phone unlock the box</button></form>')
+        remove = ("" if not mine else
+                  f'<form method="post" action="/settings/unlock">{csrf(sess.csrf)}'
+                  f'<input type="hidden" name="action" value="remove">'
+                  f'<button class="main quiet" type="submit">Stop all my phones from unlocking it</button></form>')
+        body = (f'<h1>Unlocking</h1>{note(msg, ok)}<div class="card">{state_line}'
+                f'<p>Your phones that can unlock it: {len(mine)}{" (including this one)" if here else ""}.</p>'
+                f'<p class="muted">After a power cut the box stays locked until one of these phones and your PIN, '
+                f'or the recovery key, unlocks it.</p>{remove}</div>{add}'
+                f'<p><a href="/status">Back to box status</a></p>')
+        return ctx.page(sess, "Unlocking", body, "/settings/unlock", status)
+
+    @ctx.need_signin
+    async def unlock_get(request: Request, sess):
+        if not sess.person.admin:
+            return ctx.forbidden(ADMIN_ONLY)
+        if not vaultmod.Vault(cfg.home).exists():
+            return ctx.page(sess, "Unlocking", "<h1>Unlocking</h1><p>This box was set up before it had keys. "
+                                              "Start over to give it a recovery key and encryption.</p>", "/settings/unlock")
+        return unlock_page(sess, request)
+
+    async def unlock_post(request: Request):
+        got = await ctx.guarded_form(request, max_files=0, max_fields=6, max_part_size=1024)
+        if isinstance(got, Response):
+            return got
+        sess, form = got
+        if not sess.person.admin:
+            return ctx.forbidden(ADMIN_ONLY)
+        v = vaultmod.Vault(cfg.home)
+        if not v.exists():
+            return ctx.forbidden()
+        pid = sess.person.id
+        if form.get("action") == "remove":
+            n = v.remove_devices(pid)
+            _audit(cfg, pid, {"event": "unlock_phones_removed", "count": n})
+            resp = unlock_page(sess, request, "None of your phones can unlock the box now. The recovery key still can.",
+                               ok=True)
+            resp.delete_cookie(vaultmod.UNLOCK_COOKIE, secure=True, httponly=True, samesite="strict")
+            return resp
+        pin = str(form.get("pin", ""))
+        ok, why = household.check_pin(state, pid, pin)
+        if not ok:
+            return unlock_page(sess, request, "Too many wrong PINs. Wait 10 minutes." if why == "locked"
+                               else "That PIN didn't work.", status=401)
+        key = vaultmod.current_key()
+        if key is None:
+            key = v.check_recovery(str(form.get("code", "")))
+            if key is None:
+                return unlock_page(sess, request, "That recovery key didn't work.", status=401)
+            vaultmod.remember(key)
+        try:
+            cookie = v.add_device(key, pid, sess.person.display, pin)
+        except vaultmod.VaultError as e:
+            return unlock_page(sess, request, str(e), status=409)
+        _audit(cfg, pid, {"event": "unlock_phone_added"})
+        return set_unlock_cookie(unlock_page(sess, request, "This phone can unlock the box now.", ok=True), cookie)
 
     # ---- the AI key
     def last_check() -> dict:
@@ -601,6 +817,13 @@ def web_routes(ctx):
         rows.append(f'<li>Assistants linked to you: {n_conn if n_conn is not None else "unknown"}</li>')
         if person.admin:
             rows.append(pin_state())
+            v = vaultmod.Vault(cfg.home)
+            if v.encrypted():
+                rows.append('<li>Files: <span class="ok">encrypted on this box</span>. After a power cut it stays '
+                            'locked until you unlock it (<a href="/settings/unlock">Unlocking</a>)</li>')
+            else:
+                rows.append('<li>Files: <span class="bad">not encrypted on this computer</span>'
+                            f'{" (<a href=/settings/unlock>Unlocking</a>)" if v.exists() else ""}</li>')
         try:
             free = shutil.disk_usage(cfg.home).free
             low = free < 1024 ** 3
@@ -609,8 +832,8 @@ def web_routes(ctx):
         except OSError:
             rows.append('<li>Free space: unknown</li>')
         links = ('<p><a href="/settings/pin">Change my PIN</a>'
-                 + (' &middot; <a href="/settings/key">AI key</a> &middot; <a href="/reset">Start over</a>'
-                    if person.admin else "") + '</p>')
+                 + (' &middot; <a href="/settings/key">AI key</a> &middot; <a href="/settings/unlock">Unlocking</a>'
+                    ' &middot; <a href="/reset">Start over</a>' if person.admin else "") + '</p>')
         body = (f'<h1>Box status</h1><div class="card"><ul class="files">{"".join(rows)}</ul></div>{links}')
         return ctx.page(sess, "Status", body, "/status")
 
@@ -673,6 +896,7 @@ def web_routes(ctx):
             pass
         resp = RedirectResponse("/setup", status_code=303)
         resp.delete_cookie(COOKIE, secure=True, httponly=True, samesite="strict")
+        resp.delete_cookie(vaultmod.UNLOCK_COOKIE, secure=True, httponly=True, samesite="strict")
         return resp
 
     return [
@@ -691,6 +915,10 @@ def web_routes(ctx):
         Route("/settings/key", key_post, methods=["POST"]),
         Route("/settings/key/check", key_check, methods=["POST"]),
         Route("/status", status_get, methods=["GET"]),
+        Route("/recover", recover_get, methods=["GET"]),
+        Route("/recover", recover_post, methods=["POST"]),
+        Route("/settings/unlock", unlock_get, methods=["GET"]),
+        Route("/settings/unlock", unlock_post, methods=["POST"]),
         Route("/reset", reset_get, methods=["GET"]),
         Route("/reset", reset_post, methods=["POST"]),
     ]

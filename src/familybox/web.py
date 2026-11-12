@@ -295,7 +295,11 @@ def ensure_cert(cfg: Config) -> tuple[Path, Path, str]:
     from cryptography.x509.oid import NameOID
     import ipaddress
 
-    tls = cfg.runtime / "tls"
+    from .vault import Vault
+    v = Vault(cfg.home)
+    # An encrypted box keeps its certificate next to the encrypted folder, so the unlock page can be
+    # served after a power cut without writing into the (unmounted) home folder.
+    tls = v.tls if (v.tls / "cert.pem").exists() or v.locked() else cfg.runtime / "tls"
     tls.mkdir(parents=True, exist_ok=True, mode=0o700)
     os.chmod(tls, 0o700)
     cert_p, key_p = tls / "cert.pem", tls / "key.pem"
@@ -942,9 +946,30 @@ def create_app(cfg: Config, *, port: int = 8443, remote_only: bool = False, box=
                 f'<div class="card"><h2>Forgot your PIN?</h2>'
                 f'<p class="muted">For safety, nobody can see or change your PIN on this page, not even the person '
                 f'who runs the box, so nobody can take over your folders. The person who runs the box can make you '
-                f'a sign-in code on the box itself with the command familybox code. If you run the box and forgot '
-                f'your own PIN, ask whoever set the box up for you to help.</p></div>')
+                f'a sign-in code on the box itself with the command familybox code.</p>{recover_line()}</div>')
         return set_pre_cookie(_page(cfg, "Sign in", body, status=status), pre)
+
+    def recover_line() -> str:
+        from .vault import Vault
+        if Vault(cfg.home).exists():
+            return ('<p>If you run the box and forgot your own PIN, <a href="/recover">use the recovery key</a> '
+                    'from setup.</p>')
+        return '<p class="muted">If you run the box and forgot your own PIN, ask whoever set it up to help.</p>'
+
+    def _learn_box_key(request: Request, person_id: str, pin: str) -> None:
+        """After a service restart the box no longer holds its key in memory. When someone who can unlock
+        it signs in on their unlock phone, take the key back, so they can add phones without the
+        recovery key. A failed try here never counts against unlocking."""
+        from . import vault as vaultmod
+        cookie = request.cookies.get(vaultmod.UNLOCK_COOKIE)
+        if vaultmod.current_key() is not None or not cookie:
+            return
+        try:
+            got = vaultmod.Vault(cfg.home).check_device(cookie, pin, count=False)
+        except vaultmod.VaultError:
+            return
+        if got and got[1] == person_id:
+            vaultmod.remember(got[0])
 
     async def signin_get(request: Request):
         if session_of(request):
@@ -967,6 +992,7 @@ def create_app(cfg: Config, *, port: int = 8443, remote_only: bool = False, box=
                 msg = ("Too many wrong PINs for this name. Wait 10 minutes, or sign in with a code."
                        if why == "locked" else "That PIN didn't work. Check it and try again.")
                 return signin_page(pre_token(request), msg, status=429 if why == "locked" else 401)
+            _learn_box_key(request, person_id, str(form.get("pin", "")))
             return signed_in(state, person_id)
         person_id, why = state.redeem(str(form.get("code", "")))
         if why == "invite":
@@ -1535,6 +1561,31 @@ def setup_lines(cfg: Config, *, lan: bool, port: int) -> list[str]:
         f"Setup stays open for {mins} minutes after the box starts. If it closes, restart the box."]
 
 
+def serve_locked(cfg: Config, vlt, *, host: str, port: int, remote_port: int | None, cert: Path, key: Path,
+                 fp: str) -> None:
+    """After a power cut: serve only the unlock page until someone who runs the box unlocks it."""
+    import asyncio
+
+    import uvicorn
+
+    from .locked import create_locked_app
+
+    print(f"familybox is locked: its files are encrypted. Unlock it on https://<this box>:{port}/unlock")
+    print(f"certificate SHA-256 fingerprint: {fp}", flush=True)
+    common = dict(ssl_certfile=str(cert), ssl_keyfile=str(key), access_log=False, log_level="warning",
+                  server_header=False, lifespan="off")
+    servers = [uvicorn.Server(uvicorn.Config(create_locked_app(cfg, vlt), host=host, port=port, **common))]
+    if remote_port is not None:
+        servers.append(uvicorn.Server(uvicorn.Config(create_locked_app(cfg, vlt), host="127.0.0.1",
+                                                     port=remote_port, **common)))
+
+    async def run_all():
+        await asyncio.gather(*(s.serve() for s in servers))
+
+    with contextlib.suppress(KeyboardInterrupt):
+        asyncio.run(run_all())
+
+
 def serve(cfg: Config, *, lan: bool = False, port: int = 8443, remote_port: int | None = None) -> None:
     """Serve the web page. remote_port adds a second listener, always on 127.0.0.1, that serves only
     the routes assistants on the internet need. Point a tunnel at that port, never at the main one."""
@@ -1544,8 +1595,14 @@ def serve(cfg: Config, *, lan: bool = False, port: int = 8443, remote_port: int 
 
     if remote_port is not None and remote_port == port:
         raise SystemExit("--remote-port must be different from --port")
+    from . import vault as vaultmod
+    vaultmod.take_hand_off()               # the key, when this process was restarted by an unlock
+    vlt = vaultmod.Vault(cfg.home)
     cert, key, fp = ensure_cert(cfg)
     host = "0.0.0.0" if lan else "127.0.0.1"
+    if vlt.locked():
+        serve_locked(cfg, vlt, host=host, port=port, remote_port=remote_port, cert=cert, key=key, fp=fp)
+        return
     shared: list = []
 
     def box():

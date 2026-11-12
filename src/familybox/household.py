@@ -368,6 +368,11 @@ def reset_box(state: WebState) -> int:
                 p.unlink(missing_ok=True)     # a link is removed, never what it points to
             else:
                 shutil.rmtree(p)
+        # Forget the encryption keys: the old family's encrypted folder can never be opened again.
+        from .vault import Vault
+        vlt = Vault(cfg.home)
+        if vlt.exists() or vlt.cipher.exists():
+            vlt.destroy()
     # The key came from the file that is now gone: stop using it in this process too.
     for k in config.KEY_ENV:
         v = os.environ.get(k)

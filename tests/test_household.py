@@ -235,7 +235,8 @@ def test_empty_home_sends_every_page_to_setup(empty):
 
 def test_setup_works_once(empty):
     cl, r = do_setup(empty)
-    assert r.status_code == 303 and r.headers["location"] == "/"
+    # Setup ends on the recovery key, shown once, already signed in.
+    assert r.status_code == 200 and "Save your recovery key" in r.text and web.COOKIE in cl.cookies
     home = cl.get("/")
     assert "Signed in as Dana" in home.text and "The Okafor family" in home.text
     assert empty.person("dana").admin
@@ -732,7 +733,7 @@ def set_up_box(empty, monkeypatch):
         monkeypatch.setenv(k, "x")
         monkeypatch.delenv(k)
     cl, r = do_setup(empty)
-    assert r.status_code == 303
+    assert r.status_code == 200
     token = csrf(cl.get("/"))
     up = cl.post("/upload", data={"folder": "ids", "csrf": token},
                  files={"file": ("card.txt", b"Library card 12345")})
@@ -773,7 +774,7 @@ def test_reset_wipes_the_box_and_reopens_setup(empty, monkeypatch, tmp_path):
     assert cl.get("/", follow_redirects=False).headers["location"] == "/setup"
     assert household.setup_open(empty)
     cl2, r2 = do_setup(empty, family="The Lee family", name="Jo")
-    assert r2.status_code == 303 and empty.person("jo").admin
+    assert r2.status_code == 200 and "Save your recovery key" in r2.text and empty.person("jo").admin
     assert "Library card" not in json.dumps(web.readable_files(empty, empty.person("jo")))
 
 
@@ -1023,7 +1024,7 @@ def test_reset_reopens_the_shared_index_for_the_new_family(empty, monkeypatch):
     cl = TestClient(web.create_app(empty, box=box), base_url="https://testserver")
     r = cl.post("/setup", data={"family": "The Okafor family", "name": "Dana", "pin": PIN, "pin2": PIN,
                                 "csrf": csrf(cl.get("/setup"))}, follow_redirects=False)
-    assert r.status_code == 303
+    assert r.status_code == 200
     token = csrf(cl.get("/"))
     cl.post("/upload", data={"folder": "shared", "csrf": token},
             files={"file": ("old.txt", b"Zebracorn SSN 123-45-6789")})
@@ -1034,7 +1035,7 @@ def test_reset_reopens_the_shared_index_for_the_new_family(empty, monkeypatch):
     cl2 = TestClient(web.create_app(empty, box=box), base_url="https://testserver")
     r = cl2.post("/setup", data={"family": "The Lee family", "name": "Jo", "pin": PIN, "pin2": PIN,
                                  "csrf": csrf(cl2.get("/setup"))}, follow_redirects=False)
-    assert r.status_code == 303
+    assert r.status_code == 200
     t2 = csrf(cl2.get("/"))
     cl2.post("/upload", data={"folder": "shared", "csrf": t2},
              files={"file": ("new.txt", b"New family SSN 987-65-4321")})
