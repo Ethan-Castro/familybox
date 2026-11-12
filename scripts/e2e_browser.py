@@ -380,6 +380,11 @@ def part_new_box(b: Browser, work: Path) -> None:
                                                    "pin2": "111111"})
         check("alex: setup refuses a PIN of one repeated digit", alex.path() == "/setup")
         alex.fill_submit('form[action="/setup"]', {"family": "Rivera", "name": "Alex", "pin": p1, "pin2": p1})
+        key = alex.js("(document.querySelector('.value')||{}).textContent||''").strip()
+        check("alex: setup shows the recovery key once", "recovery key" in alex.h1().lower() and len(key) >= 24,
+              alex.h1())
+        alex.shot("recovery-key")
+        alex.act("document.querySelector('a.main').click()")
         check("alex: setup signs you in on the home page", alex.path() == "/" and "Alex" in alex.text(),
               alex.path())
         check("alex: home page is a question box", alex.has("form.composer") and alex.has("aside.side"))

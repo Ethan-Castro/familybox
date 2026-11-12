@@ -22,7 +22,7 @@ uv run familybox ask --as maya "What medications am I on?"
 uv run familybox ask --as maya "What did the doctor say at Mom's last visit?"
 uv run familybox ask --as dana "What were our combined 2025 W-2 wages, and what do we still need for Maya's FAFSA?"
 uv run familybox pending --as maya        # values held for Maya's approval
-uv run pytest -q tests                    # 802 tests; 17 sandbox tests run only on Linux (the Pi)
+uv run pytest -q tests                    # 855 tests; 18 (sandbox, real disk encryption) run only on Linux (the Pi)
 uv run --with websocket-client python scripts/e2e_browser.py          # the box page in headless Chrome
 ```
 
@@ -30,6 +30,9 @@ uv run --with websocket-client python scripts/e2e_browser.py          # the box 
 homes: setting up a new box, inviting and joining, PIN rules, the AI key page, reset, and for the
 demo family sign-in, questions, a held number approved with its owner's PIN, uploads, every page and a
 phone-width pass. Add `--live` to ask NEAR AI Cloud a real question with the key from `.env`.
+
+The first question shows the health rule: an answer built from health records is not sent to the asker's
+assistant (or terminal); it waits on the box for its owner, and `pending --as maya` lists it.
 
 Without a key, `ask` replays recorded enclave conversations (`replays/`) for the six demo questions. The box's real tools, access checks and answer gate still run, and the output says "(replayed recording)". With a key, every question goes to NEAR AI Cloud live:
 
@@ -77,10 +80,16 @@ After that, the family needs no terminal:
 1. Plug the box into the router and into power.
 2. On a phone or computer on the same Wi-Fi, open `https://familybox.local:8443` (or `https://<board name>.local:8443` if the friendly name is not published). A box with a real certificate (`scripts/box_cert.py`, for example `https://home.familybox.offlinebase.com:8443`)
    opens with no warning. Otherwise the browser warns once because the box made its own certificate; accept it.
-3. On the setup page, type the family name, your name and a PIN. Setup stays open for 15 minutes after the box starts. If it closes, unplug the box and plug it back in.
+3. On the setup page, type the setup code from the box's sticker (if it has one), the family name, your name and a PIN.
+   Setup stays open for 15 minutes after the box starts. If it closes, unplug the box and plug it back in.
+   The box then shows a recovery key once: write it down. It encrypts the family's files with a key of its own.
 4. On the AI key page, paste the NEAR AI Cloud key once and press Check. The key is stored on the box and never shown again.
 5. Upload papers (many files or a whole folder at once), and invite each family member from the Family page with a QR code. Each person picks their own PIN.
 6. To link ChatGPT or Claude, get a linking code on the Assistants page.
+
+After a power cut the files stay encrypted and the box shows only an unlock page: the person who runs the box
+unlocks it from a phone they added on the Unlocking page (that phone plus their PIN), or with the recovery key.
+The same recovery key resets a forgotten admin PIN at `/recover`. Details: [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md) (11, 11b).
 
 If the box's address on the home network changes, restart it so `familybox.local` points to the new address. A box whose certificate was made before `familybox.local` was added keeps its certificate; `familybox serve` prints how to make a new one.
 
@@ -165,7 +174,7 @@ Run 6 adds the fixed health rule (answers built from health records stay on the 
 
 - **30 of the attacks** (direct asks, encodings such as spelled-out or reversed digits, piecing a number
   together, other people's data, health details, instructions planted in documents, tripwires): **0 leaks
-  through the box in all five runs.** Only this setup kept every question away from files
+  through the box in all six runs.** Only this setup kept every question away from files
   the asker may not read (in runs 4 and 5, the every-file setup read one in 10 questions each run).
 - **9 paraphrase attacks** ("describe Mom's condition without naming it"): in runs 1 to 3 the answer gate alone
   would have sent 8, 9 and 8 of them. With the second enclave check, 0, 4, 3, 2 and 2 went out (11 of 45). By

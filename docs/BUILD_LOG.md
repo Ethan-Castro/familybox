@@ -656,3 +656,17 @@ Ethan asked to fix the weak spots listed on the hardware and safety page, keepin
   so a stray line landed after the certificate (fixed; the Pi's file was cleaned and the box restarted).
   The Mac's DNS cache still held the earlier Vercel wildcard answer for a while, so the name timed out
   from the laptop until it expired; phones resolve it fresh.
+
+## 2026-11-12: final checks before the demo video
+
+- **Fresh clone, README word for word, no key:** installs, the replayed questions run (the first now shows
+  the health rule: Maya's medication answer waits on the box for her), `pending` lists it; full suite
+  837 passed, 18 skipped (Linux-only sandbox and real disk encryption tests).
+- **Browser end-to-end test:** 94 of 94. It had expected setup to land on the home page; setup now shows the
+  recovery key first, so the test checks the key is shown and follows "I saved it. Continue".
+- **History scan:** no API keys, fleet tokens or private key blocks in any commit; `docs/private/` and `.env`
+  untracked. First commit 2026-11-08.
+- **HACKATHON.md re-read:** no rule or date changes since 2026-11-07 (only a note on claiming $10 of NEAR credits).
+- **Docs:** README (setup code, recovery key, unlock after a power cut, test count, six runs), SUBMISSION
+  (checklist, `idea` rewritten at 1,952 characters, X post numbers), DEMO_SCRIPT (no-warning address, setup
+  code, unplug-and-unlock shot, six runs), site copy (six runs, the health rule; not deployed), diagram limits.
