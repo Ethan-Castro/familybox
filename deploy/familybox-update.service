@@ -1,0 +1,23 @@
+# familybox-update: install a newer signed release of the box's code, once. Started by
+# familybox-update.timer. Installed by scripts/pi_service.sh into ~/.config/systemd/user. No root needed.
+# It refuses anything not signed by the release key in the installed code, anything not newer than
+# what is installed, and any tarball whose SHA-256 does not match. If the box's page does not answer
+# within 60 s of the restart, it puts the previous code back. ~/familybox-home is never touched.
+# Steps are logged to ~/familybox-home/runtime/updates.log.
+# To read releases from somewhere else:  systemctl --user edit familybox-update.service  and add
+#   [Service]
+#   Environment=FAMILYBOX_UPDATE_URL=https://example.org/familybox/
+[Unit]
+Description=familybox signed update (installs only a newer release signed by our key)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+Environment=FAMILYBOX_HOME=%h/familybox-home
+Environment=FAMILYBOX_CODE_DIR=%h/familybox
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+Environment=PYTHONUNBUFFERED=1
+ExecStart=%h/.local/bin/uv run --directory %h/familybox familybox update apply --yes --port 8443
+TimeoutStartSec=30min
+Nice=10

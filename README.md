@@ -83,6 +83,37 @@ After that, the family needs no terminal:
 
 If the box's address on the home network changes, restart it so `familybox.local` points to the new address. A box whose certificate was made before `familybox.local` was added keeps its certificate; `familybox serve` prints how to make a new one.
 
+### Updates
+
+The box updates its own code once a day from signed releases, and refuses anything else.
+
+```bash
+# on the developer's laptop (publishes nothing)
+uv run python scripts/release.py --new-key      # once: private key to ~/.config/familybox/, public half to src/familybox/release_key.pub (commit it)
+uv run python scripts/release.py                # dist/release-<version>/: tarball of HEAD, manifest.json, manifest.json.sig
+#   then attach those three files to a GitHub release
+
+# on the box
+uv run familybox update check                   # is a newer signed release out?
+uv run familybox update apply                   # install it (asks first; --yes to skip the question)
+```
+
+- `scripts/pi_service.sh` installs `familybox-update.timer`, which runs `familybox update apply --yes` once a
+  day at a random time between 2 and 5 at night, or soon after power-on if the box was off then.
+  `FAMILYBOX_AUTO_UPDATE=off bash scripts/pi_service.sh` leaves the timer off.
+- Releases are read from `FAMILYBOX_UPDATE_URL`, a web address (HTTPS only) or a `file://` folder. The default
+  is this repo's latest GitHub release, which works once the repo is public.
+- Before installing, the box checks the signature against the release key in its own code (before it reads
+  anything else in the manifest), refuses a version that is not newer than the one installed, checks the
+  tarball's SHA-256, and refuses any entry that could write outside the folder.
+- Installing: unpack to `~/familybox.next`, `uv sync --frozen`, check the box imports, swap folders
+  (`~/familybox` becomes `~/familybox.prev`), restart the service and wait up to 60 s for the page to answer. If
+  it doesn't, the box puts the previous code back, restarts again and does not try that version again.
+- `~/familybox-home` (files, logs, keys) is never touched. Every step goes into
+  `~/familybox-home/runtime/updates.log`.
+- The board's own software is separate: `bash scripts/pi_os_updates.sh`, run once by someone who can `sudo`,
+  turns on Debian's automatic security updates (`unattended-upgrades`).
+
 ### Photos of cards and documents
 
 ```bash
@@ -193,7 +224,7 @@ box stops live questions instead of skipping it. Details: [docs/BUILD_LOG.md](do
 | `replays/` | Recorded enclave conversations for the no-key demo |
 | `eval/` | Attack suite, results and reports |
 | `spikes/` | The Day-1 experiments and probes behind the design |
-| `scripts/` | Pi installer and fleet exec helper (no SSH) |
+| `scripts/` | Pi installer, service and update setup, release signing (`release.py`), fleet exec helper (no SSH) |
 | `contracts/disclosure-anchor/` | NEAR contract that keeps each log's newest chain head (not compiled yet) |
 | `docs/` | Plan, build log, cloud setup, diagram, research |
 

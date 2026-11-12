@@ -1,0 +1,13 @@
+# familybox-update.timer: look for a signed update once a day, at a random time between 2 and 5 at night.
+# Persistent=true: if the box was off at that time, it checks soon after it next starts.
+# Installed and turned on by scripts/pi_service.sh. Turn it off:  systemctl --user disable --now familybox-update.timer
+[Unit]
+Description=familybox daily signed update check
+
+[Timer]
+OnCalendar=*-*-* 02:00:00
+RandomizedDelaySec=3h
+Persistent=true
+
+[Install]
+WantedBy=timers.target

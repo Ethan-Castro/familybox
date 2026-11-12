@@ -20,9 +20,11 @@ values left the box.
 | NEAR's gateway and operators | See traffic metadata, swap the serving code | The model has to run somewhere we do not control. |
 | The network and the cloud backup | Read anything not encrypted | Home Wi-Fi, Google Drive. |
 | Visitors to the red-team page | Hammer it, try to spend the budget | It is meant for strangers (judges). |
+| Whoever serves the update files (GitHub, the network, a mirror) | Serve old, altered or made-up releases | The box installs new code on its own every day. |
 
-**Trusted:** the box itself (its OS, its disk, whoever has root on it), the owner's own screen, and the
-hardware vendors behind the enclave attestation (Intel TDX, NVIDIA).
+**Trusted:** the box itself (its OS, its disk, whoever has root on it), the owner's own screen, the
+hardware vendors behind the enclave attestation (Intel TDX, NVIDIA), and the release signing key on the
+developer's laptop.
 
 ## Controls
 
@@ -129,6 +131,39 @@ Runs only on a dedicated fictional demo home, bound to 127.0.0.1 until hosting i
 and global caps, a daily token cap and a hard daily dollar budget with worst-case reservations; past the
 budget it switches to recorded answers. Visitor IPs are hashed, never stored. The paraphrase check and
 workbench are off there by design (they would break the spending bound).
+
+### 13. Updates to the box's code (enforced)
+
+- **What is signed:** each release's `manifest.json` (version, git commit, the tarball's SHA-256 and file
+  name). The signature is Ed25519, made by `scripts/release.py`, over the exact manifest bytes. The tarball is
+  covered through its SHA-256.
+- **Where the keys live:** the private key only on the developer's laptop, in
+  `~/.config/familybox/release-signing.key` (0600, in a 0700 folder, never in the repo, never printed). The
+  public key ships inside the box's code (`src/familybox/release_key.pub`), so only a release signed with the
+  current key can change which key the box trusts.
+- **Order of checks:** the signature is checked before anything in the manifest is read. Then the version
+  must be newer than the installed one (`.familybox-release.json` in the code folder; none means 0), so an
+  old signed release cannot be replayed to roll a box back. Then the SHA-256. Then every tarball entry:
+  absolute paths, `..`, device files, pipes and links that lead outside the folder are refused, and the
+  tarball is unpacked with Python's `data` filter and checked again once unpacked.
+- **Getting the files:** HTTPS only (redirects to plain HTTP are refused) or a local folder; size caps
+  (manifest 64 KB, tarball 200 MB) and timeouts.
+- **Python packages:** `uv sync --frozen` installs exactly what the signed `uv.lock` names, and uv checks
+  each download against the hashes in it.
+- **A release that does not start:** if the page does not answer within 60 s of the restart, the previous
+  code is put back and restarted, and that version is not tried again. The box's home is never touched.
+- **Not covered:**
+  - **A stolen release key.** Whoever has it can ship code to every box with the daily timer on. The key file
+    has no passphrase; the laptop's login and disk encryption protect it. There is no way to revoke it from a
+    distance: boxes would have to be fixed by hand.
+  - **Holding updates back.** Someone who controls the download can keep serving an older release, or
+    nothing. The box stays on what it has; it has no "too old" deadline.
+  - **The board's own software.** `scripts/pi_os_updates.sh` turns on Debian's `unattended-upgrades`; those
+    updates trust Debian's own archive signing, which familybox does not check. By default only Debian
+    security updates are installed; packages from the Raspberry Pi archive (kernel, firmware) are not on
+    that list. uv and Python themselves are not updated by either path.
+  - **The packages' authors.** Hashes in `uv.lock` stop a changed download, not a bad version that was
+    chosen on purpose or by mistake when the lock was made.
 
 ## Not covered
 
