@@ -563,3 +563,10 @@ for sideways scrolling at phone width. Results tonight: 93 of 93 offline checks,
 - Check steps now read in plain words, once each: NEAR code checks and the second privacy check.
 - Full suite: 785 passed, 17 skipped (Linux-only sandbox tests).
 
+
+**Pre-release checks (Nov 11, night).** History: 87 commits, all dated Nov 8 to Nov 11, 2026 (first
+commit Nov 8, 15:20 ET), inside the hackathon window. Secret scan over every commit: no hits for common
+key formats (OpenAI-style, AWS, GitHub, Google, Slack, private keys, fleet `jpt_`/`jik_` tokens), and
+the real NEAR key and fleet token from `.env`, matched by value, appear in no commit, no tracked file and
+nothing under `site/`. The only env file ever tracked is `.env.example`, which holds no values beyond
+the model name, `./demo` and the fleet's default address.
