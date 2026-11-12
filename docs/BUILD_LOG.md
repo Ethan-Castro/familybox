@@ -570,3 +570,9 @@ key formats (OpenAI-style, AWS, GitHub, Google, Slack, private keys, fleet `jpt_
 the real NEAR key and fleet token from `.env`, matched by value, appear in no commit, no tracked file and
 nothing under `site/`. The only env file ever tracked is `.env.example`, which holds no values beyond
 the model name, `./demo` and the fleet's default address.
+
+**Site on phones (Nov 11, night).** A phone-width check in headless Chrome found the public page laid
+out 657px wide on a 390px phone, so phones would show it zoomed out. Cause: the top picture keeps a
+16:8.6 shape with a 340px minimum height, which forces at least 633px of width (the phone tile next to
+it forced 427px the same way). Fixed in `site/index.html` with a fixed height under 700px; now 390 on a
+390 phone and 360 on a 360 phone, no overflow, no browser errors. Not yet deployed: waiting for Ethan's OK.

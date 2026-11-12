@@ -91,6 +91,10 @@ nav .right { margin-left: auto; display: flex; gap: 8px; align-items: center; }
 .stage .words { position: absolute; left: 0; right: 0; top: 56%; display: flex; justify-content: center; gap: clamp(28px, 9vw, 190px); color: #fff; font-weight: 600; font-size: clamp(26px, 4vw, 50px); letter-spacing: -0.035em; line-height: 1; padding: 0 24px; text-align: center; flex-wrap: wrap; row-gap: 12px; }
 .narrow .img { aspect-ratio: 1 / 1; min-height: 240px; background: linear-gradient(200deg, #10203f 0%, #1c3f7a 45%, #e5a45c 120%); background-size: 180% 180%; animation: drift 14s ease-in-out infinite alternate; display: grid; place-items: center; }
 @media (max-width: 900px) { .narrow .img { aspect-ratio: 16 / 9; } }
+/* phones: a fixed height, so a minimum height can't stretch the shape wider than the screen */
+@media (max-width: 700px) { .stage { aspect-ratio: auto; min-height: 0; height: 340px; }
+  .narrow .img { aspect-ratio: auto; min-height: 0; height: 260px; } }
+.feature > * { min-width: 0; }
 .cap { margin-top: 16px; }
 .t { font-size: 19px; line-height: 1.32; font-weight: 500; letter-spacing: -0.015em; text-wrap: balance; }
 .m { font-size: 14px; color: var(--graphite); margin-top: 8px; }
