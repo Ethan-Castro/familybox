@@ -178,6 +178,33 @@ async def _maybe_await(x):
     return await x if inspect.isawaitable(x) else x
 
 
+HEALTH_HOLD_TEXT = ("This answer comes from {who}'s health records, so the family box keeps it at home. "
+                    "{who} can read it on the family box page (Approvals).")
+
+
+def health_hold(cfg: Config, person_id: str, ctx, result: gate.GateResult) -> None:
+    """A fixed rule, not a model: an answer built from any health file never goes to an outside assistant.
+
+    The value gate and the second check catch health details they recognize; a model can still describe them
+    in other words. So when the question opened a health file, the whole answer is held for the person who
+    asked (health files are readable only by their owner, so that is whose record it is), and the assistant
+    gets a pointer to the box. Questions asked on the box's own page are shown there, so they are not held."""
+    if ctx.source == "web" or result.outcome == "refused":
+        return
+    health = sorted({p for p in ctx.files_read if access.is_health(p)})
+    if not health:
+        return
+    who = cfg.people[person_id].display if person_id in cfg.people else person_id
+    if any(h.kind == "answer" for h in result.held):   # the second check already held the whole answer
+        return
+    hid = "health-" + hashlib.sha256(f"{ctx.qid}:health-answer".encode()).hexdigest()[:16]
+    result.held.append(gate.Held(hid, "answer", "Full answer (from health records)", result.text, person_id,
+                                 health[0]))
+    result.text = HEALTH_HOLD_TEXT.format(who=who)
+    result.bump("held", f"health records: whole answer kept on the box ({len(health)} file(s))")
+    ctx.emit("health_hold", files=len(health))
+
+
 class Box:
     def __init__(self, cfg: Config, *, mode: str = "auto", replay_dir: Path | None = None):
         self.cfg = cfg
@@ -308,6 +335,8 @@ class Box:
                 result.text = gate.REFUSED_TEXT
             ctx.emit("post_checks", outcome=result.outcome, held=_held_summary(result.held),
                      reasons=len(result.reasons))
+
+        health_hold(self.cfg, person_id, ctx, result)
 
         ans = Answer(person_id, question, result.text, result.outcome, result.reasons,
                      enclave={"model": draft.model, "replayed": draft.replayed, "attestation": draft.attestation,

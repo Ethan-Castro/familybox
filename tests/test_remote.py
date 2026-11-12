@@ -233,8 +233,8 @@ async def test_full_oauth_flow_then_mcp_over_http(http, cfg):
     assert "as Maya" in await m.call("family_box_status")
     out = await m.call("ask_family_box", {"question": MAYA_Q})
     assert "Answered for Maya" in out
-    # The gate still runs on remote answers: the health detail is held, not sent to the assistant.
-    assert "held for Maya's approval" in out and "Albuterol" not in out
+    # Remote answers built from health records stay on the box whole; the assistant only gets a pointer.
+    assert "Maya's health records, so the family box keeps it at home" in out and "Albuterol" not in out
 
     last = [e for e in audit(cfg, "maya") if "source" in e][-1]
     assert last["source"].partition(":")[0] == "mcp-remote"   # ":<client name>" is a label (feat/unoq)

@@ -83,7 +83,9 @@ def write_replay(replay_dir: Path, person: str, question: str, answer: str, tool
 
 def ask(cfg, tmp_path, person, question, answer, tool_calls):
     write_replay(tmp_path / "rp", person, question, answer, tool_calls)
-    return Box(cfg, mode="replay", replay_dir=tmp_path / "rp").ask(person, question)
+    # Asked on the box page: these tests judge the second check itself. Answers to outside assistants that
+    # come from health files are held whole by a fixed rule (tests/test_integration_fixes.py).
+    return Box(cfg, mode="replay", replay_dir=tmp_path / "rp").ask(person, question, source="web")
 
 
 def read(path):
@@ -264,7 +266,7 @@ def test_auto_checks_live_answers(cfg, classifier, monkeypatch):
         run_tool("read_file", {"path": DANA_VISIT})
         return enclave.Draft(answer=REWORDED, model="m")
     monkeypatch.setattr(enclave, "ask_live", fake_live)
-    ans = Box(cfg, mode="live").ask("dana", "Meds?")
+    ans = Box(cfg, mode="live").ask("dana", "Meds?", source="web")
     assert len(fake.calls) == 2 and ans.outcome == "held" and "mood pill" not in ans.text
 
 
@@ -671,7 +673,7 @@ def test_classifier_holds_when_the_near_code_check_did_not_load(cfg, tmp_path, c
     write_replay(tmp_path / "rp", "dana", "How am I?", REWORDED, read(DANA_VISIT))
     box = Box(cfg, mode="replay", replay_dir=tmp_path / "rp")
     box.client_options[:] = []                      # as if plugins/pinning.py failed to import
-    ans = box.ask("dana", "How am I?")
+    ans = box.ask("dana", "How am I?", source="web")
     assert ans.outcome == "held" and ans.text == P.HELD_FAILED_TEXT.format(who="Dana")
     assert fake.calls == []
     assert "did not load" in check_event(cfg, ans)["why"]

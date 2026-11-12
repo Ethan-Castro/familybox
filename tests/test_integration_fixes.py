@@ -97,3 +97,27 @@ def test_other_person_named_only_in_the_question_counts(cfg):
     a = "Her counseling sessions switched to every other Tuesday."
     assert not paraphrase.mentions_other_person(a, maya, people)
     assert paraphrase.mentions_other_person(f"{q}\n{a}", maya, people)
+
+
+# --- health answers stay on the box (fixed rule, 2026-11-12) ---------------------------------------------
+
+def test_an_answer_from_health_records_never_goes_to_an_assistant(cfg):
+    from familybox.box import HEALTH_HOLD_TEXT
+    ans = Box(cfg, mode="replay").ask("maya", "What medications am I on?", source="mcp-stdio")
+    assert any("/health/" in p for p in ans.files_read)
+    assert ans.outcome == "held" and ans.text == HEALTH_HOLD_TEXT.format(who="Maya")
+    waiting = Approvals(cfg).pending("maya")
+    assert any(w["kind"] == "answer" and "health" in w["path"] for w in waiting)
+    assert not Approvals(cfg).pending("dana")          # only the record's owner can open it
+
+
+def test_on_the_box_page_the_owner_reads_her_own_health_answer(cfg):
+    from familybox.box import HEALTH_HOLD_TEXT
+    ans = Box(cfg, mode="replay").ask("maya", "What medications am I on?", source="web")
+    assert ans.text != HEALTH_HOLD_TEXT.format(who="Maya")
+
+
+def test_questions_without_health_files_are_not_held_whole(cfg):
+    ans = Box(cfg, mode="replay").ask("dana", "When does the car registration renew, and what is our health "
+                                              "insurance deductible?")
+    assert not any("health records" in r for r in ans.reasons) and "health records" not in ans.text

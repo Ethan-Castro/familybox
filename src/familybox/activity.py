@@ -561,6 +561,10 @@ def render_detail(view: View, events: list[dict], audit: dict | None, status: st
             if seen_key not in pins_shown:
                 pins_shown.add(seen_key)
                 items.append(_pin_item(view, ev, t, key))
+        elif step == "health_hold":
+            items.append(_item("ok", "Health rule: the whole answer stays on the box",
+                               "<p>It came from health records, so the assistant only gets a note to read it "
+                               "here. The owner opens it in Approvals.</p>", t, key))
         elif step == "paraphrase_check":
             items.append(_paraphrase_item(ev, t, key))
         else:
