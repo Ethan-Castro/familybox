@@ -461,6 +461,7 @@ def render_detail(view: View, events: list[dict], audit: dict | None, status: st
     chip_html = "".join(f'<span class="fb-badge {c}">{esc(t)}</span>' for c, t in chips)
 
     items = []
+    pins_shown: set = set()
     for n, ev in enumerate(events):
         step, t = ev.get("step"), ev.get("t")
         key = f"ev-{n}"
@@ -555,7 +556,13 @@ def render_detail(view: View, events: list[dict], audit: dict | None, status: st
             items.append(_item(OUTCOME_CLASS.get(out, "info"), f"Done: {esc(OUTCOME_LABELS.get(out, out))}",
                                f'<p class="muted">{esc(", ".join(bits))}.</p>', t, key))
         elif step == "pinning":
-            items.append(_pin_item(view, ev, t, key))
+            # One line per part and result: the box checks NEAR's code several times per question.
+            seen_key = (str(ev.get("component") or "").split("/")[0], ev.get("status"))
+            if seen_key not in pins_shown:
+                pins_shown.add(seen_key)
+                items.append(_pin_item(view, ev, t, key))
+        elif step == "paraphrase_check":
+            items.append(_paraphrase_item(ev, t, key))
         else:
             items.append(_item("info", f"Step: {esc(step)}", "", t, key))
     if status == "running":
@@ -610,6 +617,28 @@ def _pin_item(view: View, ev: dict, t, key: str) -> str:
         return _item("info", f"NEAR's code changed for {esc(part)}; this box is set to allow that and log it",
                      "", t, key)
     return _item("ok", f"NEAR's code matches the approved version: {esc(part)}", "", t, key)
+
+
+PARAPHRASE_TEXT = {
+    "pass": ("ok", "Second privacy check: nothing private was reworded into the answer"),
+    "skipped": ("info", "Second privacy check: not needed"),
+    "masked": ("ok", "Second privacy check: covered up a reworded private detail"),
+    "refused": ("bad", "Second privacy check: stopped the answer"),
+    "held_whole": ("bad", "Second privacy check: held the whole answer for its owner"),
+    "held_check_failed": ("bad", "Second privacy check could not run, so the answer was held"),
+    "not_loaded": ("bad", "Second privacy check did not load, so nothing was answered"),
+}
+
+
+def _paraphrase_item(ev: dict, t, key: str) -> str:
+    """The check that looks for private facts written in other words. Its reason text stays off the page:
+    it can name what it was looking for."""
+    cls, title = PARAPHRASE_TEXT.get(str(ev.get("action")), ("info", "Second privacy check"))
+    body = ""
+    if ev.get("action") == "skipped" and ev.get("why") in ("turned off", "nothing would be sent",
+                                                           "replayed demo answer"):
+        body = f'<p class="muted">{esc(str(ev["why"]).capitalize())}.</p>'
+    return _item(cls, title, body, t, key)
 
 
 def _files_and_reasons(view: View, audit: dict) -> str:

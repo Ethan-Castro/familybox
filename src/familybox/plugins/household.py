@@ -123,8 +123,8 @@ def _disk(n: int) -> str:
 
 def web_routes(ctx):
     from .. import enclave
-    from ..web import (COOKIE, INVITE_TTL_S, STALE_FORM, _audit, _page, origin_ok, pre_ok, readable_files,
-                       set_pre_cookie, signed_in)
+    from ..web import (COOKIE, INVITE_TTL_S, STALE_FORM, _audit, _page, origin_ok, pre_ok, pre_token,
+                       readable_files, set_pre_cookie, signed_in)
 
     cfg, esc, state = ctx.cfg, ctx.esc, ctx.state
     csrf = ctx.csrf_field
@@ -133,13 +133,13 @@ def web_routes(ctx):
         return f'<p class="{"ok" if ok else "bad"}">{esc(msg)}</p>' if msg else ""
 
     # ---- first-time setup
-    def setup_page(msg: str = "", status: int = 200) -> Response:
+    def setup_page(msg: str = "", status: int = 200, pre: str | None = None) -> Response:
         if not household.setup_open(cfg):
             body = ('<h1>Setup is closed</h1><div class="card"><p>For safety, a new box can only be set up in the '
                     'first 15 minutes after it starts.</p><p>Unplug the box and plug it back in to start setup.</p>'
                     '</div>')
             return _page(cfg, "Setup", body, status=403 if status == 200 else status)
-        pre = secrets.token_urlsafe(24)
+        pre = pre or secrets.token_urlsafe(24)
         body = (f'<h1>Set up your family box</h1>{note(msg, False)}'
                 f'<form method="post" action="/setup" class="card">{csrf(pre)}'
                 f'<label for="family">Family name</label>'
@@ -162,7 +162,7 @@ def web_routes(ctx):
     async def setup_get(request: Request):
         if cfg.people:
             return RedirectResponse("/" if ctx.session_of(request) else "/signin", status_code=303)
-        return setup_page()
+        return setup_page(pre=pre_token(request))
 
     async def setup_post(request: Request):
         if cfg.people:
@@ -171,18 +171,18 @@ def web_routes(ctx):
             return ctx.forbidden()
         form = await request.form()
         if not pre_ok(request, form):
-            return setup_page(STALE_FORM, 403)        # a fresh form, nothing saved
+            return setup_page(STALE_FORM, 403, pre_token(request))   # a fresh form, nothing saved
         if not household.setup_open(cfg):
             return setup_page(status=403)
         pin = str(form.get("pin", ""))
         if pin != str(form.get("pin2", "")):
-            return setup_page("The two PINs don't match. Try again.", 400)
+            return setup_page("The two PINs don't match. Try again.", 400, pre_token(request))
         try:
             person = household.setup_family(state, str(form.get("family", "")), str(form.get("name", "")), pin)
         except HouseholdError as e:
             if not household.setup_open(cfg):
                 return ctx.forbidden("This box is already set up.") if cfg.people else setup_page(status=403)
-            return setup_page(str(e), 400)
+            return setup_page(str(e), 400, pre_token(request))
         _audit(cfg, person.id, {"event": "setup", "person": person.id})
         return signed_in(state, person.id)
 
@@ -348,8 +348,8 @@ def web_routes(ctx):
         return family_page(sess, extra=extra)
 
     # ---- joining with an invite
-    def join_page(code: str = "", msg: str = "", status: int = 200) -> Response:
-        pre = secrets.token_urlsafe(24)
+    def join_page(code: str = "", msg: str = "", status: int = 200, pre: str | None = None) -> Response:
+        pre = pre or secrets.token_urlsafe(24)
         body = (f'<h1>Join your family box</h1>{note(msg, False)}'
                 f'<form method="post" action="/join" class="card">{csrf(pre)}'
                 f'<label for="code">Invite code</label>'
@@ -369,23 +369,24 @@ def web_routes(ctx):
 
     async def join_get(request: Request):
         raw = request.query_params.get("c", "")
-        return join_page(state.normalize(raw)[:12])
+        return join_page(state.normalize(raw)[:12], pre=pre_token(request))
 
     async def join_post(request: Request):
         if not origin_ok(request):
             return ctx.forbidden()
         form = await request.form()
         if not pre_ok(request, form):
-            return join_page(state.normalize(str(form.get("code", "")))[:12], STALE_FORM, 403)
+            return join_page(state.normalize(str(form.get("code", "")))[:12], STALE_FORM, 403,
+                             pre=pre_token(request))
         code = str(form.get("code", ""))
         pin = str(form.get("pin", ""))
         keep = state.normalize(code)[:12]
         # Check the PIN before using the code, so a typo in the PIN never uses up the invite.
         if pin != str(form.get("pin2", "")):
-            return join_page(keep, "The two PINs don't match. Try again.", 400)
+            return join_page(keep, "The two PINs don't match. Try again.", 400, pre=pre_token(request))
         why = household.pin_problem(pin)
         if why:
-            return join_page(keep, why, 400)
+            return join_page(keep, why, 400, pre=pre_token(request))
         pid, reason = state.redeem(code, kind="invite")
         if pid is None:
             if reason == "locked":
@@ -395,7 +396,7 @@ def web_routes(ctx):
             else:
                 msg = ("That invite didn't work. It may have been used or be more than 30 minutes old. "
                        "Ask for a new one.")
-            return join_page("", msg, 429 if reason == "locked" else 401)
+            return join_page("", msg, 429 if reason == "locked" else 401, pre=pre_token(request))
         if household.has_pin(state, pid):
             # Never replace a PIN through an invite: changing one needs the PIN itself (/settings/pin).
             _audit(cfg, pid, {"event": "join_refused", "person": pid, "reason": "has_pin"})

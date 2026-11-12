@@ -545,3 +545,21 @@ def test_a_code_change_stop_tells_people_what_to_do(cfg):
                              [events[0], {"step": "pinning", "status": "match", "component": "model/x", "t": 1}],
                              None, "running")
     assert "matches the approved version" in fine and "fb-go" not in fine
+
+
+def test_second_privacy_check_step_is_in_plain_words(cfg):
+    view = act.View(cfg, cfg.person("dana"), "dana")
+    out = act.render_detail(view, [{"step": "paraphrase_check", "action": "skipped", "why": "replayed demo answer",
+                                    "t": 1}], None, "running")
+    assert "Step: paraphrase_check" not in out and "Second privacy check: not needed" in out
+    out = act.render_detail(view, [{"step": "paraphrase_check", "action": "refused", "why": "Maya's SSN", "t": 1}],
+                            None, "running")
+    assert "stopped the answer" in out and "SSN" not in out
+
+
+def test_repeated_code_checks_show_once(cfg):
+    view = act.View(cfg, cfg.person("dana"), "dana")
+    ev = [{"step": "pinning", "status": "match", "component": c, "t": 1}
+          for c in ("gateway", "model/x", "model/x", "gateway", "model/x/manager")]
+    out = act.render_detail(view, ev, None, "running")
+    assert out.count("matches the approved version") == 2

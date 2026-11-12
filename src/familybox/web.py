@@ -357,7 +357,9 @@ class SetupGate:
     """While the box has no family yet, every page except /setup and the style sheet sends the browser
     to /setup. The setup page itself decides whether setup is still allowed (household.setup_open)."""
 
-    OPEN = frozenset({"/setup", "/static/style.css"})
+    # /favicon.ico too: browsers fetch it on their own, and sending it to /setup would hand out a new
+    # form token behind the person's back, so their first setup try would come back "out of date".
+    OPEN = frozenset({"/setup", "/static/style.css", "/favicon.ico"})
 
     def __init__(self, app: ASGIApp, cfg: Config):
         self.app = app
@@ -384,6 +386,13 @@ def set_pre_cookie(resp: Response, token: str) -> Response:
     """The CSRF cookie for forms shown before anyone is signed in (/signin, /setup, /join)."""
     resp.set_cookie(PRE_COOKIE, token, max_age=CODE_TTL_S * 3, secure=True, httponly=True, samesite="strict")
     return resp
+
+
+def pre_token(request: Request) -> str:
+    """The token for a form shown before sign-in. Reuses this browser's own cookie when it has one, so a
+    second tab (or anything else that loads the page again) does not make the first tab's form stale."""
+    have = request.cookies.get(PRE_COOKIE, "")
+    return have if re.fullmatch(r"[A-Za-z0-9_-]{32}", have) else secrets.token_urlsafe(24)
 
 
 def pre_ok(request: Request, form) -> bool:
@@ -940,7 +949,7 @@ def create_app(cfg: Config, *, port: int = 8443, remote_only: bool = False, box=
     async def signin_get(request: Request):
         if session_of(request):
             return RedirectResponse("/", status_code=303)
-        return signin_page(secrets.token_urlsafe(24))
+        return signin_page(pre_token(request))
 
     async def signin_post(request: Request):
         if not origin_ok(request):
@@ -949,7 +958,7 @@ def create_app(cfg: Config, *, port: int = 8443, remote_only: bool = False, box=
         if not pre_ok(request, form):
             # Same page, old token (another tab or an old page reset the cookie): show a fresh form,
             # with nothing done, instead of a dead end. Cross-site posts were refused above.
-            return signin_page(secrets.token_urlsafe(24), STALE_FORM, status=403)
+            return signin_page(pre_token(request), STALE_FORM, status=403)
         if "pin" in form:
             from . import household
             person_id = str(form.get("person", ""))
@@ -957,7 +966,7 @@ def create_app(cfg: Config, *, port: int = 8443, remote_only: bool = False, box=
             if not ok:
                 msg = ("Too many wrong PINs for this name. Wait 10 minutes, or sign in with a code."
                        if why == "locked" else "That PIN didn't work. Check it and try again.")
-                return signin_page(secrets.token_urlsafe(24), msg, status=429 if why == "locked" else 401)
+                return signin_page(pre_token(request), msg, status=429 if why == "locked" else 401)
             return signed_in(state, person_id)
         person_id, why = state.redeem(str(form.get("code", "")))
         if why == "invite":
@@ -968,7 +977,7 @@ def create_app(cfg: Config, *, port: int = 8443, remote_only: bool = False, box=
         if person_id is None:
             msg = ("Too many wrong codes. Wait 10 minutes, then try again." if why == "locked"
                    else "That code didn't work. Check it, or ask for a new one.")
-            return signin_page(secrets.token_urlsafe(24), msg, status=429 if why == "locked" else 401)
+            return signin_page(pre_token(request), msg, status=429 if why == "locked" else 401)
         return signed_in(state, person_id)
 
     async def signout(request: Request):

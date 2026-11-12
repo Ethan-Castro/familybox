@@ -323,19 +323,33 @@ def test_pin_sign_in_needs_csrf(cfg):
 
 
 def test_stale_sign_in_tab_gets_a_fresh_form(cfg):
-    """Two sign-in tabs: the older one's token no longer matches the cookie. The box shows a fresh form
-    (nothing done) instead of a dead end, and signing in from it works."""
+    """A second sign-in tab reuses the browser's token, so the first tab still works. A token that really is
+    old (the cookie expired or was replaced) gets a fresh form, nothing done, instead of a dead end."""
     household.set_pin(web.WebState(cfg), "maya", PIN)
     cl = client(cfg)
-    old = csrf(cl.get("/signin"))
-    cl.get("/signin")                                            # a second tab resets the cookie
-    r = cl.post("/signin", data={"person": "maya", "pin": PIN, "csrf": old})
+    first = csrf(cl.get("/signin"))
+    assert csrf(cl.get("/signin")) == first                      # a second tab: same token
+    cl.cookies.clear()                                           # the cookie expired under the tab ...
+    cl.get("/signin")                                            # ... and a new page set a new one
+    r = cl.post("/signin", data={"person": "maya", "pin": PIN, "csrf": first})
     assert r.status_code == 403 and "out of date" in r.text and web.COOKIE not in cl.cookies
     r = cl.post("/signin", data={"person": "maya", "pin": PIN, "csrf": csrf(r)})
     assert r.status_code == 200 and web.COOKIE in cl.cookies     # signed in, sent on to the home page
-    r = client(cfg).post("/signin", data={"person": "maya", "pin": PIN, "csrf": old},
+    r = client(cfg).post("/signin", data={"person": "maya", "pin": PIN, "csrf": first},
                          headers={"origin": "https://evil.example"})
     assert r.status_code == 403 and "out of date" not in r.text  # other sites still get the plain refusal
+
+
+def test_the_browser_icon_does_not_spoil_first_setup(tmp_path, monkeypatch):
+    """Browsers fetch /favicon.ico on their own. On an empty box that used to land on /setup and replace
+    the form's token, so the first setup try always came back out of date."""
+    monkeypatch.setenv("FAMILYBOX_HOME", str(tmp_path))
+    c = config.load()
+    cl = client(c)
+    token = csrf(cl.get("/setup"))
+    assert cl.get("/favicon.ico", follow_redirects=False).status_code == 204
+    r = cl.post("/setup", data={"family": "Rivera", "name": "Alex", "pin": PIN, "pin2": PIN, "csrf": token})
+    assert r.status_code == 200 and web.COOKIE in cl.cookies and "alex" in c.people
 
 
 # --- Family page ----------------------------------------------------------------------------------
