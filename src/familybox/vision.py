@@ -223,9 +223,10 @@ async def transcribe_live(prep: Prepared, *, api_key: str, model: str, emit: Emi
     client_options: NEAR code check options from pin_options (verifiers, deployment_policy)."""
     from nearai_inference_sdk import InferenceClient, get_sdk_error
 
-    from .enclave import _LOCKED_CLIENT_OPTIONS, _enclave_cause
+    from .enclave import _LOCKED_CLIENT_OPTIONS, _enclave_cause, refuse_abliterated
 
     emit = emit or _no_emit
+    refuse_abliterated(model)
     client_options = dict(client_options or {})
     if locked := sorted(_LOCKED_CLIENT_OPTIONS & set(client_options)):
         err = EnclaveError(f"a plugin tried to change locked enclave settings: {', '.join(locked)}")

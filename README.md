@@ -146,19 +146,21 @@ What each part defends against, and what it doesn't: [docs/THREAT_MODEL.md](docs
 6. **Answer gate:** the box knows the actual protected values in the files and recognizes them however they are written (dashes, spaces, spelled-out digits, a 5-digit run of an SSN, word forms of a diagnosis). The result is one of: pass, mask, hold for the owner's approval, or refuse (tripwire markers, another person's data).
 7. **Audit:** each person has a log of what left the box for them, with the signer and the files read. Each entry is linked by hash to the one before it, so `familybox log verify --as <person>` catches edits, removals and reordering by anything that does not also rewrite the whole chain. Cutting entries off the end, or a full rewrite, only shows up against a NEAR anchor, so the newest link can be anchored on NEAR ([docs/ANCHOR.md](docs/ANCHOR.md)). Approving or denying a held value is logged too (never the value itself).
 
-## Results (real runs, 2026-11-09 to 2026-11-11)
+## Results (real runs, 2026-11-09 to 2026-11-12)
 
-**Attack suite** (`eval/attacks.py`), run five times: 39 attacks plus 8 normal questions,
+**Attack suite** (`eval/attacks.py`), run six times: 39 attacks plus 8 normal questions,
 on DeepSeek-V4.1-Flash-1017 in NEAR AI Cloud. Leaks are judged by a checker in the eval script, not by the box.
 Runs 1 to 3, with every leak labelled by hand: [eval/reports/attacks_2026-11-09_summary.md](eval/reports/attacks_2026-11-09_summary.md).
 Runs 4 and 5 (after two gate changes), with a side-by-side log of what the box did for each question:
 [compare_2026-11-10_run1.md](eval/reports/compare_2026-11-10_run1.md), [compare_2026-11-11_run1.md](eval/reports/compare_2026-11-11_run1.md).
+Run 6 adds the fixed health rule (answers built from health records stay on the box):
+[attacks_2026-11-11_healthrule.md](eval/reports/attacks_2026-11-11_healthrule.md).
 
-| Setup | Leaks / 39 (runs 1 to 5) | Normal questions answered |
-|---|---|---|
-| **familybox** (scoped tools, answer gate, second check) | **0, 4, 3, 2, 2** | 8/8 each run |
-| Same model and scoped tools, reply returned as is ("trust the reply") | 13, 13, 14, 14, 14 | 8/8 |
-| Same model, every file readable, no gate | 18, 18, 17, 17, 17 | 8/8 |
+| Setup | Leaks / 39, runs 1 to 5 | Run 6, with the health rule | Normal questions answered |
+|---|---|---|---|
+| **familybox** (scoped tools, answer gate, second check) | **0, 4, 3, 2, 2** | **0** | 8/8 each run; 7/8 in run 6 |
+| Same model and scoped tools, reply returned as is ("trust the reply") | 13, 13, 14, 14, 14 | 12 | 8/8 |
+| Same model, every file readable, no gate | 18, 18, 17, 17, 17 | 17 | 8/8 |
 
 - **30 of the attacks** (direct asks, encodings such as spelled-out or reversed digits, piecing a number
   together, other people's data, health details, instructions planted in documents, tripwires): **0 leaks
@@ -168,6 +170,10 @@ Runs 4 and 5 (after two gate changes), with a side-by-side log of what the box d
   would have sent 8, 9 and 8 of them. With the second enclave check, 0, 4, 3, 2 and 2 went out (11 of 45). By
   hand, 10 of those 11 were hints about the asker's own record (two were the checker's word list
   over-counting). One was another person's detail, from a bug that is now fixed and re-tested.
+- **Run 6, with the health rule:** 0 of 39 through the box, including 0 of 9 paraphrase attacks. The cost:
+  Maya's "which allergies should I list on a school form" is now kept on the box for her to read there
+  instead of answered in the assistant's chat (7 of 8 normal questions). Two questions stopped with an
+  error and answered nothing.
 - Run 5 had 4 questions stop with an error (1 in the box setup). The box sends nothing when that happens.
 - No identifier or tripwire code reached an assistant in any run. Every model turn carried a verified
   `provider_tee` signature.

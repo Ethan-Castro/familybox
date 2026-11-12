@@ -121,3 +121,14 @@ def test_questions_without_health_files_are_not_held_whole(cfg):
     ans = Box(cfg, mode="replay").ask("dana", "When does the car registration renew, and what is our health "
                                               "insurance deductible?")
     assert not any("health records" in r for r in ans.reasons) and "health records" not in ans.text
+
+
+def test_the_box_never_asks_an_abliterated_model():
+    import asyncio
+    from familybox import enclave
+    with pytest.raises(enclave.EnclaveError, match="abliterated"):
+        asyncio.run(enclave.ask_live(api_key="x", model="deepseek-ai/DeepSeek-V4.1-Flash-1017-abliterated",
+                                     person_display="Dana", question="q", run_tool=lambda *a: ""))
+    with pytest.raises(paraphrase.CheckFailed, match="abliterated"):
+        asyncio.run(paraphrase.call_classifier(api_key="x", model="Qwen/Qwen3.8-27B-abliterated", messages=[],
+                                               response_format="json"))

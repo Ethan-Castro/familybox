@@ -316,6 +316,8 @@ async def call_classifier(*, api_key: str, model: str, messages: list[dict], res
     from nearai_inference_sdk import InferenceClient, get_sdk_error
 
     t = time.monotonic()
+    if "abliterat" in str(model).lower():
+        raise CheckFailed(f"{model} is an abliterated model; this box never uses one")
     client_options = dict(client_options or {})
     if locked := sorted(enclave._LOCKED_CLIENT_OPTIONS & set(client_options)):
         raise CheckFailed(f"a plugin tried to change locked enclave settings: {', '.join(locked)}")

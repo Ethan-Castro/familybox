@@ -44,6 +44,13 @@ class EnclaveError(RuntimeError):
     """Verification or transport failure. The question stops; nothing is answered."""
 
 
+def refuse_abliterated(model: str) -> None:
+    """The owner's rule (2026-11-12): never ask an abliterated model (one with its refusal training removed).
+    NEAR offers them as separate model names next to the normal ones; this box never calls one."""
+    if "abliterat" in str(model).lower():
+        raise EnclaveError(f"{model} is an abliterated model; this box never uses one")
+
+
 @dataclass
 class Turn:
     seconds: float
@@ -122,6 +129,7 @@ async def ask_live(*, api_key: str, model: str, person_display: str, question: s
     A verifier that raises EnclaveError stops the question with that message."""
     from nearai_inference_sdk import InferenceClient, get_sdk_error
 
+    refuse_abliterated(model)
     emit = emit or _no_emit
     client_options = dict(client_options or {})
     if locked := sorted(_LOCKED_CLIENT_OPTIONS & set(client_options)):
