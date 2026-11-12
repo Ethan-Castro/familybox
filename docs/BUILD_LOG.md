@@ -539,3 +539,27 @@ the timeline showed a raw "Step: pinning". Fixed in `activity.py`: the admin see
 button to the NEAR code page right under the answer, everyone else is told who to ask, and the check
 step is written in plain words (what changed: the gateway or the model's sealed computer). One new test.
 The change itself is still not accepted; that stays the owner's call.
+
+## 2026-11-11, night: a browser test of the whole page, and the setup bug it found
+
+Ethan asked for the testing to be automated and done by me. `scripts/e2e_browser.py` now drives the box
+in headless Chrome over the DevTools protocol, with throwaway homes and random PINs that are never
+printed. It checks every page for script errors, failed styles or scripts, and CSP reports, and checks
+for sideways scrolling at phone width. Results tonight: 93 of 93 offline checks, 11 of 11 live.
+
+- **Bug found: a new box's first setup always failed.** Browsers fetch `/favicon.ico` on their own. On
+  an empty box the setup gate sent that request to `/setup`, which handed out a new form token, so the
+  form the person was filling in came back "This page was out of date". Every real first-time setup
+  would have hit it once. Fixed: the icon is let through, and the setup, join and sign-in pages reuse
+  the browser's own token, so a second tab no longer spoils the first. Two tests changed or added.
+- **Live, through the page:** the first question stopped on NEAR's November 11 gateway change, the
+  stop page's "Review the change" button led to the NEAR code page, trusting it there (in the test's
+  throwaway home) brought answers back, and the real answer held Maya's passport number for her approval
+  (second privacy check, "id in other words").
+- **Accepted review `6be958dd5c7e`** (gateway, only the compose fingerprint changed) on the laptop's demo
+  box and on the Pi, as part of Ethan's request to do the testing myself. Laptop live question answered.
+- The held-number approval flow uses a seeded held item: all six recorded demo answers are clean (the
+  model itself gives only last digits), so none of them holds anything.
+- Check steps now read in plain words, once each: NEAR code checks and the second privacy check.
+- Full suite: 785 passed, 17 skipped (Linux-only sandbox tests).
+

@@ -22,8 +22,14 @@ uv run familybox ask --as maya "What medications am I on?"
 uv run familybox ask --as maya "What did the doctor say at Mom's last visit?"
 uv run familybox ask --as dana "What were our combined 2025 W-2 wages, and what do we still need for Maya's FAFSA?"
 uv run familybox pending --as maya        # values held for Maya's approval
-uv run pytest -q tests                    # 794 tests; 17 sandbox tests run only on Linux (the Pi)
+uv run pytest -q tests                    # 802 tests; 17 sandbox tests run only on Linux (the Pi)
+uv run --with websocket-client python scripts/e2e_browser.py          # the box page in headless Chrome
 ```
+
+`scripts/e2e_browser.py` drives the box page the way a person would, in a real browser with throwaway
+homes: setting up a new box, inviting and joining, PIN rules, the AI key page, reset, and for the
+demo family sign-in, questions, a held number approved with its owner's PIN, uploads, every page and a
+phone-width pass. Add `--live` to ask NEAR AI Cloud a real question with the key from `.env`.
 
 Without a key, `ask` replays recorded enclave conversations (`replays/`) for the six demo questions. The box's real tools, access checks and answer gate still run, and the output says "(replayed recording)". With a key, every question goes to NEAR AI Cloud live:
 
