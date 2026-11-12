@@ -158,10 +158,10 @@ approvals, the search index) lives in a gocryptfs folder and is mounted only whi
   encryption was turned on may survive on the flash; a real box starts encrypted on a new card. The Mac
   demo can't encrypt (no gocryptfs) and says so on the Status page.
 
-### 11c. A trusted certificate (enforced when issued)
+### 11c. A trusted certificate (enforced on the Pi)
 
-`scripts/box_cert.py`. The box gets a real name under offlinebase.com pointing to its home-network
-address and a Let's Encrypt certificate issued through a DNS check, so phones open it with no warning
+`scripts/box_cert.py`. The box gets a real name under offlinebase.com (the Pi:
+`home.familybox.offlinebase.com`) pointing to its home-network address and a Let's Encrypt certificate issued through a DNS check, so phones open it with no warning
 (and no habit of clicking past one). The private key is made on the box and never leaves it. Limits: the
 name reveals the box's private address in public DNS; some routers block names that point to home
 addresses ("DNS rebinding protection"); renewal is by hand every 60 days until a central renewal

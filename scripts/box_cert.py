@@ -1,6 +1,6 @@
 """A real certificate for the box, so phones open it with no warning.
 
-    uv run --env-file .env python scripts/box_cert.py issue --name decision-tree.familybox.offlinebase.com \
+    uv run --env-file .env python scripts/box_cert.py issue --name home.familybox.offlinebase.com \
         --ip 192.168.1.78 [--staging]
 
 What it does, from this laptop:
@@ -41,7 +41,7 @@ def sh(cmd: list[str], **kw) -> subprocess.CompletedProcess:
 def fleet(command: str, timeout: int = 900) -> str:
     r = sh(["uv", "run", "--env-file", str(ROOT / ".env"), "python", str(ROOT / "scripts/fleet_exec.py"), "run",
             command], cwd=ROOT, timeout=timeout)
-    if r.returncode != 0 or "[succeeded, exit 0]" not in r.stdout:
+    if r.returncode != 0:                             # fleet_exec exits with the box command's code
         raise SystemExit(f"box command failed:\n{r.stdout[-2000:]}\n{r.stderr[-2000:]}")
     return r.stdout
 
@@ -122,9 +122,9 @@ BOX_INSTALL = BOX_TLS_DIR + textwrap.dedent('''
 def box_python(snippet: str, *args: str, stdin: str | None = None) -> str:
     """Run a snippet with the box's code and home on the Pi. Input goes through a here-document."""
     quoted = " ".join(f"'{a}'" for a in args)
-    feed = f" <<'FBEOF'\n{stdin}\nFBEOF" if stdin is not None else ""
+    feed = f" <<'FBEOF'\n{stdin}\nFBEOF\n" if stdin is not None else "\n"   # the end marker needs its own line
     cmd = (f"cd ~/familybox && export FAMILYBOX_HOME=~/familybox-home && cat > /tmp/fb_cert_step.py <<'PYEOF'\n"
-           f"{snippet}\nPYEOF\n~/.local/bin/uv run python /tmp/fb_cert_step.py {quoted}{feed}; "
+           f"{snippet}\nPYEOF\n~/.local/bin/uv run python /tmp/fb_cert_step.py {quoted}{feed}"
            f"rc=$?; rm -f /tmp/fb_cert_step.py; exit $rc")
     return fleet(cmd)
 

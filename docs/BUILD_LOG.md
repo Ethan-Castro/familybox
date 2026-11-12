@@ -634,3 +634,25 @@ Ethan asked to fix the weak spots listed on the hardware and safety page, keepin
 - **NEAR changed again:** review `8eaee117fae8` on the Pi, the DeepSeek host's standing configs went from
   eleven GLM files to one named `DeepSeek-V4.1-Flash-1017-vLLM-DEP4x2-Abliterated` (deployed Nov 10).
   Not accepted; left for Ethan. Live answers on the Pi are stopped until then.
+
+## 2026-11-12: abliterated models on NEAR, the owner's rule, certificate
+
+- **Correction:** NEAR did not switch DeepSeek to an abliterated model. The new config file runs two
+  separate services on the same sealed machines: `proxy-dsv41` (the normal model familybox asks for) and
+  `proxy-dsv41-abliterated` (refusal training removed). GLM's host gained `proxy-qwen38-27b-abliterated`.
+- **Ethan's rule:** use the normal model, accept abliterated neighbors. `scripts/pins_review_clean.py`
+  applies it: a deployment-list change is trusted only while the model's own service is still deployed;
+  any other change that mentions abliterated is rejected. The box also refuses to call any model whose
+  name contains "abliterated" (`enclave.refuse_abliterated`, used by answers, the photo reader and the
+  paraphrase check).
+- **Laptop and Pi live again:** both accepted the gateway, GLM and workload changes under the rule. The
+  encrypted Pi answered "Maya's passport expires on May 2, 2027" (DeepSeek, 3 turns, `provider_tee`).
+- **Certificate issued:** `home.familybox.offlinebase.com` points to 192.168.1.78 (the Pi's home-network
+  address) and the Pi serves a Let's Encrypt certificate (YE2 chain, valid to Feb 10, 2027). The key was
+  made on the Pi and never left it; the old self-made certificate is kept as `before-*.pem`. Checked from
+  the laptop with normal certificate checks: verifies. The router did not block the private address.
+- **Found while issuing:** `box_cert.py` looked for a success line that fleet_exec only prints on failure
+  (fixed: it now uses the exit code), and the here-document end marker shared a line with the next command,
+  so a stray line landed after the certificate (fixed; the Pi's file was cleaned and the box restarted).
+  The Mac's DNS cache still held the earlier Vercel wildcard answer for a while, so the name timed out
+  from the laptop until it expired; phones resolve it fresh.

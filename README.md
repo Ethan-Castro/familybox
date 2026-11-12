@@ -75,7 +75,8 @@ bash scripts/pi_service.sh                # starts the box on its own after ever
 After that, the family needs no terminal:
 
 1. Plug the box into the router and into power.
-2. On a phone or computer on the same Wi-Fi, open `https://familybox.local:8443` (or `https://<board name>.local:8443` if the friendly name is not published). The browser warns once because the box made its own certificate; accept it.
+2. On a phone or computer on the same Wi-Fi, open `https://familybox.local:8443` (or `https://<board name>.local:8443` if the friendly name is not published). A box with a real certificate (`scripts/box_cert.py`, for example `https://home.familybox.offlinebase.com:8443`)
+   opens with no warning. Otherwise the browser warns once because the box made its own certificate; accept it.
 3. On the setup page, type the family name, your name and a PIN. Setup stays open for 15 minutes after the box starts. If it closes, unplug the box and plug it back in.
 4. On the AI key page, paste the NEAR AI Cloud key once and press Check. The key is stored on the box and never shown again.
 5. Upload papers (many files or a whole folder at once), and invite each family member from the Family page with a QR code. Each person picks their own PIN.
@@ -194,10 +195,14 @@ not a run against ChatGPT or Claude. Earlier runs (2026-11-08, before the second
 
 **Not covered:**
 - Anyone with root on the box can read everything.
-- A stolen box without disk encryption exposes the files.
+- A stolen box that is still powered on is unlocked. Once unplugged, its files are encrypted (gocryptfs, a
+  random box key wrapped by the recovery key and by each admin phone plus PIN) and only the unlock page is served.
 - NEAR's gateway still sees metadata: model, message count, sizes, timing and the API key.
 - NEAR's attestation has known limits. Model instances share a signing key, so a signature doesn't identify the instance. Parts of the serving stack are pulled at runtime and are not in the measurement. See [docs/research/near_ai_cloud.md](docs/research/near_ai_cloud.md).
-- The gate recognizes values that are in the files. A model could still paraphrase a fact the gate has no pattern for. A second enclave check (`src/familybox/plugins/paraphrase.py`) asks a separate verified model whether the answer reveals a protected fact in other words. It is itself a model, so it lowers this risk but does not remove it: across five runs, 11 of 45 reworded attempts still got a hint through, mostly about the asker's own record (see the results above).
+- The gate recognizes values that are in the files. A model could still paraphrase a fact the gate has no pattern for. A second enclave check (`src/familybox/plugins/paraphrase.py`) asks a separate verified model whether the answer reveals a protected fact in other words. It is itself a model, so it lowers this risk but does not remove it: across five runs, 11 of 45 reworded attempts still got a hint through, mostly about the asker's own record (see the results above). Since then, any answer to an outside assistant that
+  opened a health file is held whole for its owner, which closes that path for health records.
+- NEAR runs abliterated models (refusal training removed) on the same sealed machines as the normal ones, as separate
+  services. The box only asks for the normal model and refuses to call any model named abliterated.
 
 ## What we found about NEAR AI Cloud
 
