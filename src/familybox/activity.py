@@ -554,6 +554,8 @@ def render_detail(view: View, events: list[dict], audit: dict | None, status: st
                 bits.append(f"{secs(ev.get('seconds'))} in all")
             items.append(_item(OUTCOME_CLASS.get(out, "info"), f"Done: {esc(OUTCOME_LABELS.get(out, out))}",
                                f'<p class="muted">{esc(", ".join(bits))}.</p>', t, key))
+        elif step == "pinning":
+            items.append(_pin_item(view, ev, t, key))
         else:
             items.append(_item("info", f"Step: {esc(step)}", "", t, key))
     if status == "running":
@@ -563,6 +565,8 @@ def render_detail(view: View, events: list[dict], audit: dict | None, status: st
     # The reply first, like a chat. While the question runs, three dots and the step it is on.
     if audit:
         parts = [_sent(view, audit, first.get("source"))]
+        if any(e.get("step") == "pinning" and e.get("status") in PIN_WAITING for e in events):
+            parts.append(f'<p class="fb-todo">{_pin_next(view)}</p>')
     elif status == "unfinished":
         parts = ['<p class="bad">This question stopped before it finished. Nothing was answered.</p>']
     else:
@@ -573,6 +577,39 @@ def render_detail(view: View, events: list[dict], audit: dict | None, status: st
         how.append(_files_and_reasons(view, audit))
     parts.append(f'<section class="fb-how"><h2>How the box handled it</h2>{"".join(how)}</section>')
     return "".join(parts)
+
+
+PIN_WAITING = ("waiting_review", "changed")
+PIN_PART = {"gateway": "NEAR's front door (its gateway)", "model": "the model's sealed computer"}
+
+
+def _pin_next(view: View) -> str:
+    """What to do when a question stopped because NEAR's code changed. The admin gets the link."""
+    if view.viewer.admin:
+        return ('<a class="fb-go" href="/pins">Review the change</a> '
+                '<span class="muted">You run this box, so the review is yours. Then ask again.</span>')
+    admins = [p.display for p in view.cfg.people.values() if p.admin]
+    who = esc(admins[0]) if admins else "the person who runs the box"
+    return (f'<span class="muted">Ask {who} to open <strong>NEAR code</strong> on the box page and review the '
+            f'change. Then ask again.</span>')
+
+
+def _pin_item(view: View, ev: dict, t, key: str) -> str:
+    status = ev.get("status")
+    comp = str(ev.get("component") or "")
+    part = PIN_PART.get(comp.split("/")[0], "NEAR's serving code")
+    if status == "off":
+        return _item("info", "NEAR code check is turned off", "", t, key)
+    if status in PIN_WAITING:
+        return _item("bad", "NEAR's code changed since the owner last approved it",
+                     f"<p>What changed: {esc(part)}. The box does not send anything to code nobody has "
+                     f"reviewed.</p><p>{_pin_next(view)}</p>", t, key)
+    if status == "first_use":
+        return _item("info", f"First look at NEAR's code for {esc(part)}; the box remembered it", "", t, key)
+    if status == "changed_allowed":
+        return _item("info", f"NEAR's code changed for {esc(part)}; this box is set to allow that and log it",
+                     "", t, key)
+    return _item("ok", f"NEAR's code matches the approved version: {esc(part)}", "", t, key)
 
 
 def _files_and_reasons(view: View, audit: dict) -> str:

@@ -529,3 +529,19 @@ def test_answer_text_is_escaped_before_bold_and_bullets():
     from familybox.activity import answer_html
     out = answer_html("- **Dose** <script>x</script>\nplain - text")
     assert out == "• <strong>Dose</strong> &lt;script&gt;x&lt;/script&gt;\nplain - text"
+
+
+def test_a_code_change_stop_tells_people_what_to_do(cfg):
+    events = [{"step": "question", "source": "web", "mode": "live", "t": 0},
+              {"step": "pinning", "status": "waiting_review", "component": "gateway", "review": "abc123", "t": 0},
+              {"step": "pre_check_stopped", "message": "NEAR changed its serving code", "t": 0}]
+    audit = {"sent_to_assistant": "The family box stopped this question.", "outcome": "error"}
+    admin = act.render_detail(act.View(cfg, cfg.person("dana"), "dana"), events, audit, "error")
+    assert '<a class="fb-go" href="/pins">Review the change</a>' in admin
+    assert "Step: pinning" not in admin and "front door" in admin
+    other = act.render_detail(act.View(cfg, cfg.person("sam"), "sam"), events, audit, "error")
+    assert 'href="/pins"' not in other and "Ask Dana to open" in other
+    fine = act.render_detail(act.View(cfg, cfg.person("dana"), "dana"),
+                             [events[0], {"step": "pinning", "status": "match", "component": "model/x", "t": 1}],
+                             None, "running")
+    assert "matches the approved version" in fine and "fb-go" not in fine

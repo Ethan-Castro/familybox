@@ -533,3 +533,9 @@ without changing a system security setting. Not changed. Documented in docs/WORK
   `familybox pins check` sees the same change. Nothing was sent. The box answers again once the owner
   accepts the change on the NEAR code page. I did not accept it: that review is the owner's.
 
+**The stop page now says what to do.** Ethan asked a question on the Pi, got the code-change stop, and
+sent back a screenshot with a question mark: the page said "the owner must review it" but not where, and
+the timeline showed a raw "Step: pinning". Fixed in `activity.py`: the admin sees a "Review the change"
+button to the NEAR code page right under the answer, everyone else is told who to ask, and the check
+step is written in plain words (what changed: the gateway or the model's sealed computer). One new test.
+The change itself is still not accepted; that stays the owner's call.

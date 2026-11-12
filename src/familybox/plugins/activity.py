@@ -85,6 +85,10 @@ table.fb-table { width: 100%; border-collapse: collapse; font-size: 15px; }
 .fb-typing i:nth-child(2) { animation-delay: .2s; } .fb-typing i:nth-child(3) { animation-delay: .4s; }
 @keyframes fbblink { 0%, 80%, 100% { opacity: .25; } 40% { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { .fb-typing i { animation: none; } }
+.fb-todo { margin: 14px 0 0; display: flex; flex-wrap: wrap; align-items: center; gap: 10px 12px; }
+.fb-go { display: inline-block; background: var(--accent); color: #fff; border-radius: 9999px; padding: 8px 16px;
+  font-size: 14px; font-weight: 500; text-decoration: none; white-space: nowrap; }
+.fb-go:hover { opacity: .85; }
 .fb-how { border-top: 1px solid var(--line); padding-top: 20px; margin-top: 8px; }
 .fb-how > h2 { font-size: 14px; font-weight: 500; color: var(--muted); margin: 0 0 12px; }
 .fb-next { position: sticky; bottom: 0; background: linear-gradient(transparent, var(--bg) 28%); padding: 24px 0 16px; }
