@@ -60,12 +60,19 @@ developer's laptop.
 - Plugin output (forms summaries, photo transcripts, workbench output) reaches the assistant only through
   the same gate.
 
-### 4. Reworded leaks (partial)
+### 4. Reworded leaks (partial; health answers enforced)
 
-A second verified, E2EE, enclave-signed NEAR call judges whether the answer reveals a protected fact in
-other words. If that check errors or times out, the whole answer is held. It is itself a model: in the
-last measured run it let some reworded answers through (see the README results). It narrows the gap the
-value-based gate leaves; it does not close it.
+**Health records (enforced, since 2026-11-12):** a fixed rule in `box.py` (`health_hold`), not a model.
+Any answer to an outside assistant that opened a health file is held whole for the record's owner, and
+the assistant gets only a note to read it on the box. Health folders are owner-only, so the owner is
+always the asker. Asked on the box's own page, the owner reads it there. This closes the reworded-hint
+gap for health records, which was most of it (10 of the 11 hints in five runs were about the asker's own
+record). It costs usability: an assistant can no longer answer "what are my allergies" in its own chat.
+
+**Everything else (partial):** a second verified, E2EE, enclave-signed NEAR call judges whether the answer
+reveals a protected fact in other words. If that check errors or times out, the whole answer is held. It
+is itself a model, so it narrows the gap the value-based gate leaves for IDs and other facts; it does not
+close it.
 
 ### 5. Prompt injection in documents (partial, by design limits)
 
@@ -111,19 +118,54 @@ After a button approval, the value shows once on the owner's own screen.
 
 ### 11. Setup, PINs and reset on the box page (enforced)
 
-- **Setup window:** the setup page works only while the box has no family and for 15 minutes after it
-  starts. After the first person exists it cannot be run again. Someone on the home Wi-Fi in that window
-  could set up the box first; the owner would see a family they did not create and reset it.
+- **Setup code:** a box can carry a setup code (printed on its sticker, stored only as a scrypt hash in
+  `<home>.vault/setup_code.json`, made with `familybox vault setup-code`). With one, setup needs the code,
+  so someone else on the home Wi-Fi can't claim a new box in its first 15 minutes. Without one (a laptop
+  demo), the old rule applies: setup works only while the box has no family and for 15 minutes after it
+  starts.
 - **PINs:** 6 to 12 digits, not all the same, stored as scrypt hashes with a per-person salt, never logged.
   5 wrong tries in 10 minutes locks that person's PIN sign-in only, so a child cannot lock a parent out.
+- **Forgotten PIN:** the person who runs the box resets their own PIN at `/recover` with the recovery key
+  from setup. Ten wrong recovery keys in 15 minutes and it waits. Other family members still ask the person
+  who runs the box.
 - **Invites:** one-time codes that last 30 minutes and only set a first PIN; they cannot change an existing one.
 - **Showing a held value:** the owner types their PIN again, and the value page goes back to the list after 30
   seconds. It covers approvals on the box page, not the UNO Q button or forms.
 - **AI key:** pasted once on an admin-only page, stored 0600 on the box, never shown again.
-- **Reset:** admin only, PIN plus the family name typed out. It wipes files, logs and the family list, so
-  the reset itself leaves no log entry.
-- **Not covered:** a sole admin who forgets their PIN needs a terminal on the box to recover.
+- **Reset:** admin only, PIN plus the family name typed out. It wipes files, logs and the family list and
+  destroys the encryption keys, so the old encrypted folder can never be opened again. The reset itself
+  leaves no log entry.
 - None of these pages are on the internet-facing listener.
+
+### 11b. Files encrypted at rest (enforced on Linux with gocryptfs)
+
+`src/familybox/vault.py`, `src/familybox/locked.py`. The home folder (family.toml, files, logs, PINs,
+approvals, the search index) lives in a gocryptfs folder and is mounted only while the box is unlocked.
+
+- **Keys:** a random 32-byte box key opens the folder. It is stored only wrapped (AES-GCM): once by the
+  recovery key (24 characters, about 120 bits, scrypt), shown once at setup and never stored; and once per
+  admin phone by a random secret kept in that phone's httpOnly, SameSite=Strict cookie, combined with the
+  admin's PIN (scrypt). A stolen box has neither the phone secret nor the recovery key. A stolen phone has
+  no box and no PIN.
+- **After a power cut** the box serves only the unlock page; every other page and `/mcp` say it is locked.
+  Ten wrong tries in 15 minutes and it waits. A restart of the box's own service (an update) keeps the
+  folder open, because the mount runs in its own systemd unit.
+- **Changing a PIN** re-wraps the phone it was changed on; that person's other phones stop unlocking until
+  set up again (the recovery key always works).
+- **Kept in the clear** in `<home>.vault/`: the wrapped keys, salts, recent failed tries, the setup-code
+  hash and the TLS certificate (needed to serve the unlock page).
+- **Limits:** root on a running, unlocked box reads everything. Files written to the card before
+  encryption was turned on may survive on the flash; a real box starts encrypted on a new card. The Mac
+  demo can't encrypt (no gocryptfs) and says so on the Status page.
+
+### 11c. A trusted certificate (enforced when issued)
+
+`scripts/box_cert.py`. The box gets a real name under offlinebase.com pointing to its home-network
+address and a Let's Encrypt certificate issued through a DNS check, so phones open it with no warning
+(and no habit of clicking past one). The private key is made on the box and never leaves it. Limits: the
+name reveals the box's private address in public DNS; some routers block names that point to home
+addresses ("DNS rebinding protection"); renewal is by hand every 60 days until a central renewal
+service exists; the self-made certificate stays as the fallback.
 
 ### 12. Red-team page (enforced)
 
@@ -167,7 +209,7 @@ workbench are off there by design (they would break the spending bound).
 
 ## Not covered
 
-- **Root on the box** reads everything. So does a stolen box without disk encryption.
+- **Root on a running, unlocked box** reads everything (see 11b for a stolen, powered-off box).
 - **NEAR metadata:** the gateway sees model, message count, sizes, timing and the API key.
 - **Attestation limits:** model instances share a signing key, so a signature doesn't identify the
   instance; parts of NEAR's serving stack are pulled at runtime and are not in the measurement (pinning

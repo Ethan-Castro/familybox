@@ -609,3 +609,28 @@ sudo, so it is a separate script that someone runs by hand; nothing was run on t
   back, half-finished swap recovered, a git checkout is never replaced, CLI). `tests/test_plugins.py`: 16 passed.
 - Not done: no GitHub release published; the default URL works once the repo is public. The first box to
   get the updater still needs it installed by hand, since the code on the Pi today has no `update` command.
+
+## 2026-11-12, early: fixing the weak spots (health rule, encryption, updates, setup code, recovery)
+
+Ethan asked to fix the weak spots listed on the hardware and safety page, keeping NEAR.
+
+- **Health rule (fixed, not a model):** any answer to an outside assistant that opened a health file is held
+  whole for its owner; the assistant gets a note to read it on the box. On the box's own page the owner
+  reads it directly. Closes the reworded-hint gap for health records (10 of the 11 hints in five runs).
+- **Encrypted files:** gocryptfs folder behind a random box key, wrapped by the recovery key (shown once
+  at setup) and by each admin phone's cookie secret plus PIN. After a power cut only the unlock page is
+  served. The real Pi box was moved in: backed up, encrypted (42 files), restarted, the plain backup
+  deleted. On the Pi: 130 tests including a real gocryptfs round trip, and `scripts/vault_smoke.py`
+  10 of 10 (encrypt, SSN unreadable on disk, restart stays open, power cut locks, wrong key refused,
+  recovery key unlocks through the page, box restarts with its files).
+- **Setup code** on the Pi (sticker), **forgotten admin PIN** via `/recover` with the recovery key. The
+  recovery key and setup code came back sealed to a laptop-only key and sit in `docs/private/` (untracked).
+- **Signed automatic updates** (built by a helper agent, merged): daily timer on the Pi, only releases
+  signed by the key in `~/.config/familybox/` (laptop) install; downgrades refused; failed health check
+  rolls back. Until the repo is public there is nowhere to fetch from, so the timer finds nothing.
+- **OS security updates:** unattended-upgrades on the Pi.
+- **Certificate:** `scripts/box_cert.py` written (key made on the box, Let's Encrypt DNS check through
+  offlinebase.com's Vercel DNS). Not run yet: waiting for Ethan's OK to add DNS records and register.
+- **NEAR changed again:** review `8eaee117fae8` on the Pi, the DeepSeek host's standing configs went from
+  eleven GLM files to one named `DeepSeek-V4.1-Flash-1017-vLLM-DEP4x2-Abliterated` (deployed Nov 10).
+  Not accepted; left for Ethan. Live answers on the Pi are stopped until then.
