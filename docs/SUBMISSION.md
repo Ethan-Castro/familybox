@@ -19,7 +19,7 @@ without Ethan's yes. The real payload is never committed (it holds personal data
 - [x] HACKATHON.md re-read 2026-11-12: no rule or date changes (only a note on claiming $10 of NEAR credits)
 - [ ] Ethan's phone run on the Pi: open the address with no warning, add his phone on the Unlocking page
 - [ ] Demo video recorded from DEMO_SCRIPT.md
-- [ ] Repo public on GitHub (Ethan flips it)
+- [x] Repo public on GitHub (2026-11-14, at Ethan's request; history scanned for secrets first)
 - [ ] X post by Ethan: "built at NEAR HACKATHON", @NEARProtocol, #NEARHackathon, video attached
 - [ ] Submission sent once (form or POST), with every field below decided by Ethan
 - [ ] Keep the repo public through judging (results by 2026-11-18)
