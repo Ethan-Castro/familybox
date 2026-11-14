@@ -33,25 +33,26 @@ KEEP_TEXT = 200            # question texts kept in memory (web asks only)
 
 CSS = """
 .fb-wide { max-width: 760px; margin: 0 auto; }
-.fb-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 14px; }
-.fb-badge { display: inline-block; padding: 3px 10px; border-radius: 999px; font-size: 14px; font-weight: 600;
-  border: 1px solid currentColor; white-space: nowrap; }
+.fb-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 16px; }
+.fb-badge { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 12px; font-weight: 500;
+  border: 1px solid color-mix(in srgb, currentColor 30%, transparent); white-space: nowrap; }
 .fb-badge.ok { color: var(--ok); } .fb-badge.bad { color: var(--bad); }
 .fb-badge.warn { color: #9a5b00; } .fb-badge.info { color: var(--accent); }
 @media (prefers-color-scheme: dark) { .fb-badge.warn { color: #f0b860; } }
 ol.fb-timeline { list-style: none; margin: 0; padding: 0 0 0 4px; }
-.fb-step { position: relative; padding: 0 0 14px 26px; border-left: 2px solid var(--line); margin-left: 8px; }
+.fb-step { position: relative; padding: 0 0 12px 20px; border-left: 1px solid var(--line); margin-left: 6px; }
 .fb-step:last-child { border-left-color: transparent; }
-.fb-dot { position: absolute; left: -9px; top: 4px; width: 16px; height: 16px; border-radius: 50%;
-  background: var(--card); border: 3px solid var(--accent); }
+.fb-dot { position: absolute; left: -5px; top: 7px; width: 9px; height: 9px; border-radius: 50%;
+  background: var(--card); border: 2px solid var(--accent); }
 .fb-step.s-ok .fb-dot { border-color: var(--ok); } .fb-step.s-bad .fb-dot { border-color: var(--bad); }
 .fb-step.s-warn .fb-dot { border-color: #c27a00; }
 .fb-step.s-bad > .fb-head strong { color: var(--bad); }
 .fb-head { display: flex; gap: 8px; align-items: baseline; justify-content: space-between; }
-.fb-head strong { font-weight: 600; word-break: break-word; }
-.fb-t { color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; white-space: nowrap; }
-.fb-body { color: var(--fg); font-size: 15px; }
-.fb-body p { margin: 4px 0; }
+.fb-head strong { font-weight: 500; font-size: 15px; word-break: break-word; }
+.fb-t { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.fb-body { color: var(--muted); font-size: 13px; line-height: 1.5; }
+.fb-body p { margin: 2px 0; }
+.fb-body code, .fb-head code { font-size: 12px; }
 .fb-list { margin: 4px 0; padding-left: 20px; font-size: 15px; }
 .fb-list li { margin: 2px 0; word-break: break-word; }
 code, .fb-path { font: 14px ui-monospace, Menlo, Consolas, monospace; word-break: break-all; }
@@ -90,7 +91,7 @@ table.fb-table { width: 100%; border-collapse: collapse; font-size: 15px; }
   font-size: 14px; font-weight: 500; text-decoration: none; white-space: nowrap; }
 .fb-go:hover { opacity: .85; }
 .fb-how { border-top: 1px solid var(--line); padding-top: 20px; margin-top: 8px; }
-.fb-how > h2 { font-size: 14px; font-weight: 500; color: var(--muted); margin: 0 0 12px; }
+.fb-how > h2 { font-size: 13px; font-weight: 500; color: var(--muted); margin: 0 0 10px; letter-spacing: .01em; }
 .fb-next { position: sticky; bottom: 0; background: linear-gradient(transparent, var(--bg) 28%); padding: 24px 0 16px; }
 .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 """

@@ -323,6 +323,28 @@ class View:
             parts.append(f'<span class="fb-arg">{esc(k)}: <q>{esc(v)}</q></span>')
         return " ".join(parts)
 
+    def tool_words(self, name: str, args, done: bool = False) -> str:
+        """A tool call in plain words: "searched the files for "passport"" instead of the raw call."""
+        if isinstance(args, str):
+            try:
+                args = json.loads(args or "{}")
+            except json.JSONDecodeError:
+                args = {}
+        args = args if isinstance(args, dict) else {}
+        q = args.get("query")
+        if name == "search_files" and len(args) <= 1 and isinstance(q, str):
+            verb = "Searched the files" if done else "search the files"
+            if not q.strip():
+                return verb
+            if not self.full:
+                return f'{verb} <span class="muted">(words only {esc(self.owner_name())} can see)</span>'
+            return f'{verb} for <q class="fb-arg">{esc(q[:120])}</q>'
+        if name == "read_file" and isinstance(args.get("path"), str) and len(args) == 1:
+            return f'{"Opened" if done else "open"} {self.path(args["path"])}'
+        if name == "list_files" and not args:
+            return "Listed the files" if done else "list the files"
+        return f'{"Ran" if done else "run"} <code>{esc(name)}</code> {self.arguments(name, args)}'.rstrip()
+
     def reason(self, text: str) -> str:
         """Gate reasons in plain words. Tripwire values and never-share words are not repeated."""
         text = str(text)
@@ -469,47 +491,43 @@ def render_detail(view: View, events: list[dict], audit: dict | None, status: st
             src = str(ev.get("source", ""))
             how = source_label(src)
             mode = ev.get("mode")
-            mode_txt = {"live": "Live: the question goes to the NEAR AI enclave model.",
+            mode_txt = {"live": "Live, on the NEAR AI enclave model.",
                         "record": "Live, and recorded for the demo.",
                         "replay": "Demo replay: recorded enclave turns are played back. The box's own file "
                                   "checks and answer gate run for real."}.get(mode, "")
             asker = "You" if view.full else esc(view.owner_name())
-            body = ""
-            if view.question_text is not None:
-                body += f'<blockquote class="fb-q">{esc(view.question_text)}</blockquote>'
-            body += f'<p class="muted">{esc(mode_txt)}</p>' if mode_txt else ""
+            body = f'<p>{esc(mode_txt)}</p>' if mode_txt else ""   # the question itself is in the bubble
             items.append(_item("info", f"{asker} asked through {esc(how)}", body, t, key))
         elif step == "attestation":
             ok = bool(ev.get("reports_verified"))
-            body = (f'<p>Model <code>{esc(ev.get("model", ""))}</code>: '
-                    f'{esc(ev.get("reports_verified") or 0)} attestation report(s) verified, '
-                    f'checked {clock(ev.get("verified_at"))}, took {esc(secs(ev.get("seconds")) or "?")}.</p>')
+            body = (f'<p><code>{esc(ev.get("model", ""))}</code> · {esc(ev.get("reports_verified") or 0)} '
+                    f'attestation report(s) · checked {clock(ev.get("verified_at"))} · '
+                    f'{esc(secs(ev.get("seconds")) or "?")}</p>')
             body += ('<p>End-to-end encryption is on: the question and file text are encrypted to a key that '
                      'only exists inside the enclave.</p>' if ev.get("e2ee") else
                      '<p class="bad">End-to-end encryption was not on.</p>')
             if ev.get("replayed"):
                 body += '<p class="muted">Replayed: these are the results from when the run was recorded.</p>'
             items.append(_item("ok" if ok else "bad",
-                               "Checked the model runs in a secure enclave (TEE)" if ok
+                               "Enclave verified (TEE)" if ok
                                else "Could not verify the enclave", body, t, key))
         elif step == "turn":
             kind = ev.get("signature_kind")
             signed = kind == "provider_tee"
-            sig = ("signed inside the enclave" if signed else f"NOT signed inside the enclave ({esc(kind)})")
-            body = (f'<p>{"Signed inside the enclave" if signed else "Signature: " + sig}'
-                    f'{" by <code>" + esc(ev.get("signer", "")) + "</code>" if ev.get("signer") else ""}'
-                    f'{", " + esc(secs(ev.get("seconds"))) if secs(ev.get("seconds")) else ""}.</p>')
+            sig = ("signed in the enclave" if signed else f"NOT signed in the enclave ({esc(kind)})")
             calls = ev.get("tool_calls") or []
             if calls:
-                lis = "".join(f'<li><code>{esc(c.get("name", ""))}</code> '
-                              f'{view.arguments(str(c.get("name", "")), c.get("arguments"))}</li>'
-                              for c in calls if isinstance(c, dict))
-                body += f'<p>The model asked the box to run:</p><ul class="fb-list">{lis}</ul>'
+                wants = "; ".join(view.tool_words(str(c.get("name", "")), c.get("arguments"))
+                                  for c in calls if isinstance(c, dict))
+                body = f'<p>Asked the box: {wants}</p>'
             else:
-                body += '<p>The model wrote its draft answer. The box checks it before anyone sees it.</p>'
+                body = '<p>Wrote a draft answer. The box checks it before anyone sees it.</p>'
+            body += (f'<p>Signed by <code>{esc(str(ev.get("signer", "")))}</code>'
+                     f'{" · " + esc(secs(ev.get("seconds"))) if secs(ev.get("seconds")) else ""}</p>'
+                     if signed and ev.get("signer") else "")
             idx = ev.get("index")
             num = idx + 1 if isinstance(idx, int) else "?"
-            items.append(_item("ok" if signed else "bad", f"Model step {num}, {sig}", body, t, key))
+            items.append(_item("ok" if signed else "bad", f"Model step {num}: {sig}", body, t, key))
         elif step == "tool":
             name = str(ev.get("name", ""))
             args = ev.get("arguments") or {}
@@ -520,7 +538,7 @@ def render_detail(view: View, events: list[dict], audit: dict | None, status: st
             elif name == "read_file" and isinstance(path, str) and ev.get("ok"):
                 items.append(_item("ok", f"Opened {view.path(path)}", "", t, key))
             elif ev.get("ok"):
-                items.append(_item("ok", f'Ran <code>{esc(name)}</code> {view.arguments(name, args)}', "", t, key))
+                items.append(_item("ok", view.tool_words(name, args, done=True), "", t, key))
             else:
                 why = {"not offered": "the model asked for a tool it was not given",
                        "no provider": "no part of the box offers that tool"}.get(ev.get("why"), "the tool failed")
@@ -591,7 +609,8 @@ def render_detail(view: View, events: list[dict], audit: dict | None, status: st
 
 
 PIN_WAITING = ("waiting_review", "changed")
-PIN_PART = {"gateway": "NEAR's front door (its gateway)", "model": "the model's sealed computer"}
+PIN_PART = {"gateway": "NEAR gateway", "model": "the model's sealed computer"}
+PIN_SHORT = {"gateway": "NEAR gateway", "model": "Model's sealed computer"}
 
 
 def _pin_next(view: View) -> str:
@@ -620,7 +639,7 @@ def _pin_item(view: View, ev: dict, t, key: str) -> str:
     if status == "changed_allowed":
         return _item("info", f"NEAR's code changed for {esc(part)}; this box is set to allow that and log it",
                      "", t, key)
-    return _item("ok", f"NEAR's code matches the approved version: {esc(part)}", "", t, key)
+    return _item("ok", f"{esc(PIN_SHORT.get(comp.split('/')[0], 'NEAR code'))}: approved code", "", t, key)
 
 
 PARAPHRASE_TEXT = {

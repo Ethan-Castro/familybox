@@ -108,9 +108,9 @@ def test_ask_from_the_web_and_see_the_timeline(cfg):
     assert "You asked through this web page" in t
     assert ALLERGY_Q.replace("?", "") in t                      # the asker sees their own question
     assert "Demo replay" in t and "Replay of a recorded run" in t
-    assert "Checked the model runs in a secure enclave (TEE)" in t
+    assert "Enclave verified (TEE)" in t
     assert "End-to-end encryption is on" in t
-    assert "Model step 1, signed inside the enclave" in t
+    assert "Model step 1: signed in the enclave" in t
     assert "Opened <code class=\"fb-path\">people/maya/health/records_maya_fhir.json</code>" in t
     assert "Answer gate:" in t and "Exactly what was shown on this page" in t
     assert 'data-status="' in t and 'data-status="running"' not in t
@@ -232,7 +232,7 @@ def test_signature_that_is_not_provider_tee_is_flagged(cfg):
                                                      "tool_calls": [], "replayed": False}])
     c, _ = sign_in(cfg, "maya")
     t = c.get(f"/activity/{qid}").text
-    assert "NOT signed inside the enclave (gateway)" in t and "0 of 1 steps signed inside the enclave" in t
+    assert "NOT signed in the enclave (gateway)" in t and "0 of 1 steps signed inside the enclave" in t
 
 
 # --- who sees what ----------------------------------------------------------------------------
@@ -269,7 +269,7 @@ def test_admin_sees_everyone_but_not_private_details(cfg):
     assert qid not in dana.get("/activity?who=sam").text
     t = dana.get(f"/activity/{qid}").text
     assert "Maya asked through this web page" in t
-    assert "signed inside the enclave" in t and "Checked the model runs in a secure enclave" in t
+    assert "signed in the enclave" in t and "Enclave verified (TEE)" in t
     assert "sports form" not in t                                # question text stays with Maya
     assert '"allergy"' not in t and "allergies" not in t.lower().replace("which allergies", "")
     assert "records_maya_fhir" not in t                          # health file name hidden
@@ -538,13 +538,13 @@ def test_a_code_change_stop_tells_people_what_to_do(cfg):
     audit = {"sent_to_assistant": "The family box stopped this question.", "outcome": "error"}
     admin = act.render_detail(act.View(cfg, cfg.person("dana"), "dana"), events, audit, "error")
     assert '<a class="fb-go" href="/pins">Review the change</a>' in admin
-    assert "Step: pinning" not in admin and "front door" in admin
+    assert "Step: pinning" not in admin and "NEAR gateway" in admin
     other = act.render_detail(act.View(cfg, cfg.person("sam"), "sam"), events, audit, "error")
     assert 'href="/pins"' not in other and "Ask Dana to open" in other
     fine = act.render_detail(act.View(cfg, cfg.person("dana"), "dana"),
                              [events[0], {"step": "pinning", "status": "match", "component": "model/x", "t": 1}],
                              None, "running")
-    assert "matches the approved version" in fine and "fb-go" not in fine
+    assert ": approved code" in fine and "fb-go" not in fine
 
 
 def test_second_privacy_check_step_is_in_plain_words(cfg):
@@ -562,4 +562,4 @@ def test_repeated_code_checks_show_once(cfg):
     ev = [{"step": "pinning", "status": "match", "component": c, "t": 1}
           for c in ("gateway", "model/x", "model/x", "gateway", "model/x/manager")]
     out = act.render_detail(view, ev, None, "running")
-    assert out.count("matches the approved version") == 2
+    assert out.count(": approved code") == 2
