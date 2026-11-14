@@ -1,13 +1,46 @@
-# familybox: a household privacy box for AI assistants
+<h1 align="center">familybox</h1>
 
-**TEE attestation proves where the model ran. The household box decides what that model is ever allowed to reveal, and to whom.**
+<p align="center"><strong>Ask ChatGPT, Claude or Gemini about your family's papers.<br>The papers stay in a small box at home.</strong></p>
 
-One small box at home (a Raspberry Pi) holds the family's SSNs, W-2s, passports and health records. Anyone in the family can ask ChatGPT, Claude, Codex or Cursor about them over MCP. The assistant never sees the documents.
+<p align="center">
+  <img alt="NEAR AI Cloud TEE" src="https://img.shields.io/badge/NEAR%20AI%20Cloud-verified%20TEE-16171a">
+  <img alt="MCP" src="https://img.shields.io/badge/MCP-ChatGPT%20%7C%20Claude%20%7C%20Gemini-1f7a4a">
+  <img alt="Python 3.12+" src="https://img.shields.io/badge/python-3.12%2B-3776ab">
+  <img alt="855 tests" src="https://img.shields.io/badge/tests-855-1f7a4a">
+  <img alt="Apache 2.0" src="https://img.shields.io/badge/license-Apache%202.0-5d6066">
+</p>
 
-- A **NEAR AI Cloud enclave model** (Intel TDX + NVIDIA GPU TEE) does the reasoning. It calls the box's read-only tools and sees only the asking person's files.
-- The box **checks every answer** before the assistant gets it. Full SSNs, ID numbers and health details are replaced with placeholders. The full value appears only on the owner's own screen after they approve.
+<p align="center"><img src="docs/img/chat.png" alt="The box's page: a question, the checked answer, and every step the box took" width="760"></p>
 
-Built for the NEAR Hackathon 2026 (Privacy & Private AI; also AI Security & Defense). Diagram: [docs/how-it-works.html](docs/how-it-works.html).
+> **TEE attestation proves where the model ran. The household box decides what that model is ever allowed to reveal, and to whom.**
+
+| | |
+|---|---|
+| **The problem** | SSNs, W-2s, passports and health records sit in one drawer. Getting AI help with them today means pasting them into a chatbot, which keeps them. |
+| **The product** | A Raspberry Pi at home holds the papers. Each family member's assistant asks it questions over MCP and never sees a file. |
+| **NEAR's role** | A NEAR AI Cloud model (Intel TDX + NVIDIA GPU TEE) reads the files. The box verifies the enclave's attestation itself before every question, encrypts everything end to end to the attested key, and requires an enclave signature on every step. |
+| **The box's role** | It knows the real protected values and checks every answer against them before the assistant gets it: pass, mask, hold for the owner, or refuse. |
+
+```mermaid
+flowchart LR
+    A["ChatGPT / Claude / Gemini<br/>(asks as one family member)"] -- "question over MCP" --> B["familybox<br/>Raspberry Pi at home"]
+    B -- "1. verify attestation<br/>2. encrypt end to end" --> C["NEAR AI Cloud<br/>model in a TEE"]
+    C -- "reads only that person's files<br/>(signed steps)" --> B
+    B -- "3. answer gate:<br/>pass · mask · hold · refuse" --> A
+    B -. "held values, after a PIN" .-> D["Owner's own screen"]
+```
+
+<p align="center"><img src="docs/img/results.svg" alt="Leaks out of 39 attacks over six runs: familybox 0 to 4, model reply trusted as is 12 to 14, every file with no checks 17 to 18" width="760"></p>
+
+<table>
+  <tr>
+    <td width="33%"><img src="docs/img/setup.png" alt="Setting up a new box from a phone"><br><sub><b>Set up from a phone.</b> A family name, your name and a PIN. No terminal, no account.</sub></td>
+    <td width="33%"><img src="docs/img/approved.png" alt="A held number shown to its owner after their PIN"><br><sub><b>Held for the owner.</b> Full numbers show only on the owner's screen, after their PIN, for 30 seconds.</sub></td>
+    <td width="33%"><img src="docs/img/phone.png" alt="A parent viewing how the box handled their daughter's question, on a phone"><br><sub><b>Parents see the checks, not the answers.</b> Dana sees how the box handled Maya's question, never the question or answer.</sub></td>
+  </tr>
+</table>
+
+Built for the NEAR Hackathon 2026 (Privacy & Private AI; also AI Security & Defense). Walk-through: [docs/how-it-works.html](docs/how-it-works.html). Threat model: [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md).
 
 ## Try it in 2 minutes (no API key needed)
 
