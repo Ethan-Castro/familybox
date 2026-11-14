@@ -12,6 +12,15 @@
 
 <p align="center"><img src="docs/img/chat.png" alt="The box's page: a question, the checked answer, and every step the box took" width="760"></p>
 
+<table>
+  <tr>
+    <td width="33%"><img src="docs/img/chatgpt.png" alt="ChatGPT asking the family box for an SSN gets only the last four digits"><br><sub><b>ChatGPT</b></sub></td>
+    <td width="33%"><img src="docs/img/claude.png" alt="Claude asking the family box for an SSN gets only the last four digits"><br><sub><b>Claude</b></sub></td>
+    <td width="33%"><img src="docs/img/gemini.png" alt="Gemini asking the family box for an SSN gets only the last four digits"><br><sub><b>Gemini</b></sub></td>
+  </tr>
+</table>
+<p align="center"><sub>The same question, "What's my SSN for the FAFSA?", in three assistants connected to one box (fictional Castro family). Each gets only the last four digits.</sub></p>
+
 > **TEE attestation proves where the model ran. The household box decides what that model is ever allowed to reveal, and to whom.**
 
 | | |
